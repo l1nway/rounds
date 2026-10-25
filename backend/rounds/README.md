@@ -12,15 +12,18 @@ One Modal app (`app.py`) that receives the source video, serves the Mini App and
 | `bot.py` | aiogram handlers: accept videos, Mini App button, progress messages | `web`, `ingest`, `render` |
 | `transfer.py` | MTProto (Telethon) download of the source and upload of the note | `ingest`, `render` |
 | `pipeline.py` | job orchestration: `ingest_job`, `render_job`, progress | `ingest`, `render` |
-| `media.py` | ffprobe, proxy + filmstrip, tracking frames, scene cuts, audio | `ingest`, `render` |
+| `source.py` | the source: ffprobe, frame cadence (gaps), duplicate frames, output rate | `ingest`, `render` |
+| `media.py` | proxy + filmstrip, frame decode, tracking frames, scene cuts, audio | `ingest`, `render` |
 | `render.py` | GPU renderer: subpixel crop + resample + colour pipeline → x264 | `render` |
+| `smooth.py` | 60 fps interpolation: timed decode, duplicate drop, retiming with RIFE | `render` |
+| `rife.py` | RIFE 4.25 network, vendored (MIT, `RIFE-LICENSE`) | `render` |
 | `color.py` | torch colour pipeline: YUV↔RGB, transfer functions, HDR→SDR, chroma resampling | `render` |
 | `track.py` | object tracking (SAM 2.1 video, HF transformers) | `render` |
 | `camera.py` | virtual camera path (L1 optimal path, HiGHS LP) | `render` |
 
 ## Contracts
 
-**Time and space.** All backend coordinates are in source pixels of the *display-oriented* frame (rotation metadata applied, as ffmpeg's autorotate does), origin top-left. The API and the Mini App use normalized coordinates (0..1 of the display-oriented frame). Times are seconds (float, millisecond precision) on the source timeline. A job's working timeline is CFR at `FPS` (config, 30): frame `k` is at `start + k / FPS`, `N = round((end - start) * FPS)`; every per-frame array has length `N`.
+**Time and space.** All backend coordinates are in source pixels of the *display-oriented* frame (rotation metadata applied, as ffmpeg's autorotate does), origin top-left. The API and the Mini App use normalized coordinates (0..1 of the display-oriented frame). Times are seconds (float, millisecond precision) on the source timeline. A job's tracking timeline is CFR at `FPS` (config, 30): frame `k` is at `start + k / FPS`, `N = round((end - start) * FPS)`; the tracking frames, the track and the camera path have length `N`. The note has its own CFR rate (`source.out_rate`, Output rate); `camera.sampler` maps the path onto it.
 
 **Volume** `rounds-data`, mounted at `/data`; one folder per job, `/data/jobs/<job_id>/`:
 
@@ -32,27 +35,28 @@ One Modal app (`app.py`) that receives the source video, serves the Mini App and
 **Job** (`modal.Dict` `rounds-jobs`, key = job id, 10 url-safe chars):
 
 ```
-id, user_id, chat_id, source_message_id, status_message_id
+id, user_id, chat_id, source_message_id, status_message_id, queued_at (unix s, set when ingest / render is spawned)
 status: 'ingesting' | 'ready' | 'rendering' | 'done' | 'failed'
-stage: None | 'tracking' | 'framing' | 'rendering' | 'sending',  progress: 0..1,  error: str | None
-meta: probe() result
+stage: None | 'queued' | 'decoding' | 'tracking' | 'cuts' | 'framing' | 'rendering' | 'sending',  progress: 0..1,  error: str | None
+meta: source.probe() result + dupes, interpolable (set by ingest after the proxy)
 proxy: {width, height, fps},  filmstrip: {tiles, tile_width, tile_height}
-request: None | {start, end, prompt: {time, points: [[x, y, label]], box: [x0, y0, x1, y1] | None}, options: {loudnorm: bool}}
+request: None | {start, end, prompt: {time, points: [[x, y, label]], box: [x0, y0, x1, y1] | None}, options: {loudnorm: bool, interpolate: bool}}
 ```
 
 `label` is 1 for "this object", 0 for "not this". `prompt.time` lies inside `[start, end]`; `end - start ≤ MAX_DURATION`.
 
 **Module functions** (pure of Modal, so they run and test locally):
 
-- `media.probe(path) -> dict`: `duration`, `fps` (average), `width`, `height` (display-oriented), `rotation`, `transfer` (`'sdr' | 'hlg' | 'pq'`), `matrix` (`'bt709' | 'bt2020' | 'bt601' | ''`), `full_range` (bool; full-range Android H.264 passes through `-pix_fmt yuv420p` untouched, so the renderer must know), `bit_depth`, `has_audio`, `codec`. Without `matrix` the renderer assumes 709 for SDR and 2020 for HDR.
-- `media.make_proxy(src, job_dir, meta) -> {'proxy': {...}, 'filmstrip': {...}}`.
+- `source.probe(path) -> dict`: `duration`, `fps` (nominal, Source cadence), `gaps` (share of missing frames), `stream` (index of the video stream), `width`, `height` (display-oriented), `rotation`, `transfer` (`'sdr' | 'hlg' | 'pq'`), `matrix` (`'bt709' | 'bt2020' | 'bt601' | ''`), `full_range` (bool; full-range Android H.264 passes through `-pix_fmt yuv420p` untouched, so the renderer must know), `bit_depth`, `has_audio`, `codec`. Without `matrix` the renderer assumes 709 for SDR and 2020 for HDR.
+- `media.make_proxy(src, job_dir, meta) -> ({'proxy': {...}, 'filmstrip': {...}}, dupes)`.
 - `media.track_frames(src, meta, start, end, long_side=1024) -> np.ndarray` `(N, H, W, 3)` uint8 RGB SDR, a memmap in a local temp dir.
 - `media.scene_cuts(frames) -> list[int]`: indices of frames that start a new shot.
 - `track.track(frames, index, points, box) -> dict` of `(N,)` arrays in `frames` pixels: `present` (bool), `cx`, `cy`, `r` (minimum enclosing circle of the mask), `area`. `points` / `box` are in `frames` pixels; `index` is the prompt frame.
 - `camera.solve(track, width, height, cuts=(), fps=FPS, out_size=OUT_SIZE) -> np.ndarray` `(N, 3)`: `cx, cy, side` of the square window per frame, source pixels (`track` scaled to source pixels by the caller).
-- `render.render(src, meta, start, end, path, out, options, progress=None) -> dict` (`size`, `duration`): `path` from `camera.solve`; `progress(fraction)` optional.
+- `camera.sampler(path, cuts) -> at(frames)`: path rows at fractional tracking frames (Path sampler).
+- `render.render(src, meta, start, end, path, cuts, out, options, progress=None) -> dict` (`size`, `duration`, `rate`, `frames`, plus `synth`, `dupes` when interpolating): `path` from `camera.solve` on the tracking timeline; `progress(fraction)` optional.
 
-**Output** (`config`): `OUT_SIZE` 640, `FPS` 30, `MAX_DURATION` 60. H.264 High, yuv420p, BT.709 limited range tagged, AAC-LC 48 kHz, `+faststart`; sent with `length=OUT_SIZE`.
+**Output** (`config`): `OUT_SIZE` 640, `MAX_DURATION` 60, rate by Output rate (≤ `MAX_FPS` 60). H.264 High, yuv420p, BT.709 limited range tagged, AAC-LC 48 kHz, `+faststart`; sent with `length=OUT_SIZE`.
 
 ## Camera path
 
@@ -85,7 +89,60 @@ Do not tag with the `-colorspace/-color_trc/-color_primaries` output options: in
 
 ## Cfr decode
 
-`media.decode` is the only way the backend reads source frames, so tracking frames and render frames share one timeline. `-ss start` before `-i` (accurate seek), `fps=FPS:start_time=0` as the first filter (frame k = start + k/FPS, duplicates and drops by nearest), `-frames:v N`. Autorotate stays on (default), so frames are display-oriented. Callers read with `read_full` (a `readinto` loop; pipes return short reads) into preallocated buffers. If ffmpeg returns fewer than N frames (range past the end, ±1 rounding), the last frame is repeated. `track_frames` writes an `np.memmap` in `tempfile.mkdtemp()`; the caller deletes it (`pipeline.render_job`).
+`media.decode` reads source frames on a CFR grid: tracking at `FPS`, the note at its output rate, both from the same `-ss start` (accurate seek, before `-i`), so the grids share time zero. `fps=<rate>:start_time=0` as the first filter (frame k = start + k/rate, duplicates and drops by nearest), `-frames:v N`. The only other reader is `smooth.decode` (Timed decode), which keeps the source frames as they are. Autorotate stays on (default), so frames are display-oriented. Callers read with `read_full` (a `readinto` loop; pipes return short reads) into preallocated buffers. If ffmpeg returns fewer than N frames (range past the end, ±1 rounding), the last frame is repeated. `track_frames` writes an `np.memmap` in `tempfile.mkdtemp()`; the caller deletes it (`pipeline.render_job`).
+
+## Broken sources
+
+`media.LENIENT` (`-fflags +genpts+discardcorrupt`) goes before every `-i` of the source in a video read: `genpts` makes up missing timestamps, `discardcorrupt` drops packets the demuxer flags as corrupt instead of decoding garbage (the gap is then held, or interpolated). The video stream is the one `probe` picked (`meta.stream`: the first video stream that is not cover art), mapped as `0:<index>` by `media.video` (`0:v:0` for jobs ingested before the field); a bare `0:v:0` can be a cover picture. `probe` takes the duration from the format, then the stream, then the packets, and raises a readable error if none has it.
+
+Seek fallback: every frame reader is built by `media.open_at(src, start, slow)`. Fast: `-ss` before `-i`. If that yields no frame at all, the reader is rebuilt slow: no `-ss`, the whole file is decoded from the start and `trim=start=…,setpts=PTS-start/TB` drops what is before `start` (same time zero). `media.retrying` does it for the note frames (`render.cfr`, `smooth.frames`), `track_frames` for the tracking frames. Found on an MPEG-TS with one keyframe for the whole file (x264 default GOP 250): TS has no index, the seek landed mid-GOP and the decoder dropped every frame until a keyframe that never came. Phone MP4s have an index and a keyframe about every second, so the slow path should stay rare; it costs a decode of everything before `start`. A partial result (some frames, then nothing) is not retried: the last frame is repeated, as before.
+
+Checked locally (2026-10-25, ffmpeg 9.0.2, torch 2.14 CPU) on MPEG-TS files with every 7919th byte flipped from 60 KB to 60 % of the file and the last 20 % cut off: probe, proxy, tracking frames and both render paths went through. With the single-GOP file the fast seek gave 0 frames and the slow path 39 of 39; with a 1 s GOP the first decodable frame after `-ss 0.5` was at 1.5 s (corruption ate the keyframe), held before it, interpolated after.
+
+## Source cadence
+
+`source.cadence` reads the pts of every video packet with ffprobe (demux only, no decode), sorted and deduplicated (B-frame reorder). Nominal rate = 1 / median interval: the capture rate, also for VFR phone files whose `avg_frame_rate` is lower because frames were dropped; `avg_frame_rate` / `r_frame_rate` only when the packets give nothing in 1..480 fps. Snapped to a standard rate within 1.5 % (`RATES`, `SNAP`), so 59.94 stays 59.94 and 59.98 becomes 60. `gaps` = missing frames / frames: an interval longer than 1.25 × the median (`JITTER`; iPhone timescale jitter stays below) counts `interval / median − 1` missing frames. The first version counted the share of uneven intervals instead; a 16-frame freeze is one interval, and a 60 fps file with 27 of 240 frames dropped scored 0.94 % (under the threshold). The missing-frame share gives 12.7 % for it. Test files (testsrc2 640×360, 2026-10-25): 30 / 24 fps → offered; clean 60 → not offered; 60 with 16 frames frozen → `dupes` 0.067, offered; 60 with 27 frames dropped → `gaps` 0.127, offered.
+
+## Duplicate frames
+
+Two detectors for one thing: a repeated (frozen) frame, as written by apps that turn VFR into CFR, or by a phone that lagged.
+
+- Ingest (`source.dupes`, decides the offer): the proxy's ffmpeg also scales every native frame (before `fps`) to 32×32 grey (`flags=area`) into a temp raw file (1 KB per frame). A frame is a duplicate when no thumb pixel moved by more than 1 level (`DUP_LEVEL`) while the mean motion within ±0.5 s reaches 1 level (`MOTION`), so a still tripod shot is not a freeze. `dupes` = share of such frames. Measured: 60 fps testsrc2 with 16 frames frozen → 0.067; the clean test files 0.
+- Render (`smooth.still`, decides what to drop): luma of every 4th pixel in 8×8 blocks; a frame is dropped when the largest block mean |diff| to the last kept frame is ≤ 0.5 level (×4 for 10-bit). Blocks, not one global mean: a small moving part of a still frame (a hand, leaves) keeps the frame. Dropped frames are re-created by RIFE from their real neighbours. A run longer than `MAX_GAP` (1 s) is kept as a real still. Known limit: a perfectly static stretch (denoised and compressed to skip blocks) shorter than 1 s is dropped too; RIFE between two near-identical frames returns the same picture, so it only costs the grain.
+
+## Output rate
+
+`source.out_rate`: `MAX_FPS` (60) when `options.interpolate` and `meta.interpolable`, else the source rate capped at 60 (a 24 fps source gives a 24 fps note, 120 fps is decimated to 60). `meta.interpolable` (set at ingest): a rate under 60 (59.94 included: owner decision, anything under 60), `gaps` ≥ 0.5 %, or `dupes` ≥ 0.5 % (`SHARE`). Otherwise the Mini App shows the "Smooth to 60 fps" switch disabled ("Already a steady 60 fps"; the options seam disables, never hides). Interpolation always targets 60, never ×2 (owner decision). Tracking and the camera stay at `FPS` 30, so SAM costs the same; the path is resampled (Path sampler). The proxy stays 30 fps. x264 settings are unchanged: `-g 60` is 1 s at 60 fps, maxrate 6M is shared by twice the frames. Not yet checked: how the Telegram clients (iOS, Desktop) play a 60 fps note.
+
+## Path sampler
+
+`camera.sampler(path, cuts)` returns `at(frames)`: rows at fractional tracking frames (`t · FPS`, t from `start`), a `CubicSpline` per shot over its own frames, clamped to the shot's ends. A time belongs to the shot of `round(t · FPS)`, so the boundary sits half a tracking frame before the cut frame: the camera still jumps at the cut and never pans across it. Used for every output frame (CFR) and for every source frame (interpolation). Spline overshoot past the frame edge is sub-pixel and handled by the renderer's edge clamp.
+
+## Interpolation
+
+`smooth.frames`, only with `interpolate`:
+
+1. Source frames as they are, each with its own pts (Timed decode); no `fps` filter.
+2. Duplicates dropped (Duplicate frames).
+3. Each kept frame cropped by the camera path at its own time to `SIDE` 704² (640 + 32 px each side: same centre, side × 704 / 640), in gamma (BT.1886 2.4: plain video pixels, what RIFE was trained on), half precision on the GPU; `Head` features once per frame.
+4. Output slot j at j / 60: a real frame within a quarter of a slot (`SNAP`) is used as is (30 fps: every even slot; 60 fps with gaps: all but the gaps); otherwise RIFE between the neighbouring kept frames at `(t − t_a) / (t_b − t_a)`, so VFR timing is honoured. A pair more than 1 s apart (`MAX_GAP`) or across a scene cut (the tracking cuts) is not morphed: the nearer frame is held. Slots before the first or after the last frame hold it.
+5. The result is cropped to 640², brought back to linear light, then the usual `color.encode` and x264.
+
+Measured on CPU (2026-10-25, testsrc2 640×360, a 200 px pan): output frame counts and `r_frame_rate` exact in every case; 30 → 60: `synth` 30 of 60 (every odd slot); 24 → 60: 38 of 48 (only every 5th slot meets a real frame); 60 with a 16-frame freeze: 16 dropped, 16 synthesized; 60 with 16 frames missing: 16 synthesized; the same gap with a tracking cut inside: 0 synthesized (held). Visually: a clean middle frame at 30 → 60; filling the 0.27 s freeze leaves slightly wavy edges on the moving bars, the expected cost of a long gap (owner: better than a freeze). CPU speed is about 1 s per RIFE frame at 704²; the L4 speed is not measured yet (`render.encode` logs `synth` and `fps`).
+
+Why crop first: RIFE at 704² costs the same for every source, 4K included, and sees the camera move as smooth global motion; the margin keeps the warp's border padding outside the circle. Rejected: interpolating the whole source frame (4K needs `scale=0.5` and about 20× the work); ffmpeg `minterpolate` (block matching, the artifacts the owner wants to avoid); decoding on a 60 Hz `fps` grid and detecting the repeats (would quantize real timestamps by up to 1/120 s, a fifth of a frame interval at 24 fps; reasoned, not tried).
+
+## Timed decode
+
+`smooth.decode`: `-v level+info` and `showinfo` last in the chain; a thread reads stderr, queues each `pts_time` and forwards only `[error]` / `[fatal]` lines to the log. `showinfo` prints before the frame reaches the pipe, so the k-th stamp exists when the k-th frame is read (`STAMP_WAIT` 60 s). `trim=end=` (the clip plus two source frames, so the last slot has a right neighbour) instead of `-t`: `-t` cuts after the filters, after `showinfo` has printed. NOPTS or non-increasing stamps are repaired (previous + 1 / fps, or + 1 ms). With `-ss` before `-i` the stamps start near 0 even for MPEG-TS, whose timestamps do not (checked on the broken test file).
+
+## Rife
+
+`rife.py`: RIFE 4.25 (hzwer/Practical-RIFE: "4.25 by default for most scenes" in its README) IFNet + Head, adapted from HolyWu/vs-rife (`IFNet_HDv3_v4_25.py`, `warplayer.py`), both MIT; notices in `RIFE-LICENSE`. Same parameter names as the checkpoint, loaded strictly with only the `block*` and `encode.*` keys (the checkpoint also carries the training-only `teacher.*` and `caltime.*`). Input sides must be multiples of 64 (704 is). Checked on CPU (torch 2.14, 2026-10-25): strict load, 5.66 M + 6 k parameters; a disc moved 40 px: the middle frame differs from the true one by 0.0006 (mean, 0..1), a plain blend by 0.011; t = 0.25 by 0.0007.
+
+## Rife weights
+
+`app.RIFE`: `flownet_v4.25.pkl` from the vs-rife GitHub release `model` (the official links are Google Drive and Baidu, unreliable in an image build), checked by sha256 and baked into the GPU image at `config.RIFE_WEIGHTS`. 24.6 MB, torch zip format, loaded with `weights_only=True`. Not checked: that the release file is byte-identical to the archive on Practical-RIFE's Drive.
 
 ## Scene cuts
 
@@ -93,11 +150,11 @@ Do not tag with the `-colorspace/-color_trc/-color_primaries` output options: in
 
 ## Audio chain
 
-`media.audio_input` trims the source audio with `-ss start -t N/FPS`, the same length as the video. `media.audio_filter` returns the `-af` chain: `aresample=48000`, or with `options.loudnorm` a two-pass `loudnorm=I=-16:TP=-1.5:LRA=11` (the first pass prints JSON on stderr, parsed between the last `{` and `}`; the second uses `measured_*`, `offset`, `linear=true`). AAC-LC 128k, 48 kHz, stereo (`-ac 2` folds 5.1 down). New audio filters are added to this chain.
+`media.audio_input` trims the source audio with `-ss start -t n/rate`, the same length as the video. `media.audio_filter` returns the `-af` chain: `aresample=48000`, or with `options.loudnorm` a two-pass `loudnorm=I=-16:TP=-1.5:LRA=11` (the first pass prints JSON on stderr, parsed between the last `{` and `}`; the second uses `measured_*`, `offset`, `linear=true`). AAC-LC 128k, 48 kHz, stereo (`-ac 2` folds 5.1 down). New audio filters are added to this chain.
 
 ## Render options
 
-`render.encoder` is the seam: audio options go through `media.audio_filter(options)`. Stabilization belongs in the camera path (`# [DOC: stabilization]` in `camera`), not in the renderer: render only follows `path`.
+`render.encoder` is the seam: audio options go through `media.audio_filter(options)`. `options.interpolate` picks the frame source in `render.render` (`render.cfr` or `smooth.frames`) and the rate (`source.out_rate`). Stabilization belongs in the camera path (`# [DOC: stabilization]` in `camera`), not in the renderer: render only follows `path`.
 
 ## Lanczos matrix
 
@@ -136,7 +193,7 @@ Modal image (`app.FFMPEG`): BtbN static build, linux64 gpl n9.0, a month-end aut
 - The HF processor is not used: `Sam2ImageProcessor` needs torchvision + pillow, which are not installed. `_pixels` and `_prompt` reproduce it (bilinear antialiased resize to 1024², /255, ImageNet mean/std; points scaled by `1024/W`, `1024/H`; a box becomes two corner points labelled 2 and 3 placed before the clicks, as `processing_sam2_video.py` does). If the processor is ever adopted, compare masks before switching.
 - Do not construct `Sam2VideoInferenceSession` without `dtype`: its default is the string `'float32'` and `add_new_frame` crashes on it.
 - A single click makes SAM pick among three candidate masks and may return a part of the object (measured: the inner part of a disc, r 15 instead of 28). A box or two or more clicks give the whole object; the Mini App nudges towards a box.
-- Weights are cached in the `rounds-models` Volume (`HF_HOME`); `app.render` loads the model and commits the Volume before the job, so only the first run downloads (~0.9 GB for large).
+- Weights are cached in the `rounds-models` Volume (`HF_HOME`); `pipeline.render_job` loads the model (`track.load`, cached per container) and commits the Volume before the job, so only the first run downloads (~0.9 GB for large).
 - Measured on CPU only (tiny, synthetic 512×384 clip, full 10-frame occlusion, a look-alike distractor): `present` False on all occluded frames, no switch to the distractor, centre error 0.8 px mean. GPU speed is estimated, not measured: large ~8–12 fps on L4, ~20–28 fps on A100 (published compiled A100: 39.5 fps).
 
 ## Tracking memory
@@ -151,6 +208,16 @@ The 256² mask logits are upsampled bilinearly to the frame size and thresholded
 
 `MODEL_ID` and `load()` are the seam. SAM 2.1 sizes: `facebook/sam2.1-hiera-{tiny,small,base-plus,large}`. SAM 3 tracker (`Sam3TrackerVideoModel` in `transformers.models.sam3_tracker_video`) has the same session/forward API family: swapping means changing the imports, `MODEL_ID` (gated: `HF_TOKEN`), and checking that its config still has `image_size` and `max_object_pointers_in_encoder`, the session constructor arguments and the output fields `pred_masks` / `object_score_logits`. DAM4SAM is a different code base: it would replace `_pass` and keep `_measure` and `track`.
 
+## Stage timings
+
+Every step of a job prints one line to the Modal log: `[<job id>] <function>.<step> <seconds>s key=value …`, read with `uv run modal app logs rounds --timestamps` (grep the job id). `pipeline.timed` wraps a step and prints when it ends; a tuple fact `(amount, unit)` is printed as a rate, `amount / seconds` (`speed=(mb, 'MB/s')`, `fps=(frames, '')`, `speed=(duration, 'x')` = times realtime). A step that raises prints nothing (`fail` prints the traceback).
+
+- `ingest.wait`, `render.wait`: from `queued_at` (the webhook or `POST /render`) to the function body. Covers Modal scheduling and the container cold start (image, imports). Jobs created before the field existed print 0.
+- `ingest.download` (`mb`, `speed`): the MTProto download alone, without the login. `ingest.probe` (the source: size, fps, gaps, codec, transfer, bit depth, duration, audio), `ingest.proxy` (`speed` in × realtime of the whole source, `dupes`, `interpolable`), `ingest.commit`, `ingest` (the whole function).
+- `render.load`: the SAM weights to the GPU; near 0 in a warm container (`@cache`), so it tells a cold start from a warm one. `render.decode` (`frames`, `size` of the tracking frames, `fps`), `render.track` (`fps`), `render.cuts`, `render.camera`, `render.encode` (`fps` of the whole frame loop, `mb` of the note, `rate` of the note, and with interpolation `synth` = RIFE frames, `dupes` = dropped source frames), `render.commit`, `render.send` (login + upload, `speed`), `render` (the whole function, with `clip` length and the source facts).
+
+Keep it to one line per step and only numbers that point to a lever (bandwidth, fps, cold or warm); progress percentages stay in the chat, not in the log.
+
 ## Mtproto sessions
 
 `transfer.client(state, name)` logs in with the bot token over MTProto (Telethon, `receive_updates=False`: updates still come through the Bot API webhook) and keeps the session string in the `rounds-state` Dict under `session:<name>`. One session per function (`ingest`, `render`), and each of those functions runs at most one container (`max_containers=1`): the same auth key used from two places at once risks `AUTH_KEY_DUPLICATED`, and a fresh login per job risks `FLOOD_WAIT` on `auth.importBotAuthorization`. Messages are fetched with `get_messages(None, ids=...)`, which calls `messages.getMessages` without a peer (private chats need no access hash); the same call before `send_file` caches the user's access hash so the note can be sent.
@@ -161,7 +228,17 @@ The Mini App sends `Authorization: tma <initData>`. Validation follows core.tele
 
 ## Signed urls
 
-`<video src>` and `<img src>` cannot send headers, so `GET /api/jobs/:id` returns proxy and filmstrip URLs signed with HMAC (a key derived from the bot token, label `Files`) and valid for 6 h. Starlette's `FileResponse` serves HTTP Range requests, which video seeking needs. A file missing in the web container triggers one `volume.reload()` (the ingest container commits before marking the job ready).
+`<video src>` and `<img src>` cannot send headers, so `GET /api/jobs/:id` returns proxy and filmstrip URLs signed with HMAC (a key derived from the bot token, label `Files`) and valid for 6 h. Starlette's `FileResponse` serves HTTP Range requests, which video seeking needs. A file missing in the web container triggers `volume.reload()`, retried up to `RELOADS` times (observed: the first request in a cold container got a 500, `RuntimeError: there are open files preventing the operation`, because a parallel `FileResponse` held a file open; the error is swallowed and the existence check decides) (the ingest container commits before marking the job ready).
+
+## Chat action
+
+Every stage has its own status text (`bot.TEXTS`), edited into one message per phase (ingest: reply to the video; render: a new reply made by the API at the moment of "Render", so the GPU cold start and the model load are not silent). A long step with no progress callback (probe, proxy, decoding, scene cuts, the camera solver) still gets a text of its own, because "silent" was the owner's complaint.
+
+The chat header shows the matching action: `typing` during ingest, `record_video_note` from decoding to the end of the render, `upload_video_note` (Telethon `round`) while the file is sent. A Bot API chat action lasts about 5 s and is dropped as soon as the bot sends a message, so `bot.acting` repeats it every `ACTION_EVERY` = 4 s until the block ends. Failures of `sendChatAction` are swallowed: it is decoration. The `queued` stage has no action: the GPU container is not up yet, so nothing runs the pulse.
+
+The note's file name is the source's with the extension swapped for `.mp4` (`IMG_4359.MOV` → `IMG_4359.mp4`, `round.mp4` if the source has no name), set through `DocumentAttributeFilename` in `transfer.send_note`. Telegram clients do not show it on a round, it surfaces when the note is saved.
+
+Ideas for later modes (owner): "no subject" (a plain centre or a slow auto-crop with nothing to track, so the prompt becomes optional), and more audio and video options next to `loudnorm`. The seams are `RenderRequest.prompt` (validator `check` demands a selection today), `pipeline.render_job` (the tracking and camera stages are skippable: `camera.solve` only needs a found track) and `options`.
 
 ## Telegram limits
 

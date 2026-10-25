@@ -1,26 +1,25 @@
 import json
-import re
+import queue
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
 
 import numpy as np
 
+from . import source
 from .config import FPS
+from .source import run
 
-TRANSFERS = {'arib-std-b67': 'hlg', 'smpte2084': 'pq'}
-MATRICES = {'bt2020nc': 'bt2020', 'bt2020c': 'bt2020', 'bt470bg': 'bt601', 'smpte170m': 'bt601', 'bt709': 'bt709'}
 ZIN = {'hlg': 'arib-std-b67', 'pq': 'smpte2084'}
 PROXY_LONG = 960
+DEPTH = 4
 PROXY_X264 = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-g', '15', '-pix_fmt', 'yuv420p']
 BT709 = 'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv'
 TILES, TILE_H = 24, 96
 LOUDNORM = 'loudnorm=I=-16:TP=-1.5:LRA=11'
-PROBE = ['ffprobe', '-v', 'error', '-print_format', 'json', '-show_streams', '-show_format']
-
-
-def run(cmd: list[str]) -> str:
-    return subprocess.run(cmd, check=True, capture_output=True, text=True).stdout
+# [DOC: broken-sources]
+LENIENT = ['-fflags', '+genpts+discardcorrupt']
 
 
 def even(x: float) -> int:
@@ -32,28 +31,27 @@ def fit(meta: dict, long_side: int) -> tuple[int, int]:
     return even(meta['width'] * k), even(meta['height'] * k)
 
 
-def probe(path) -> dict:
-    info = json.loads(run([*PROBE, str(path)]))
-    streams = info['streams']
-    v = next(s for s in streams if s['codec_type'] == 'video' and not s.get('disposition', {}).get('attached_pic'))
-    sides = [s['rotation'] for s in v.get('side_data_list', []) if 'rotation' in s]
-    rot = int(float(sides[0] if sides else v.get('tags', {}).get('rotate', 0)))
-    w, h = (v['height'], v['width']) if rot % 180 else (v['width'], v['height'])
-    num, den = (v.get('avg_frame_rate') or v['r_frame_rate']).split('/')
-    pix = v.get('pix_fmt', 'yuv420p')
-    return {
-        'duration': float(info['format'].get('duration') or v['duration']),
-        'fps': int(num) / int(den) if int(den) else FPS,
-        'width': w,
-        'height': h,
-        'rotation': rot,
-        'transfer': TRANSFERS.get(v.get('color_transfer'), 'sdr'),
-        'bit_depth': int(m[1]) if (m := re.search(r'p(\d+)', pix)) else 8,
-        'has_audio': any(s['codec_type'] == 'audio' for s in streams),
-        'codec': v['codec_name'],
-        'matrix': MATRICES.get(v.get('color_space'), ''),
-        'full_range': v.get('color_range') == 'pc' or pix.startswith('yuvj'),
-    }
+def open_at(src, start: float, slow: bool) -> tuple[list[str], str]:
+    if slow:
+        return [*LENIENT, '-i', str(src)], f'trim=start={start:.3f},setpts=PTS-{start:.3f}/TB'
+    return [*LENIENT, '-ss', f'{start:.3f}', '-i', str(src)], ''
+
+
+def retrying(make):
+    for slow in (False, True):
+        frames, got = make(slow), False
+        try:
+            for frame in frames:
+                got = True
+                yield frame
+        finally:
+            frames.close()
+        if got:
+            return
+
+
+def video(meta: dict) -> str:
+    return f'0:{meta.get("stream", "v:0")}'
 
 
 def sdr_chain(meta: dict, w: int, h: int) -> str:
@@ -66,31 +64,37 @@ def sdr_chain(meta: dict, w: int, h: int) -> str:
     )
 
 
-def make_proxy(src, job_dir, meta: dict) -> dict:
+def make_proxy(src, job_dir, meta: dict) -> tuple[dict, float]:
     job_dir = Path(job_dir)
     w, h = fit(meta, min(PROXY_LONG, max(meta['width'], meta['height'])))
     tw, step = even(TILE_H * meta['width'] / meta['height']), meta['duration'] / TILES
     graph = (
-        f'[0:v:0]fps={FPS},{sdr_chain(meta, w, h)},split[p][s];'
+        f'[{video(meta)}]split[v][d];[d]scale={source.THUMB}:{source.THUMB}:flags=area,format=gray[g];'
+        f'[v]fps={FPS},{sdr_chain(meta, w, h)},split[p][s];'
         f"[s]select='gte(t,{step}*(selected_n+0.5))',scale={tw}:{TILE_H},tile={TILES}x1[f]"
     )
     audio = ['-map', '0:a:0', '-c:a', 'aac', '-b:a', '96k'] if meta['has_audio'] else []
-    run(['ffmpeg', '-v', 'error', '-y', '-nostdin', '-i', str(src), '-filter_complex', graph,
-         '-map', '[p]', *PROXY_X264, *audio, '-movflags', '+faststart', str(job_dir / 'proxy.mp4'),
-         '-map', '[f]', '-frames:v', '1', '-q:v', '3', str(job_dir / 'filmstrip.jpg')])  # fmt: skip
+    with tempfile.TemporaryDirectory() as tmp:
+        thumbs = Path(tmp) / 'thumbs.u8'
+        run(['ffmpeg', '-v', 'error', '-y', '-nostdin', *LENIENT, '-i', str(src), '-filter_complex', graph,
+             '-map', '[p]', *PROXY_X264, *audio, '-movflags', '+faststart', str(job_dir / 'proxy.mp4'),
+             '-map', '[f]', '-frames:v', '1', '-q:v', '3', str(job_dir / 'filmstrip.jpg'),
+             '-map', '[g]', '-fps_mode', 'passthrough', '-f', 'rawvideo', str(thumbs)])  # fmt: skip
+        share = source.dupes(np.fromfile(thumbs, np.uint8).reshape(-1, source.THUMB, source.THUMB), meta['fps'])
     strip = {'tiles': TILES, 'tile_width': tw, 'tile_height': TILE_H}
-    return {'proxy': {'width': w, 'height': h, 'fps': FPS}, 'filmstrip': strip}
+    return {'proxy': {'width': w, 'height': h, 'fps': FPS}, 'filmstrip': strip}, share
 
 
-def frame_count(start: float, end: float) -> int:
-    return round((end - start) * FPS)
+def frame_count(start: float, end: float, rate: float = FPS) -> int:
+    return round((end - start) * rate)
 
 
 # [DOC: cfr-decode]
-def decode(src, start: float, n: int, vf: str, pix_fmt: str) -> subprocess.Popen:
-    chain = ','.join(x for x in (f'fps={FPS}:start_time=0', vf) if x)
-    cmd = ['ffmpeg', '-v', 'error', '-nostdin', '-ss', f'{start:.3f}', '-i', str(src), '-map', '0:v:0', '-vf', chain,
-           '-frames:v', str(n), '-pix_fmt', pix_fmt, '-f', 'rawvideo', 'pipe:1']  # fmt: skip
+def decode(src, meta: dict, start: float, n: int, vf: str, pix_fmt: str, rate: float = FPS, slow: bool = False):
+    head, cut = open_at(src, start, slow)
+    chain = ','.join(x for x in (cut, f'fps={rate}:start_time=0', vf) if x)
+    cmd = ['ffmpeg', '-v', 'error', '-nostdin', *head, '-map', video(meta), '-vf', chain, '-frames:v', str(n),
+           '-pix_fmt', pix_fmt, '-f', 'rawvideo', 'pipe:1']  # fmt: skip
     return subprocess.Popen(cmd, stdout=subprocess.PIPE, bufsize=0)
 
 
@@ -101,22 +105,48 @@ def read_full(f, buf) -> bool:
     return got == len(view)
 
 
+def reader(proc, n: int, size: int, dtype):
+    free, ready = queue.Queue(), queue.Queue()
+    for _ in range(DEPTH):
+        free.put(np.empty(size, dtype))
+
+    def run():
+        for _ in range(n):
+            buf = free.get()
+            if not read_full(proc.stdout, buf):
+                break
+            ready.put(buf)
+        ready.put(None)
+
+    threading.Thread(target=run, daemon=True).start()
+    while (buf := ready.get()) is not None:
+        yield buf
+        free.put(buf)
+
+
+def stop(proc: subprocess.Popen) -> int:
+    if proc.poll() is None:
+        proc.kill()
+    return proc.wait()
+
+
 def fill(proc: subprocess.Popen, frames, n: int) -> int:
     k = 0
     while k < n and read_full(proc.stdout, frames[k]):
         k += 1
     proc.stdout.close()
     proc.wait()
-    if not k:
-        raise RuntimeError(f'no frames decoded (ffmpeg exit {proc.returncode})')
-    frames[k:] = frames[k - 1]
+    if k:
+        frames[k:] = frames[k - 1]
     return k
 
 
 def track_frames(src, meta: dict, start: float, end: float, long_side: int = 1024) -> np.ndarray:
     n, (w, h) = frame_count(start, end), fit(meta, long_side)
     frames = np.memmap(Path(tempfile.mkdtemp()) / 'frames.u8', np.uint8, 'w+', shape=(n, h, w, 3))
-    fill(decode(src, start, n, f'{sdr_chain(meta, w, h)},format=rgb24', 'rgb24'), frames, n)
+    chain = f'{sdr_chain(meta, w, h)},format=rgb24'
+    if not any(fill(decode(src, meta, start, n, chain, 'rgb24', slow=slow), frames, n) for slow in (False, True)):
+        raise RuntimeError('no frames decoded')
     return frames
 
 

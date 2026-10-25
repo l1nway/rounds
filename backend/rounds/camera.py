@@ -138,3 +138,20 @@ def solve(track, width, height, cuts=(), fps=FPS, out_size=OUT_SIZE):
     edges = np.unique(np.r_[0, [c for c in cuts if 0 < c < n], n]).astype(int)
     shots = [_shot(on[a:b], px[a:b], py[a:b], r[a:b], fw, fh, lo, fps) for a, b in pairwise(edges)]
     return (np.concatenate(shots) if shots else np.zeros((0, 3))) * [s, s, 2 * s]
+
+
+# [DOC: path-sampler]
+def sampler(path, cuts=()):
+    n = len(path)
+    edges = np.unique(np.r_[0, [c for c in cuts if 0 < c < n], n]).astype(int)
+    shots = [(a, b, CubicSpline(np.arange(a, b), path[a:b]) if b - a > 1 else None) for a, b in pairwise(edges)]
+
+    def at(frames) -> np.ndarray:
+        frames = np.atleast_1d(np.asarray(frames, float))
+        shot, out = np.searchsorted(edges[1:-1], np.round(frames), side='right'), np.empty((len(frames), 3))
+        for i, (a, b, spline) in enumerate(shots):
+            sel = shot == i
+            out[sel] = spline(np.clip(frames[sel], a, b - 1)) if spline else path[a]
+        return out
+
+    return at

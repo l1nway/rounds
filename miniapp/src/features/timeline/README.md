@@ -8,7 +8,7 @@ Every drag is relative: `value = v0 + (x − x0) · duration / stripWidth · rat
 
 ## Trim bounds
 
-`start` ∈ `[max(0, end − max), min(end − MIN_RANGE, time)]`, `end` ∈ `[max(start + MIN_RANGE, time), min(duration, start + max)]`, playhead ∈ `[start, end]`. `MIN_RANGE` is 1 s (a UI choice, not a backend rule). The handles stop at the selection frame (`time`, the blue dot under the strip) instead of invalidating it: the dot shows where the wall is, and Clear removes it. Dragging a handle seeks the video to it, like the iOS trim. Values are clamped unrounded (so the drag can detect a clamp) and stored rounded to ms.
+`start` ∈ `[max(0, end − max), min(end − MIN_RANGE, time)]`, `end` ∈ `[max(start + MIN_RANGE, time), min(duration, start + max)]`, playhead ∈ `[start, end]`. `MIN_RANGE` is 1 s (a UI choice, not a backend rule). The handles stop at the selection frame (`time`, the blue dot under the strip) instead of invalidating it: the dot shows where the wall is; selecting on another frame moves it (there is no Clear button, `viewer/README.md`). Dragging a handle seeks the video to it, like the iOS trim. Values are clamped unrounded (so the drag can detect a clamp) and stored rounded to ms.
 
 ## Timeline hit areas
 

@@ -28,7 +28,7 @@ run('ffmpeg', ['-v', 'error', '-y', '-i', 'proxy.mp4', '-vf', `fps=${TILES}/${DU
 const duration = Number(run('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', 'proxy.mp4']).trim())
 const [width] = run('ffprobe', ['-v', 'error', '-show_entries', 'stream=width', '-of', 'csv=p=0', 'filmstrip.jpg']).trim().split(',')
 const job = {
-  meta: {duration, width: 1920, height: 1080, fps: 30, has_audio: true},
+  meta: {duration, width: 1920, height: 1080, fps: 30, gaps: 0, dupes: 0, interpolable: true, has_audio: true},
   filmstrip: {tiles: TILES, tile_width: Number(width) / TILES, tile_height: TILE_HEIGHT}
 }
 writeFileSync(`${OUT}job.json`, JSON.stringify(job, null, 2))

@@ -69,8 +69,6 @@ button {font: inherit; color: inherit}
 
 .icon-button:disabled {opacity: 0.4}
 
-.icon-button[aria-pressed='true'] {background: var(--danger); color: #fff}
-
 .icon-button svg {width: 22px; height: 22px; fill: currentColor}
 
 .spinner {

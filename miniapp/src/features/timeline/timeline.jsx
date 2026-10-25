@@ -90,7 +90,7 @@ const Controls = memo(function Controls({disabled, length}) {
 })
 
 // [DOC: trim-bounds]
-export default function Timeline({job, start, end, time, dispatch, readOnly}) {
+export default memo(function Timeline({job, start, end, time, dispatch, readOnly}) {
   const [mode, setMode] = useState(null)
   const api = useRef(null)
   const drag = useDrag(api, setMode)
@@ -145,4 +145,4 @@ export default function Timeline({job, start, end, time, dispatch, readOnly}) {
       <Controls disabled={!job} length={job ? `${seconds(end - start)} of ${seconds(max)}` : ''}/>
     </section>
   )
-}
+})

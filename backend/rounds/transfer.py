@@ -1,11 +1,14 @@
 from collections.abc import Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from telethon import TelegramClient
 from telethon.sessions import StringSession
-from telethon.tl.types import DocumentAttributeVideo
+from telethon.tl.types import DocumentAttributeFilename, DocumentAttributeVideo
 
 from .config import OUT_SIZE, env
+
+NOTE_NAME = 'round'
 
 
 # [DOC: mtproto-sessions]
@@ -30,6 +33,11 @@ async def download(tg: TelegramClient, message_id: int, path: str, progress: Cal
 
 
 async def send_note(tg: TelegramClient, chat_id: int, reply_to: int, path: str, duration: float) -> None:
-    await tg.get_messages(None, ids=reply_to)
-    attribute = DocumentAttributeVideo(duration, OUT_SIZE, OUT_SIZE, round_message=True)
-    await tg.send_file(chat_id, path, video_note=True, attributes=[attribute], reply_to=reply_to)
+    source = await tg.get_messages(None, ids=reply_to)
+    name = Path(source.file.name or NOTE_NAME).with_suffix('.mp4').name
+    attributes = [
+        DocumentAttributeFilename(name),
+        DocumentAttributeVideo(duration, OUT_SIZE, OUT_SIZE, round_message=True),
+    ]
+    async with tg.action(chat_id, 'round'):
+        await tg.send_file(chat_id, path, video_note=True, attributes=attributes, reply_to=reply_to)

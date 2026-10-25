@@ -1,4 +1,4 @@
-import {useEffectEvent, useLayoutEffect} from 'react'
+import {useLayoutEffect, useRef} from 'react'
 
 const MOBILE = ['ios', 'android']
 
@@ -28,11 +28,12 @@ export const setupTelegram = () => {
 
 // [DOC: main-button]
 export const useMainButton = ({text, visible, active, progress, onClick}) => {
-  const click = useEffectEvent(onClick)
+  const click = useRef(onClick)
+  useLayoutEffect(() => {click.current = onClick})
   useLayoutEffect(() => {
     const button = tg()?.MainButton
     if (!button) return
-    const handler = () => click()
+    const handler = () => click.current()
     button.onClick(handler)
     return () => {button.offClick(handler); button.hideProgress().hide()}
   }, [])

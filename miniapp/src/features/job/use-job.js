@@ -9,7 +9,7 @@ const MISSING = {title: 'No video in the link', text: 'Open the editor from the 
 const LOADING = {title: 'Loading the video…', busy: true}
 const INGESTING = {title: 'Preparing the video…', text: 'Large files take a minute. This page updates by itself.', busy: true}
 const BROKEN = {title: 'This video could not be prepared', text: 'Send it to the bot again.'}
-const OFFLINE ={title: 'You are offline', text: 'The video loads as soon as the connection is back.'}
+const OFFLINE = {title: 'You are offline', text: 'The video loads as soon as the connection is back.'}
 
 // [DOC: job-states]
 export default function useJob() {
@@ -46,5 +46,6 @@ export default function useJob() {
     return online ? LOADING : OFFLINE
   }, [blocked, job, error, online, retry])
 
-  return useMemo(() => ({job: settled && job.proxy_url ? job : null, notice}), [settled, job, notice])
+  const usable = settled && job.proxy_url ? job : null
+  return useMemo(() => ({job: usable, notice}), [usable, notice])
 }

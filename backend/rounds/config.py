@@ -2,9 +2,11 @@ import os
 
 OUT_SIZE = 640
 FPS = 30
+MAX_FPS = 60
 MAX_DURATION = 60
 DATA_DIR = '/data'
 JOBS_DIR = f'{DATA_DIR}/jobs'
+RIFE_WEIGHTS = '/opt/rife/flownet_v4.25.pkl'
 
 
 def env(name: str, default: str = '') -> str:

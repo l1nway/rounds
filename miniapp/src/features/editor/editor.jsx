@@ -1,10 +1,10 @@
-import {useEffect, useReducer} from 'react'
+import {memo, useEffect, useMemo, useReducer} from 'react'
 import {MIN_RANGE, ms, seek, setRange} from '../../hooks/player.js'
 import {merge, useOnline} from '../../hooks/state.js'
 import {postRender} from '../../services/api.js'
 import {close, haptic, useMainButton} from '../../services/telegram.js'
 import Timeline from '../timeline/timeline.jsx'
-import Viewer, {SelectionBar} from '../viewer/viewer.jsx'
+import Viewer from '../viewer/viewer.jsx'
 import './editor.css'
 
 const NOTES = {
@@ -15,7 +15,8 @@ const NOTES = {
 const OFFLINE = 'Offline: editing works, sending waits.'
 // [DOC: options-seam]
 const OPTIONS = [
-  {key: 'loudnorm', label: 'Normalize loudness', hint: 'Evens out quiet and loud parts', needs: meta => meta.has_audio, missing: 'This video has no sound'}
+  {key: 'loudnorm', label: 'Normalize loudness', hint: 'Evens out quiet and loud parts', needs: meta => meta.has_audio, missing: 'This video has no sound'},
+  {key: 'interpolate', label: 'Smooth to 60 fps', hint: 'AI draws in-between frames, fixes stutter', needs: meta => meta.interpolable, missing: 'Already a steady 60 fps'}
 ]
 const DEFAULT_OPTIONS = Object.fromEntries(OPTIONS.map(({key}) => [key, false]))
 
@@ -26,7 +27,7 @@ const init = job => {
   return {
     start: last?.start ?? 0, end: last?.end ?? ms(Math.min(job?.meta.duration ?? 0, job?.max_duration ?? 0)),
     time: last?.prompt.time ?? null, points: last?.prompt.points ?? [], box: last?.prompt.box ?? null,
-    negative: false, options: {...DEFAULT_OPTIONS, ...last?.options}, posting: false, error: null
+    options: {...DEFAULT_OPTIONS, ...last?.options}, posting: false, error: null
   }
 }
 
@@ -34,7 +35,7 @@ const isValid = ({start, end, time, points, box}, job) => Boolean(job) && (Boole
   && end - start >= Math.min(MIN_RANGE, job.meta.duration) && end - start <= job.max_duration + 1e-6
   && time !== null && time >= start && time <= end
 
-function Options({meta, options, dispatch, disabled}) {
+const Options = memo(function Options({meta, options, dispatch, disabled}) {
   const change = event => {
     const {name, checked} = event.target
     dispatch(prev => ({options: {...prev.options, [name]: checked}}))
@@ -56,13 +57,15 @@ function Options({meta, options, dispatch, disabled}) {
       })}
     </fieldset>
   )
-}
+})
 
 // [DOC: editor-draft]
-export default function Editor({job, notice}) {
+export default memo(function Editor({job, notice}) {
   const online = useOnline()
   const [draft, dispatch] = useReducer(merge, job, init)
-  const {start, end, time, options, posting, error} = draft
+  const {start, end, time, points, box, options, posting, error} = draft
+  // [DOC: render-boundaries]
+  const selection = useMemo(() => ({time, points, box}), [time, points, box])
   const readOnly = job?.status === 'rendering'
   const valid = isValid(draft, job)
 
@@ -73,7 +76,7 @@ export default function Editor({job, notice}) {
     if (!valid || posting || !online || readOnly) return
     dispatch({posting: true, error: null})
     try {
-      await postRender(job.id, {start, end, prompt: {time, points: draft.points, box: draft.box}, options: optionsFor(job.meta, options)})
+      await postRender(job.id, {start, end, prompt: {time, points, box}, options: optionsFor(job.meta, options)})
       haptic.notify('success')
       close()
     } catch (failure) {
@@ -88,8 +91,7 @@ export default function Editor({job, notice}) {
   return (
     <main className='editor' aria-busy={!job || undefined}>
       <h1 className='visually-hidden'>Round editor</h1>
-      <Viewer job={job} notice={notice} draft={draft} dispatch={dispatch} readOnly={readOnly}/>
-      <SelectionBar draft={draft} dispatch={dispatch} disabled={!job || readOnly}/>
+      <Viewer job={job} notice={notice} selection={selection} dispatch={dispatch} readOnly={readOnly}/>
       <Timeline job={job} start={start} end={end} time={time} dispatch={dispatch} readOnly={readOnly}/>
       <Options meta={job?.meta} options={options} dispatch={dispatch} disabled={!job || readOnly}/>
       <div className='editor-status'>
@@ -98,4 +100,4 @@ export default function Editor({job, notice}) {
       </div>
     </main>
   )
-}
+})

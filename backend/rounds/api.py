@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import hashlib
 import hmac
 import json
@@ -15,6 +17,7 @@ from .config import JOBS_DIR, MAX_DURATION, allowed_users, env
 
 INIT_DATA_TTL = 24 * 3600
 URL_TTL = 6 * 3600
+RELOADS, RELOAD_WAIT = 4, 0.3
 FILES = {'proxy.mp4': 'video/mp4', 'filmstrip.jpg': 'image/jpeg'}
 CORS = {'allow_methods': ['GET', 'POST'], 'allow_headers': ['Authorization', 'Content-Type']}
 PUBLIC = ('id', 'status', 'stage', 'progress', 'error', 'meta', 'filmstrip', 'request')
@@ -106,7 +109,13 @@ def create(jobs, volume, spawn) -> FastAPI:
             raise HTTPException(409, 'The video is busy, wait for it to finish')
         if body.end > job['meta']['duration'] + 1e-3:
             raise HTTPException(422, 'The range is outside the video')
-        update = {'status': 'rendering', 'stage': None, 'progress': 0, 'error': None, 'request': body.model_dump()}
+        reply = await bot.get_bot().send_message(
+            job['chat_id'], bot.TEXTS['queued'], reply_to_message_id=job['source_message_id']
+        )
+        update = {
+            'status': 'rendering', 'stage': 'queued', 'progress': 0, 'error': None, 'request': body.model_dump(),
+            'status_message_id': reply.message_id, 'queued_at': time.time(),
+        }  # fmt: skip
         await jobs.put.aio(job_id, {**job, **update})
         await spawn['render'](job_id)
         return {'status': 'rendering'}
@@ -116,8 +125,12 @@ def create(jobs, volume, spawn) -> FastAPI:
         if name not in FILES or exp < time.time() or not hmac.compare_digest(sig, signature(job_id, name, exp)):
             raise HTTPException(403)
         path = f'{JOBS_DIR}/{job_id}/{name}'
-        if not os.path.exists(path):
-            await volume.reload.aio()
+        for _ in range(RELOADS):
+            if os.path.exists(path):
+                break
+            with contextlib.suppress(RuntimeError):
+                await volume.reload.aio()
+            await asyncio.sleep(RELOAD_WAIT)
         if not os.path.exists(path):
             raise HTTPException(404)
         return FileResponse(path, media_type=FILES[name], headers={'Cache-Control': 'private, max-age=21600'})

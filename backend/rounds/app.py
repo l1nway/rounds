@@ -1,10 +1,9 @@
-import asyncio
 from pathlib import Path
 
 import modal
 
 from . import pipeline
-from .config import DATA_DIR
+from .config import DATA_DIR, RIFE_WEIGHTS
 
 PROJECT = Path(__file__).parent.parent
 FFMPEG = (
@@ -12,11 +11,15 @@ FFMPEG = (
     'ffmpeg-n9.0.2-17-g2a571b6068-linux64-gpl-9.0.tar.xz',
     '68ee646831adaae2495618346f3bba94ff207ff83bbd34d643e7004730d66269',
 )
+RIFE = (
+    'https://github.com/HolyWu/vs-rife/releases/download/model/flownet_v4.25.pkl',
+    '6615790efd627772917205db291f51cd392528a157ecbb2ecaeec3bff8eb6de2',
+)
 MODELS_DIR = '/models'
 GPU = 'L4'
 
 
-def image(*groups: str) -> modal.Image:
+def image(*groups: str, commands: tuple[str, ...] = ()) -> modal.Image:
     return (
         modal.Image.debian_slim(python_version='3.12')
         .apt_install('curl', 'xz-utils')
@@ -25,6 +28,7 @@ def image(*groups: str) -> modal.Image:
             f'echo "{FFMPEG[1]}  /tmp/ffmpeg.tar.xz" | sha256sum -c',
             'tar -xJf /tmp/ffmpeg.tar.xz -C /usr/local/bin --strip-components=2 --wildcards "*/bin/ff*"',
             'rm /tmp/ffmpeg.tar.xz && ffmpeg -hide_banner -version | head -1',
+            *commands,
         )
         .uv_sync(str(PROJECT), groups=list(groups), extra_options='--no-dev')
         .env({'HF_HOME': f'{MODELS_DIR}/hf'})
@@ -33,7 +37,9 @@ def image(*groups: str) -> modal.Image:
 
 
 app = modal.App('rounds')
-cpu_image, gpu_image = image(), image('gpu')
+# [DOC: rife-weights]
+weights = (f'curl -fsSL --create-dirs -o {RIFE_WEIGHTS} {RIFE[0]}', f'echo "{RIFE[1]}  {RIFE_WEIGHTS}" | sha256sum -c')
+cpu_image, gpu_image = image(), image('gpu', commands=weights)
 data = modal.Volume.from_name('rounds-data', create_if_missing=True)
 models = modal.Volume.from_name('rounds-models', create_if_missing=True)
 jobs = modal.Dict.from_name('rounds-jobs', create_if_missing=True)
@@ -59,11 +65,7 @@ async def ingest(job_id: str) -> None:
 @app.function(image=gpu_image, gpu=GPU, secrets=secrets, volumes={DATA_DIR: data, MODELS_DIR: models}, cpu=8,
               memory=32768, timeout=3600, max_containers=1)  # fmt: skip
 async def render(job_id: str) -> None:
-    from .track import load
-
-    await asyncio.to_thread(load)
-    await models.commit.aio()
-    await pipeline.render_job(job_id, jobs, state, data)
+    await pipeline.render_job(job_id, jobs, state, data, models)
 
 
 @app.function(image=cpu_image, secrets=secrets)

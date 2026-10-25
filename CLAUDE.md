@@ -19,8 +19,8 @@ Everything runs for free: the backend on Modal (Starter credits, scales to zero,
 
 One repo, two parts:
 
-- `backend/`: Python 3.12, a uv project, one Modal app (`rounds`). The package `backend/rounds/` holds the webhook bot (aiogram), the Mini App API (FastAPI, Telegram `initData` auth), MTProto file transfer (Telethon), the media pipeline (ffprobe / ffmpeg), tracking (SAM 2.1 via HF transformers) and the camera path solver (HiGHS through SciPy). Job state lives in a `modal.Dict`, files in a `modal.Volume`. The layout and its reasons are in `backend/rounds/README.md`.
-- `miniapp/`: React (JS) + Vite SPA, `arch-features.md`, plain CSS. Opened from the bot's `web_app` button; shows the proxy video with a trim timeline (long press refines the step), point / box selection of the object on any frame, and the options. Deployed to GitHub Pages by `.github/workflows/pages.yml`.
+- `backend/`: Python 3.12, a uv project, one Modal app (`rounds`). The package `backend/rounds/` holds the webhook bot (aiogram), the Mini App API (FastAPI, Telegram `initData` auth), MTProto file transfer (Telethon), the media pipeline (ffprobe / ffmpeg), tracking (SAM 2.1 via HF transformers), the camera path solver (HiGHS through SciPy) and 60 fps frame interpolation (RIFE 4.25, vendored). Job state lives in a `modal.Dict`, files in a `modal.Volume`. The layout and its reasons are in `backend/rounds/README.md`.
+- `miniapp/`: Preact (the React API through `preact/compat`, imported as `react`) + Vite SPA, `arch-features.md`, plain CSS. Opened from the bot's `web_app` button; shows the proxy video with a trim timeline (long press refines the step), point / box selection of the object on any frame, and the options. Deployed to GitHub Pages by `.github/workflows/pages.yml`.
 
 Flow: video sent to the bot → webhook → `ingest` (CPU: MTProto download to the Volume, ffprobe, proxy video + filmstrip for the Mini App) → the bot sends the Mini App button → the owner submits trim + prompt + options → `render` (GPU: track → camera path → render) → `sendVideoNote`.
 
@@ -35,8 +35,11 @@ Flow: video sent to the bot → webhook → `ingest` (CPU: MTProto download to t
 - Free hosting only (Modal Starter + GitHub Pages). Bot restricted to `ALLOWED_USER_IDS`.
 - Output 640×640 by default; size and duration ceilings are settled by the Telegram experiment (`backend/rounds/README.md`, Telegram experiment).
 - Object at the frame edge: honest pixels first, an unnoticeable fill where the circle leaves the frame; an AI outpainting model may come later.
+- Frame rate: the note keeps the source rate up to 60. "Smooth to 60 fps" (RIFE interpolation, off by default) is offered for anything below 60 (59.94 included), with dropped frames or with frozen duplicate frames, and always targets 60. It must never fail on broken phone files (`backend/rounds/README.md`, Broken sources, Output rate).
 - Loudness normalization is an option, off by default. Leave room for more audio filters and for video stabilization (shaky handheld sources) as later options.
 - UI copy (bot messages and Mini App) is English.
+- The Mini App targets only Telegram for iOS 18+ and Telegram Desktop on Windows (WebView2): no legacy support (`miniapp/README.md`, Build target).
+- Overrides react.md (Target React 19.2+): the Mini App runs on Preact 10 through `preact/compat` for a 5× smaller bundle (`miniapp/README.md`, Preact). `useEffectEvent` does not exist there: a handler read by an effect is a ref updated in a layout effect.
 
 ## Commands
 

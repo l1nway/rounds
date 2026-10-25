@@ -1,7 +1,7 @@
 /* [DOC: safe-areas] */
 .editor {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto auto auto auto;
+  grid-template-rows: minmax(0, 1fr) auto auto auto;
   box-sizing: border-box;
   height: 100%;
   max-width: 720px;
