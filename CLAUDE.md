@@ -1,0 +1,48 @@
+# l1nway rounds bot
+
+@~/projects/claude-rules/python.md
+@~/projects/claude-rules/react.md
+@~/projects/claude-rules/web.md
+@~/projects/claude-rules/web-platforms.md
+@~/projects/claude-rules/css.md
+@~/projects/claude-rules/arch-features.md
+@~/projects/claude-rules/perf.md
+@~/projects/claude-rules/perf-web.md
+
+## Project
+
+A personal (non-commercial) Telegram bot that turns any source video (4K, 1080p, vertical or horizontal, up to 2 GB) into a Telegram video note ("round") of the highest quality Telegram accepts as is. The owner sends a file, picks the object to follow, the trim range and the options in a Mini App; a GPU job tracks the object, solves a smooth virtual camera path that keeps it inside the circle, and renders the note with FFmpeg.
+
+Everything runs for free: the backend on Modal (Starter credits, scales to zero, cold starts are fine), the Mini App on GitHub Pages. No VPS and no Local Bot API Server: files up to 2 GB move over MTProto with the bot token.
+
+## Map
+
+One repo, two parts:
+
+- `backend/`: Python 3.12, a uv project, one Modal app (`rounds`). The package `backend/rounds/` holds the webhook bot (aiogram), the Mini App API (FastAPI, Telegram `initData` auth), MTProto file transfer (Telethon), the media pipeline (ffprobe / ffmpeg), tracking (SAM 2.1 via HF transformers) and the camera path solver (HiGHS through SciPy). Job state lives in a `modal.Dict`, files in a `modal.Volume`. The layout and its reasons are in `backend/rounds/README.md`.
+- `miniapp/`: React (JS) + Vite SPA, `arch-features.md`, plain CSS. Opened from the bot's `web_app` button; shows the proxy video with a trim timeline (long press refines the step), point / box selection of the object on any frame, and the options. Deployed to GitHub Pages by `.github/workflows/pages.yml`.
+
+Flow: video sent to the bot → webhook → `ingest` (CPU: MTProto download to the Volume, ffprobe, proxy video + filmstrip for the Mini App) → the bot sends the Mini App button → the owner submits trim + prompt + options → `render` (GPU: track → camera path → render) → `sendVideoNote`.
+
+## Telegram limits (verified, see `backend/rounds/README.md` for sources)
+
+- Video note: square H.264 MP4, `length` ≤ 640 (TDLib rejects more with 400), "up to 1 minute". No re-encoding by the Bot API or TDLib: what we upload is what people see.
+- Cloud Bot API: download 20 MB, upload 50 MB. MTProto (bots included): up to 2000 MB.
+- Mini App data goes back through our API with `initData` validated by HMAC; `sendData` is not used (keyboard-button launches only).
+
+## Owner decisions
+
+- Free hosting only (Modal Starter + GitHub Pages). Bot restricted to `ALLOWED_USER_IDS`.
+- Output 640×640 by default; size and duration ceilings are settled by the Telegram experiment (`backend/rounds/README.md`, Telegram experiment).
+- Object at the frame edge: honest pixels first, an unnoticeable fill where the circle leaves the frame; an AI outpainting model may come later.
+- Loudness normalization is an option, off by default. Leave room for more audio filters and for video stabilization (shaky handheld sources) as later options.
+- UI copy (bot messages and Mini App) is English.
+
+## Commands
+
+- Backend (from `backend/`): `uv sync`; `uv run ruff check`; `uv run modal serve -m rounds.app` (dev); `uv run modal deploy -m rounds.app`; secrets: `uv run --with python-dotenv modal secret create rounds --from-dotenv ../.env --force` (the Modal CLI needs `python-dotenv` for `--from-dotenv`; `--with` keeps it out of the project); webhook after a deploy: `uv run modal run -m rounds.app::setup` (it looks up the deployed `web`, so the URL is the permanent one even though `modal run` also starts a `-dev` copy).
+- Mini App (from `miniapp/`): `npm install`; `npm run mock` (test video + filmstrip into `public/mock/`, needs ffmpeg) then `npm run dev` without `VITE_API_URL` (mock API, scenarios via `?job=ready|ingest|done|failed|rendering|missing|reject`); `npm run lint`; `npm run build`; `npm run perf`.
+
+## Env
+
+`.env` at the root (never committed), pushed to the Modal secret `rounds`: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_WEBHOOK_SECRET`, `ALLOWED_USER_IDS`, `MINIAPP_URL`, `HF_TOKEN` (optional, gated SAM 3 checkpoints). The Mini App gets the public API URL at build time (`VITE_API_URL`, a GitHub Actions variable, not a secret).

@@ -1,0 +1,35 @@
+[project]
+name = "rounds"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "aiogram>=3.31.0",
+    "cryptg>=0.6.0",
+    "fastapi>=0.162.0",
+    "modal>=1.6.2",
+    "numpy>=2.5.4",
+    "scipy>=1.18.1",
+    "telethon>=1.45.0",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.17.2",
+]
+gpu = [
+    "opencv-python-headless>=5.0.0.93",
+    "torch>=2.14.1",
+    "transformers>=5.20.2",
+]
+
+[tool.uv]
+default-groups = ['dev']
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.format]
+quote-style = 'single'
+
+[tool.ruff.lint]
+select = ['E', 'F', 'W', 'I', 'B', 'UP', 'SIM']

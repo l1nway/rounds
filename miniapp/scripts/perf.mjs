@@ -1,0 +1,1 @@
+C:/Users/l1nway/projects/claude-rules/tools/perf.mjs

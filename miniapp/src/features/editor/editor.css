@@ -1,0 +1,69 @@
+/* [DOC: safe-areas] */
+.editor {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto auto auto;
+  box-sizing: border-box;
+  height: 100%;
+  max-width: 720px;
+  margin-inline: auto;
+  padding:
+    calc(max(env(safe-area-inset-top), var(--tg-safe-area-inset-top, 0px)) + var(--tg-content-safe-area-inset-top, 0px))
+    max(env(safe-area-inset-right), var(--tg-safe-area-inset-right, 0px))
+    calc(max(env(safe-area-inset-bottom), var(--tg-safe-area-inset-bottom, 0px)) + var(--tg-content-safe-area-inset-bottom, 0px))
+    max(env(safe-area-inset-left), var(--tg-safe-area-inset-left, 0px));
+  overflow: hidden;
+}
+
+.options {margin: 0; padding: 0 16px; border: 0; min-width: 0}
+
+.options-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: var(--control);
+  padding: 6px 0;
+  transition: opacity var(--dur) var(--ease);
+}
+
+.options:disabled .options-row, .options-row:has(:disabled) {opacity: 0.5}
+
+.options-text {display: grid}
+
+.options-text small {color: var(--hint); font-size: 13px}
+
+.options-row input {
+  appearance: none;
+  flex: none;
+  position: relative;
+  width: 51px;
+  height: 31px;
+  margin: 0;
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hint) 40%, transparent);
+  transition: background-color var(--dur) var(--ease);
+}
+
+.options-row input::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 4px rgb(0 0 0 / 0.25);
+  transition: translate var(--dur) var(--ease);
+}
+
+.options-row input:checked {background: var(--button)}
+
+.options-row input:checked::after {translate: 20px}
+
+.editor-status {min-height: 1.35em; padding: 4px 16px 8px; font-size: 13px; color: var(--hint)}
+
+.editor-status p {margin: 0}
+
+.editor-status [role='alert'] {color: var(--danger)}

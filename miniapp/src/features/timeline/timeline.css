@@ -1,0 +1,130 @@
+.timeline {--handle: 16px; --hit: 24px; display: grid; gap: 6px; padding: 8px 16px 0}
+
+.timeline-head {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: start;
+  color: var(--hint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.timeline-head > :last-child {text-align: end}
+
+.timeline-clock {display: grid; justify-items: center}
+
+.timeline-clock output {color: var(--text); font-size: 17px; font-weight: 600}
+
+.timeline-mode {min-height: 1.35em; opacity: 0; transition: opacity var(--dur) var(--ease)}
+
+.timeline-mode[data-on] {opacity: 1}
+
+/* [DOC: timeline-hit-areas] */
+.timeline-track {
+  position: relative;
+  height: var(--strip);
+  margin: 6px var(--handle);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.timeline-film {position: absolute; inset: 0; display: flex; overflow: hidden; border-radius: 6px; background: var(--surface)}
+
+.timeline-film i {flex: none; width: var(--strip); height: 100%; background-image: var(--film); background-repeat: no-repeat}
+
+.timeline-film[data-ready] i {animation: film-in var(--dur) var(--ease)}
+
+@keyframes film-in {
+  from {opacity: 0}
+}
+
+.timeline-shade {position: absolute; top: 0; bottom: 0; background: rgb(0 0 0 / 0.55); pointer-events: none}
+
+.timeline-shade[data-side='start'] {border-radius: 6px 0 0 6px}
+
+.timeline-shade[data-side='end'] {border-radius: 0 6px 6px 0}
+
+.timeline-trim {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  box-sizing: border-box;
+  border-block: 3px solid var(--trim);
+  pointer-events: none;
+}
+
+.timeline-trim[data-off] {border-color: transparent}
+
+.timeline-scrub {position: absolute; inset: 0; border-radius: 6px; cursor: pointer}
+
+.timeline-trim {z-index: 2}
+
+.timeline-handle {position: absolute; top: -3px; bottom: -3px; width: var(--hit); pointer-events: auto; cursor: ew-resize}
+
+.timeline-handle::before {content: ''; position: absolute; top: 0; bottom: 0; width: var(--handle); background: var(--trim)}
+
+.timeline-handle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 3px;
+  height: 16px;
+  margin-top: -8px;
+  border-radius: 2px;
+  background: rgb(0 0 0 / 0.55);
+}
+
+.timeline-handle[data-kind='start'] {right: 100%}
+
+.timeline-handle[data-kind='start']::before {right: 0; border-radius: 6px 0 0 6px}
+
+.timeline-handle[data-kind='start']::after {right: calc(var(--handle) / 2 - 1.5px)}
+
+.timeline-handle[data-kind='end'] {left: 100%}
+
+.timeline-handle[data-kind='end']::before {left: 0; border-radius: 0 6px 6px 0}
+
+.timeline-handle[data-kind='end']::after {left: calc(var(--handle) / 2 - 1.5px)}
+
+.timeline-playhead {
+  position: absolute;
+  z-index: 3;
+  top: -8px;
+  bottom: -8px;
+  width: 4px;
+  margin-left: -2px;
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.35), 0 1px 4px rgb(0 0 0 / 0.4);
+  pointer-events: none;
+}
+
+.timeline-mark {
+  position: absolute;
+  bottom: -13px;
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
+  border-radius: 50%;
+  background: var(--button);
+  pointer-events: none;
+  transition: left var(--dur) var(--ease), opacity var(--dur) var(--ease);
+}
+
+@starting-style {
+  .timeline-mark {opacity: 0}
+}
+
+.timeline-controls {display: grid; grid-template-columns: 1fr auto 1fr; align-items: center}
+
+.timeline-buttons {display: flex; gap: 8px}
+
+.timeline-buttons svg {transition: scale var(--dur) var(--ease)}
+
+@starting-style {
+  .timeline-buttons svg {scale: 0.6}
+}
+
+.timeline-length {color: var(--hint); font-size: 12px; text-align: end; font-variant-numeric: tabular-nums}
