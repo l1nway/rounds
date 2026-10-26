@@ -46,7 +46,7 @@ Flow: video sent to the bot → webhook → `ingest` (CPU: MTProto download to t
 
 ## Commands
 
-- Backend (from `backend/`): `uv sync`; `uv run ruff check`; `uv run modal serve -m rounds.app` (dev); `uv run modal deploy -m rounds.app`; secrets: `uv run --with python-dotenv modal secret create rounds --from-dotenv ../.env --force` (the Modal CLI needs `python-dotenv` for `--from-dotenv`; `--with` keeps it out of the project); webhook after a deploy: `uv run modal run -m rounds.app::setup` (it looks up the deployed `web`, so the URL is the permanent one even though `modal run` also starts a `-dev` copy).
+- Backend (from `backend/`): `uv sync`; `uv run ruff check`; `uv run modal serve -m rounds.app` (dev); `uv run modal deploy -m rounds.app` (on Windows with `PYTHONIOENCODING=utf-8`, else the Modal CLI crashes printing ✓: `'charmap' codec can't encode`); secrets: `uv run --with python-dotenv modal secret create rounds --from-dotenv ../.env --force` (the Modal CLI needs `python-dotenv` for `--from-dotenv`; `--with` keeps it out of the project); webhook after a deploy: `uv run modal run -m rounds.app::setup` (it looks up the deployed `web`, so the URL is the permanent one even though `modal run` also starts a `-dev` copy).
 - Mini App (from `miniapp/`): `npm install`; `npm run lint`; `npm run build`; `npm run perf` (mock build). Local testing needs the gitignored `miniapp/dev/` folder (owner's PC only; mock API, Telegram shim, Dev panel to load a video from disk): `npm run mock` (test video, needs ffmpeg) then `npm run dev` without `VITE_API_URL`, scenarios via `?job=` (`miniapp/dev/README.md`). No mock code goes into `src/` (`miniapp/README.md`, Dev plugin).
 
 ## Env
