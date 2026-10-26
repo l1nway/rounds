@@ -184,7 +184,7 @@ async def render_job(job_id: str, jobs, state, volume, models) -> None:
             np.save(f'{job_dir}/path.npy', path)
             job = await stage(jobs, job, 'rendering')
             report = reporter(job, 'rendering', loop)
-            options = {**request['options'], 'denoise': request.get('denoise', 0)}
+            options = {**request['options'], **{k: request.get(k, 0) for k in ('denoise', 'look', 'exposure')}}
             args = (src, meta, start, end, path, cuts, out, options, request.get('codec', 'av1'), report)
             with timed(job_id, 'render.encode') as facts:
                 result = await asyncio.to_thread(render.render, *args)

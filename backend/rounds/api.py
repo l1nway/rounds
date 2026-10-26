@@ -20,7 +20,8 @@ INIT_DATA_TTL = 24 * 3600
 URL_TTL = 6 * 3600
 RELOADS, RELOAD_WAIT = 4, 0.3
 FILES = {'proxy.mp4': 'video/mp4', 'filmstrip.jpg': 'image/jpeg'}
-CORS = {'allow_methods': ['GET', 'POST'], 'allow_headers': ['Authorization', 'Content-Type']}
+# [DOC: look-cors]
+CORS = {'allow_methods': ['GET', 'POST'], 'allow_headers': ['Authorization', 'Content-Type', 'Range']}
 PUBLIC = ('id', 'status', 'stage', 'progress', 'error', 'meta', 'filmstrip', 'request')
 MASK = r'^data:image/png;base64,[A-Za-z0-9+/]+=*$'
 MASK_CHARS = 90_000
@@ -50,6 +51,8 @@ class RenderRequest(BaseModel):
     options: dict[str, bool] = {}
     codec: Literal['av1', 'hevc', 'vp9'] = 'av1'  # [DOC: codecs]
     denoise: float = Field(0, ge=0, le=1)  # [DOC: denoise]
+    look: float = Field(0, ge=0, le=1)  # [DOC: look]
+    exposure: float = Field(0, ge=-2, le=2)
 
     @model_validator(mode='after')
     def check(self):
@@ -58,6 +61,13 @@ class RenderRequest(BaseModel):
         if self.prompt.time is not None and not self.start <= self.prompt.time <= self.end:
             raise ValueError('The selection must be inside the range')
         return self
+
+
+# [DOC: look-preview]
+class LookRequest(BaseModel):
+    time: float = Field(ge=0)
+    look: float = Field(ge=0, le=1)
+    exposure: float = Field(0, ge=-2, le=2)
 
 
 def secret(label: bytes) -> bytes:
@@ -100,6 +110,16 @@ def create(jobs, volume, spawn) -> FastAPI:
         if not job or job['user_id'] != user_id:
             raise HTTPException(404, 'Job not found')
         return job
+
+    # [DOC: lift]
+    async def lift(call: str, job_id: str, job: dict, at: float, *args, failure: str):
+        if not job.get('proxy') or at > job['meta']['duration'] + 1e-3:
+            raise HTTPException(409, 'The video is not ready yet')
+        try:
+            return await spawn[call](job_id, at, *args, (job['proxy']['width'], job['proxy']['height']))
+        except Exception as error:
+            print(f'{call} {job_id} failed: {error!r}')
+            raise HTTPException(502, failure) from error
 
     @api.post('/telegram/webhook')
     async def webhook(request: Request, token: str = Header('', alias='X-Telegram-Bot-Api-Secret-Token')):
@@ -147,14 +167,15 @@ def create(jobs, volume, spawn) -> FastAPI:
         job = await own_job(job_id, authorization)
         if body.time is None:
             raise HTTPException(422, 'Select the object')
-        if not job.get('proxy') or body.time > job['meta']['duration'] + 1e-3:
-            raise HTTPException(409, 'The video is not ready yet')
-        size = job['proxy']['width'], job['proxy']['height']
-        try:
-            return await spawn['segment'](job_id, body.time, body.points, body.box, size)
-        except Exception as error:
-            print(f'segment {job_id} failed: {error!r}')
-            raise HTTPException(502, 'The outline is not available, the point still works') from error
+        failure = 'The outline is not available, the point still works'
+        return await lift('segment', job_id, job, body.time, body.points, body.box, failure=failure)
+
+    # [DOC: look-preview]
+    @api.post('/api/jobs/{job_id}/look')
+    async def look(job_id: str, body: LookRequest, authorization: str = Header('')):
+        job = await own_job(job_id, authorization)
+        args = job.get('source'), job.get('meta'), body.look, body.exposure
+        return await lift('look', job_id, job, body.time, *args, failure='The preview is not available')
 
     @api.get('/api/jobs/{job_id}/{name}')
     async def file(job_id: str, name: str, exp: int, sig: str):

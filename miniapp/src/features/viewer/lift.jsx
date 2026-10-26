@@ -1,4 +1,5 @@
 import {memo, useLayoutEffect, useRef, useState} from 'react'
+import {STAGE_EVENTS} from '../../constants/look.js'
 import {useAway} from '../../hooks/player.js'
 import {useLeave, usePresence} from '../../hooks/state.js'
 import './lift.css'
@@ -9,16 +10,20 @@ function Layer({n, mask, sweep, on, refs, done}) {
   const ref = useLeave(on, gone)
 
   useLayoutEffect(() => {
-    const video = refs.current.video
-    const paint = () => {
+    const {video, stage} = refs.current
+    const paint = source => {
       const c = canvas.current
       c.width = video.videoWidth
       c.height = video.videoHeight
-      c.getContext('2d').drawImage(video, 0, 0)
+      c.getContext('2d').drawImage(source ?? video, 0, 0, c.width, c.height)
     }
-    if (!video.seeking) {paint(); return}
-    video.addEventListener('seeked', paint, {once: true})
-    return () => video.removeEventListener('seeked', paint)
+    // [DOC: lift-source]
+    const fresh = () => {paint(); stage.dispatchEvent(new Event(STAGE_EVENTS.ask))}
+    const graded = event => paint(event.detail)
+    stage.addEventListener(STAGE_EVENTS.paint, graded)
+    if (video.seeking) video.addEventListener('seeked', fresh, {once: true})
+    else fresh()
+    return () => {stage.removeEventListener(STAGE_EVENTS.paint, graded); video.removeEventListener('seeked', fresh)}
   }, [refs])
 
   return (

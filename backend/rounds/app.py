@@ -4,7 +4,7 @@ from pathlib import Path
 import modal
 
 from . import pipeline
-from .config import DATA_DIR, DEEP_FILTER, JOBS_DIR, RIFE_WEIGHTS, SEEDVR_CODE
+from .config import DATA_DIR, DCE_WEIGHTS, DEEP_FILTER, DVD_WEIGHTS, JOBS_DIR, RIFE_WEIGHTS, SEEDVR_CODE
 
 PROJECT = Path(__file__).parent.parent
 FFMPEG = (
@@ -21,11 +21,23 @@ VOICE = (
     'https://github.com/Rikorose/DeepFilterNet/releases/download/v0.5.6/deep-filter-0.5.6-x86_64-unknown-linux-musl',
     '70775e251eee44c0f2451a1e833326cf8bcbbe304d3e7cd12851e6fce72ef7da',
 )
+# [DOC: repair-weights]
+REPAIR = (
+    (DVD_WEIGHTS, 'https://raw.githubusercontent.com/m-tassano/fastdvdnet/c8fdf6182a0340e89dd18f5df25b47337cbede6f/'
+     'model.pth', '9d9d8413c33e3d9d961d07c530237befa1197610b9d60602ff42fd77975d2a17'),
+    (DCE_WEIGHTS, 'https://raw.githubusercontent.com/Li-Chongyi/Zero-DCE_extension/'
+     '09f202b690f82da939b8e6ec8535960ae97ad8bd/Zero-DCE%2B%2B/snapshots_Zero_DCE%2B%2B/Epoch99.pth',
+     'ca8855b90df9a80fa4195a831f33d3476b1964f787eb70602797c773067f3b84'),
+)  # fmt: skip
 # [DOC: upscale]
 SEEDVR = 'https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler', '4490bd1f482e026674543386bb2a4d176da245b9'
 MODELS_DIR = '/models'
 GPU = 'L4'
 LIFT_IDLE = 120
+
+
+def fetch(path: str, url: str, sha: str) -> tuple[str, str]:
+    return f'curl -fsSL --create-dirs -o {path} {url}', f'echo "{sha}  {path}" | sha256sum -c'
 
 
 def image(*groups: str, commands: tuple[str, ...] = ()) -> modal.Image:
@@ -47,11 +59,10 @@ def image(*groups: str, commands: tuple[str, ...] = ()) -> modal.Image:
 
 app = modal.App('rounds')
 # [DOC: rife-weights]
-weights = (f'curl -fsSL --create-dirs -o {RIFE_WEIGHTS} {RIFE[0]}', f'echo "{RIFE[1]}  {RIFE_WEIGHTS}" | sha256sum -c')
+weights = tuple(c for f in ((RIFE_WEIGHTS, *RIFE), *REPAIR) for c in fetch(*f))
 seedvr = (f'git init -q {SEEDVR_CODE} && git -C {SEEDVR_CODE} fetch -q --depth 1 {SEEDVR[0]} {SEEDVR[1]}',
           f'git -C {SEEDVR_CODE} checkout -q FETCH_HEAD')  # fmt: skip
-voice = (f'curl -fsSL -o {DEEP_FILTER} {VOICE[0]}', f'echo "{VOICE[1]}  {DEEP_FILTER}" | sha256sum -c',
-         f'chmod +x {DEEP_FILTER} && {DEEP_FILTER} --version')  # fmt: skip
+voice = (*fetch(DEEP_FILTER, *VOICE), f'chmod +x {DEEP_FILTER} && {DEEP_FILTER} --version')
 cpu_image, gpu_image = image(), image('gpu', commands=(*weights, *seedvr, *voice))
 data = modal.Volume.from_name('rounds-data', create_if_missing=True)
 models = modal.Volume.from_name('rounds-models', create_if_missing=True)
@@ -68,7 +79,7 @@ def web():
 
     lift = Lift()
     calls = {'ingest': ingest.spawn.aio, 'render': render.spawn.aio, 'warm': lift.warm.spawn.aio,
-             'segment': lift.segment.remote.aio}  # fmt: skip
+             'segment': lift.segment.remote.aio, 'look': lift.look.remote.aio}  # fmt: skip
     return create(jobs, data, calls)
 
 
@@ -90,13 +101,17 @@ async def render(job_id: str) -> None:
 class Lift:
     @modal.enter(snap=True)
     def load(self):
+        from . import render, repair
         from .segment import Segmenter
 
-        self.segmenter = Segmenter()
+        self.segmenter, self.nets, self.preview = Segmenter(), repair.load(), render.preview
 
     @modal.enter(snap=False)
     def to_gpu(self):
+        from . import repair
+
         self.segmenter.to('cuda')
+        self.nets = repair.to(self.nets, 'cuda')
 
     @modal.method()
     def warm(self) -> None:
@@ -107,6 +122,14 @@ class Lift:
         if not os.path.exists(f'{JOBS_DIR}/{job_id}/proxy.mp4'):
             data.reload()
         return self.segmenter.segment(job_id, at, points, box, size)
+
+    # [DOC: look-preview]
+    @modal.method()
+    def look(self, job_id: str, at: float, name: str, meta: dict, value: float, ev: float, size: tuple) -> dict:
+        src = f'{JOBS_DIR}/{job_id}/{name}'
+        if not os.path.exists(src):
+            data.reload()
+        return self.preview(src, meta, at, value, ev, size, self.nets)
 
 
 @app.function(image=cpu_image, secrets=secrets)

@@ -30,3 +30,6 @@ export const postRender = (id, body) => post(`${jobPath(id)}/render`, body)
 export const warmLift = id => post(`${jobPath(id)}/warm`)
 
 export const segment = (id, prompt) => post(`${jobPath(id)}/segment`, prompt)
+
+// [DOC: exact-frame]
+export const lookFrame = (id, body) => post(`${jobPath(id)}/look`, body)

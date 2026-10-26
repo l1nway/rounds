@@ -1,6 +1,6 @@
 # services
 
-`api.js`: the backend calls (`getJob`, `postRender`, and for Lift `warmLift`, `segment`) (`Authorization: tma <initData>`, errors as `{detail}`, FastAPI validation lists read through `detail[0].msg`). `telegram.js`: the `Telegram.WebApp` integration. No mock code here (`miniapp/README.md`, Dev plugin).
+`api.js`: the backend calls (`getJob`, `postRender`, for Lift `warmLift`, `segment`, and `lookFrame` for the HDR preview) (`Authorization: tma <initData>`, errors as `{detail}`, FastAPI validation lists read through `detail[0].msg`). `telegram.js`: the `Telegram.WebApp` integration. No mock code here (`miniapp/README.md`, Dev plugin).
 
 ## Telegram setup
 
@@ -17,6 +17,10 @@ APIs used, all checked in core.telegram.org/bots/webapps (2026-10-25): `initData
 ## Lift
 
 `warmLift(id)` and `segment(id, {time, points, box})` back tap-to-lift (`features/viewer/README.md`, Lift).
+
+## Exact frame
+
+`lookFrame(id, {time, look, exposure})` posts to `/api/jobs/{id}/look` and returns `{image, width, height}` (a JPEG data URL of the whole display-oriented frame at proxy size with the complete HDR look, AI repair included; 409 while the proxy is not ready, 502 with a readable `detail` when the GPU call fails). Caller and timing: `features/viewer/README.md`, Exact frame.
 
 ## Launch aspect
 

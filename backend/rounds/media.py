@@ -12,6 +12,8 @@ from .source import run
 
 ZIN = {'hlg': 'arib-std-b67', 'pq': 'smpte2084'}
 PROXY_LONG = 960
+# [DOC: proxy-tonemap]
+MOBIUS, PROXY_PEAK = 0.3, 10
 DEPTH = 4
 PROXY_X264 = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-g', '15', '-pix_fmt', 'yuv420p']
 BT709 = 'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv'
@@ -61,7 +63,8 @@ def sdr_chain(meta: dict, w: int, h: int) -> str:
     # [DOC: proxy-tonemap]
     return (
         f'scale={w}:{h}:flags=bicubic,zscale=tin={ZIN[meta["transfer"]]}:pin=2020:min=2020_ncl:t=linear:npl=100,'
-        f'format=gbrpf32le,zscale=p=709,tonemap=tonemap=mobius:desat=0,zscale=t=709:m=709:r=tv,format=yuv420p,{BT709}'
+        f'format=gbrpf32le,zscale=p=709,tonemap=tonemap=mobius:param={MOBIUS}:peak={PROXY_PEAK}:desat=0,'
+        f'zscale=t=709:m=709:r=tv,format=yuv420p,{BT709}'
     )
 
 

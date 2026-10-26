@@ -80,17 +80,21 @@
   box-shadow: var(--knob);
 }
 
-/* [DOC: noise-slider] */
+/* [DOC: level-rows] */
 .options-level {grid-template-columns: 1fr}
 
 .options-level > span {display: grid; gap: 8px}
 
-.options-level input {appearance: none; display: block; width: 100%; height: 28px; margin: 0; background: none}
+.options-level .options-text > span {display: flex; justify-content: space-between; gap: 12px}
+
+.options-level output {color: var(--hint); font-variant-numeric: tabular-nums}
+
+.options-level input {--x: calc(14px + (100% - 28px) * var(--p)); appearance: none; display: block; width: 100%; height: 28px; margin: 0; background: none}
 
 .options-level input::-webkit-slider-runnable-track {
   height: 4px;
   border-radius: 2px;
-  background: linear-gradient(to right, var(--button) calc(14px + (100% - 28px) * var(--p)), var(--track) 0);
+  background: linear-gradient(to right, var(--track) min(var(--from), var(--x)), var(--button) 0 max(var(--from), var(--x)), var(--track) 0);
 }
 
 .options-level input::-webkit-slider-thumb {

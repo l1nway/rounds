@@ -1,7 +1,7 @@
 import {memo, useRef} from 'react'
 import Swap from '../../components/swap.jsx'
 import {haptic} from '../../services/telegram.js'
-import {CODECS, NOISE, OPTIONS} from './draft.js'
+import {CODECS, LEVELS, OPTIONS, shows} from './draft.js'
 import './options.css'
 
 const FIRST_OPTION = 3
@@ -70,21 +70,25 @@ function Switch({name, label, hint, checked, disabled, order, onSet}) {
   )
 }
 
-const zone = value => NOISE.findIndex(({to}) => value <= to)
+const zone = (zones, value) => zones.findIndex(({to}) => value <= to)
+const signed = (value, unit) => `${value > 0 ? '+' : '−'}${Math.abs(value).toFixed(1)} ${unit}`
 
-// [DOC: noise-slider]
-function Noise({value, disabled, order, onSet}) {
-  const {hint} = NOISE[zone(value)]
-  const input = event => {
-    const next = event.target.valueAsNumber / 100
-    if (zone(next) !== zone(value)) haptic.tick()
-    onSet(next)
+// [DOC: level-rows]
+function Level({name, level: {label, min, max, steps, unit, zones}, value, disabled, order, onSet}) {
+  const {hint} = zones[zone(zones, value)]
+  const span = max - min
+  const shown = unit && value ? signed(value, unit) : ''
+  const set = next => {
+    if (zone(zones, next) !== zone(zones, value)) haptic.tick()
+    onSet(name, next)
   }
   return (
     <label className='options-row options-level enter' style={{'--i': order}}>
       <span>
-        <span className='options-text'>Reduce noise<Swap as='small' text={hint}/></span>
-        <input type='range' name='denoise' min='0' max='100' step='1' value={Math.round(value * 100)} aria-valuetext={hint} disabled={disabled} style={{'--p': value}} onInput={input}/>
+        <span className='options-text'><span>{label}{shown && <output>{shown}</output>}</span><Swap as='small' text={hint}/></span>
+        <input type='range' name={name} min='0' max={steps} step='1' value={Math.round((value - min) / span * steps)} aria-valuetext={shown ? `${shown}, ${hint}` : hint}
+          disabled={disabled} style={{'--p': (value - min) / span, '--from': `${-min / span * 100}%`}}
+          onInput={event => set(Math.round((min + span * event.target.valueAsNumber / steps) * 1000) / 1000)} onDblClick={min < 0 ? () => set(0) : undefined}/>
       </span>
     </label>
   )
@@ -103,14 +107,18 @@ function Codec({codec, disabled, order, onSet}) {
 }
 
 // [DOC: late-rows]
-export default memo(function Options({meta, options, codec, denoise, readOnly, dispatch}) {
+export default memo(function Options({meta, options, codec, denoise, look, exposure, readOnly, dispatch}) {
   const rows = meta ? OPTIONS.filter(({needs}) => needs(meta)) : []
-  const late = rows.length + Number(Boolean(meta?.has_audio))
+  const levels = meta ? LEVELS.filter(level => shows(meta, level)) : []
+  const values = {denoise, look, exposure}
+  const late = rows.length + levels.length
+  const order = i => `calc(${i} + ${FIRST_OPTION} * var(--early, 0))`
   const set = (name, value) => dispatch(prev => ({options: {...prev.options, [name]: value}}))
+  const setLevel = (name, value) => dispatch({[name]: value})
   return (
     <>
-      {rows.map(({key, label, hint}, i) => <Switch key={key} name={key} label={label} hint={hint} checked={Boolean(options[key])} disabled={readOnly} order={`calc(${i} + ${FIRST_OPTION} * var(--early, 0))`} onSet={set}/>)}
-      {meta?.has_audio && <Noise value={denoise} disabled={readOnly} order={`calc(${rows.length} + ${FIRST_OPTION} * var(--early, 0))`} onSet={value => dispatch({denoise: value})}/>}
+      {rows.map(({key, label, hint}, i) => <Switch key={key} name={key} label={label} hint={hint} checked={Boolean(options[key])} disabled={readOnly} order={order(i)} onSet={set}/>)}
+      {levels.map((level, i) => <Level key={level.key} name={level.key} level={level} value={values[level.key]} disabled={readOnly} order={order(rows.length + i)} onSet={setLevel}/>)}
       <Codec codec={codec} disabled={!meta || readOnly} order={`calc(${FIRST_OPTION} + ${late} * var(--early, 0))`} onSet={value => dispatch({codec: value})}/>
     </>
   )

@@ -39,10 +39,41 @@
 /* [DOC: loading-crossfade] */
 .viewer-stage[data-reveal] > :is(.viewer-marks, .lift) {animation: appear var(--dur-enter) var(--ease)}
 
-.viewer-stage[data-reveal] > .viewer-video {animation: focus var(--dur-enter) var(--ease)}
+.viewer-stage[data-reveal] > :is(.viewer-video, .viewer-look) {animation: focus var(--dur-enter) var(--ease)}
 
 @keyframes focus {
   from {filter: blur(10px); scale: 1.06}
+}
+
+/* [DOC: look-preview] */
+.viewer-look {position: absolute; inset: 0; z-index: -2; pointer-events: none}
+
+.viewer-look > * {position: absolute; inset: 0; width: 100%; height: 100%}
+
+.viewer-look-shot {animation: appear var(--dur-long) var(--ease); transition: opacity var(--dur) var(--ease)}
+
+.viewer-look-shot[data-leaving] {opacity: 0}
+
+/* [DOC: ai-pending] */
+.viewer-look > .viewer-ai {
+  inset: auto 10px 10px auto;
+  width: 22px;
+  height: 22px;
+  fill: currentColor;
+  filter: drop-shadow(0 1px 3px rgb(0 0 0 / 0.5));
+  animation: ai-pulse 1600ms ease-in-out infinite, appear var(--dur) var(--ease);
+  transition: opacity var(--dur) var(--ease);
+}
+
+.viewer-look > .viewer-ai[data-leaving] {opacity: 0}
+
+@keyframes ai-pulse {
+  0%, 100% {color: #8e8e93; scale: 0.9}
+  50% {color: #fff; scale: 1.08}
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .viewer-look > .viewer-ai {animation: none; color: #fff}
 }
 
 .viewer-marks {position: absolute; inset: 0; pointer-events: none; transition: opacity var(--dur) var(--ease)}

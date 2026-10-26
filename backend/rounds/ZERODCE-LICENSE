@@ -1,0 +1,18 @@
+zerodce.py is adapted from Zero-DCE++/model.py of https://github.com/Li-Chongyi/Zero-DCE_extension
+(commit 09f202b690f82da939b8e6ec8535960ae97ad8bd). The weights (Zero-DCE++/snapshots_Zero_DCE++/Epoch99.pth)
+are from the same repository. The repository has no LICENSE file; its README says, verbatim:
+
+    ##  License
+    The code is made available for academic research purpose only. Under Attribution-NonCommercial 4.0
+    International License.
+
+Attribution: Chongyi Li, Chunle Guo, Chen Change Loy, "Learning to Enhance Low-Light Image via
+Zero-Reference Deep Curve Estimation", IEEE Transactions on Pattern Analysis and Machine Intelligence, 2021,
+doi:10.1109/TPAMI.2021.3063604.
+
+License text: Creative Commons Attribution-NonCommercial 4.0 International,
+https://creativecommons.org/licenses/by-nc/4.0/legalcode
+
+Changes: only the inference parts are kept (the network and the curve); the curve is applied with one map
+(the mean of the three) to max(R, G, B), scaled by a strength, and the maps are smoothed over time
+(rounds/README.md, Repair). Not for commercial use.

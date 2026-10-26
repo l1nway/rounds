@@ -77,6 +77,14 @@ function useLift(job, dispatch, readOnly) {
   return {lift, ask, cycle}
 }
 
+// [DOC: look-preview]
+let Look = null
+function useLook(loaded, on) {
+  const [ready, setReady] = useState(Boolean(Look))
+  useEffect(() => {if (loaded && !ready) import('./look.jsx').then(module => {Look = module.default; setReady(true)}, () => {})}, [loaded, on, ready])
+  return ready
+}
+
 // [DOC: selection-frame]
 const Marks = memo(function Marks({time, points, box, pending}) {
   const away = useAway(time)
@@ -110,7 +118,7 @@ function Notice({notice}) {
   )
 }
 
-export default memo(function Viewer({job, notice, aspect, selection, dispatch, readOnly}) {
+export default memo(function Viewer({job, notice, aspect, selection, look, exposure, dispatch, readOnly}) {
   const refs = useRef({video: null, stage: null, draw: null, drag: null})
   const viewer = useRef(null)
   const waiting = usePlayer(state => state.waiting)
@@ -121,6 +129,8 @@ export default memo(function Viewer({job, notice, aspect, selection, dispatch, r
   const [spinning, spinner] = usePresence(waiting && loaded)
   const {time, points, box} = selection
   const {lift, ask, cycle} = useLift(job, dispatch, readOnly)
+  const graded = look > 0 || exposure !== 0
+  const lookReady = useLook(loaded, graded)
   const {down, move, up, hide} = useGestures({job, selection, dispatch, readOnly, refs, ask, cycle})
   useFit(viewer, aspect)
 
@@ -140,8 +150,9 @@ export default memo(function Viewer({job, notice, aspect, selection, dispatch, r
         onPointerDown={press} onPointerMove={move} onPointerUp={release(up)} onPointerCancel={release(hide)}>
         <Sheen on={Boolean(job) && !loaded && !failed}/>
         {/* [DOC: video-source] */}
-        {job && <video ref={el => {refs.current.video = el}} className='viewer-video' src={`${job.proxy_url}#t=0.001`} playsInline preload='auto' disablePictureInPicture
-          onAnimationEnd={() => setRevealed(true)}/>}
+        {job && <video ref={el => {refs.current.video = el}} className='viewer-video' src={`${job.proxy_url}#t=0.001`} crossOrigin='anonymous' playsInline preload='auto'
+          disablePictureInPicture onAnimationEnd={() => setRevealed(true)}/>}
+        {loaded && graded && lookReady && <Look job={job} look={look} exposure={exposure} refs={refs}/>}
         {loaded && <Lift lift={lift} refs={refs} origin={originOf(points, box)}/>}
         {loaded && (points.length > 0 || box) && <Marks time={time} points={points} box={box} pending={lift?.pending}/>}
         {pressed && <div ref={el => {refs.current.draw = el}} className='viewer-box' data-draft hidden/>}

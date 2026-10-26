@@ -1,3 +1,4 @@
+import {LOOK} from '../../constants/look.js'
 import {MIN_RANGE, ms} from '../../hooks/player.js'
 
 // [DOC: options-seam]
@@ -8,8 +9,21 @@ export const OPTIONS = [
   {key: 'upscale', label: 'AI upscale', hint: 'Redraws a small video in sharp 640 px. Slow: about 4 min per 10 s', needs: meta => Math.min(meta.width, meta.height) < 640},
   {key: 'metadata', label: 'Keep original metadata', hint: 'Date, camera, GPS: recipients see where it was filmed', needs: meta => Object.keys(meta.tags ?? {}).length > 0}
 ]
-// [DOC: noise-slider]
-export const NOISE = [{to: 0, hint: 'Off'}, {to: 1, hint: 'AI keeps voices, cuts the rest, music too'}]
+// [DOC: level-rows]
+export const LEVELS = [
+  // [DOC: hdr-slider]
+  {key: 'look', label: 'HDR', min: 0, max: 1, steps: 100, zones: [
+    {to: 0, hint: 'Off'}, {to: LOOK.HONEST, hint: 'Recovers highlights and shadows'}, {to: 1, hint: 'AI cleans noise, lifts the dark. Slower'}
+  ]},
+  // [DOC: exposure-slider]
+  {key: 'exposure', label: 'Exposure', min: -2, max: 2, steps: 40, unit: 'EV', zones: [
+    {to: -0.05, hint: 'Darker, colours kept'}, {to: 0, hint: 'Off'}, {to: 2, hint: 'Brighter, highlights protected'}
+  ]},
+  // [DOC: noise-slider]
+  {key: 'denoise', label: 'Reduce noise', min: 0, max: 1, steps: 100, needs: meta => meta.has_audio, zones: [
+    {to: 0, hint: 'Off'}, {to: 1, hint: 'AI keeps voices, cuts the rest, music too'}
+  ]}
+]
 // [DOC: codec-picker]
 export const CODECS = [
   {key: 'av1', label: 'AV1', hint: 'Most detail per MB'},
@@ -20,6 +34,8 @@ export const CODECS = [
 const codecOf = key => CODECS.some(codec => codec.key === key) ? key : CODECS[0].key
 
 export const optionsFor = (meta, options) => Object.fromEntries(OPTIONS.map(({key, needs}) => [key, Boolean(needs(meta) && options[key])]))
+export const shows = (meta, {needs}) => !needs || needs(meta)
+export const levelsFor = (meta, draft) => Object.fromEntries(LEVELS.map(level => [level.key, shows(meta, level) ? draft[level.key] : 0]))
 
 // [DOC: editor-draft]
 export const init = job => {
@@ -27,8 +43,8 @@ export const init = job => {
   return {
     start: last?.start ?? 0, end: last?.end ?? ms(Math.min(job?.meta.duration ?? 0, job?.max_duration ?? 0)),
     time: last?.prompt.time ?? null, points: last?.prompt.points ?? [], box: last?.prompt.box ?? null,
-    mask: last?.prompt.mask ?? null, options: {...last?.options}, codec: codecOf(last?.codec), denoise: last?.denoise ?? 0,
-    posting: false, error: null
+    mask: last?.prompt.mask ?? null, options: {...last?.options}, codec: codecOf(last?.codec),
+    ...Object.fromEntries(LEVELS.map(({key}) => [key, last?.[key] ?? 0])), posting: false, error: null
   }
 }
 

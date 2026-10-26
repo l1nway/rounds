@@ -12,7 +12,7 @@
 
   button {padding: 0; border: 0; background: none}
 
-  video, canvas, svg {display: block; max-width: 100%}
+  video, canvas, svg, img {display: block; max-width: 100%}
 }
 
 /* [DOC: theme-tokens] */
