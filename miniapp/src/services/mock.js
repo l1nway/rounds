@@ -54,25 +54,6 @@ export const segment = async (id, {points, box}) => {
   return points.length > 1 ? {candidates: [disc(0.25)], best: 0} : {candidates: [0.08, 0.16, 0.3].map(disc), best: 1}
 }
 
-const button = Object.assign(document.createElement('button'), {type: 'button', className: 'mock-main', hidden: true})
-const clicks = new Set()
-button.addEventListener('click', () => clicks.forEach(fn => fn()))
-
-const MainButton = {
-  setParams({text, is_visible: visible, is_active: active}) {
-    if (text !== undefined) button.textContent = text
-    if (visible !== undefined) button.hidden = !visible
-    if (active !== undefined) button.disabled = !active
-    return this
-  },
-  show() {button.hidden = false; return this},
-  hide() {button.hidden = true; return this},
-  showProgress() {button.setAttribute('aria-busy', 'true'); button.disabled = true; return this},
-  hideProgress() {button.removeAttribute('aria-busy'); return this},
-  onClick(fn) {clicks.add(fn); return this},
-  offClick(fn) {clicks.delete(fn); return this}
-}
-
 const log = name => (...args) => window.mockHaptics.push([name, ...args].join(' '))
 
 const closeApp = () => {
@@ -87,9 +68,8 @@ window.mockRequests = []
 window.Telegram = {
   WebApp: {
     initData: 'mock', version: '9.0', platform: 'mock', themeParams: {}, isExpanded: true, isVersionAtLeast: () => true,
-    ready: noop, expand: noop, setHeaderColor: noop, setBackgroundColor: noop, setBottomBarColor: noop,
-    disableVerticalSwipes: noop, requestFullscreen: noop, close: closeApp, MainButton,
+    ready: noop, expand: noop, setHeaderColor: noop, setBackgroundColor: noop,
+    disableVerticalSwipes: noop, requestFullscreen: noop, close: closeApp,
     HapticFeedback: {selectionChanged: log('selection'), impactOccurred: log('impact'), notificationOccurred: log('notify')}
   }
 }
-document.body.append(button)

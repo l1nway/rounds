@@ -1,4 +1,11 @@
 /* [DOC: safe-areas] */
+:root {
+  --safe-left: max(env(safe-area-inset-left), var(--tg-safe-area-inset-left, 0px));
+  --safe-right: max(env(safe-area-inset-right), var(--tg-safe-area-inset-right, 0px));
+  --safe-bottom: calc(max(env(safe-area-inset-bottom), var(--tg-safe-area-inset-bottom, 0px)) + var(--tg-content-safe-area-inset-bottom, 0px));
+  --bar: 66px;
+}
+
 .editor {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto auto auto;
@@ -8,18 +15,15 @@
   margin-inline: auto;
   padding:
     calc(max(env(safe-area-inset-top), var(--tg-safe-area-inset-top, 0px)) + var(--tg-content-safe-area-inset-top, 0px))
-    max(env(safe-area-inset-right), var(--tg-safe-area-inset-right, 0px))
-    calc(max(env(safe-area-inset-bottom), var(--tg-safe-area-inset-bottom, 0px)) + var(--tg-content-safe-area-inset-bottom, 0px))
-    max(env(safe-area-inset-left), var(--tg-safe-area-inset-left, 0px));
+    var(--safe-right)
+    calc(var(--safe-bottom) + var(--bar))
+    var(--safe-left);
   overflow: hidden auto;
   container-type: size;
 }
 
 /* [DOC: editor-scroll] */
 .editor:has(> .viewer[data-fit]) {grid-template-rows: auto auto auto 1fr}
-
-/* entrance order */
-.options, .editor-status {--i: 3}
 
 /* [DOC: switch] */
 .options {
@@ -97,6 +101,38 @@
 .editor-status {min-height: 1.35em; padding: 4px 16px 8px; font-size: 13px; color: var(--hint)}
 
 .editor-status p {margin: 0}
+
+/* [DOC: submit-bar] */
+.editor-bar {
+  position: fixed;
+  inset: auto 0 0;
+  z-index: 2;
+  padding: 8px max(16px, var(--safe-right)) calc(var(--safe-bottom) + 8px) max(16px, var(--safe-left));
+  background: var(--bg);
+}
+
+.editor-submit {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  max-width: 688px;
+  height: calc(var(--bar) - 16px);
+  margin-inline: auto;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--button);
+  color: var(--button-text);
+  font-weight: 600;
+  transition: opacity var(--dur) var(--ease);
+}
+
+.editor-submit > * {grid-area: 1 / 1}
+
+.editor-submit:disabled:not([aria-busy]) {opacity: 0.45}
+
+.editor-submit[aria-busy] > :first-child {visibility: hidden}
+
+.editor-submit .spinner {width: 20px; height: 20px; border-width: 2px}
 
 .editor-status span {animation: appear var(--dur) var(--ease)}
 

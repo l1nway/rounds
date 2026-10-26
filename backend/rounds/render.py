@@ -1,5 +1,6 @@
 import contextlib
 import math
+import os
 import queue
 import subprocess
 import threading
@@ -13,8 +14,18 @@ from . import camera, color, media, smooth, source, tags
 from .config import FPS, OUT_SIZE
 
 X264 = ['-c:v', 'libx264', '-preset', 'slower', '-crf', '16', '-tune', 'film', '-profile:v', 'high',
-        '-pix_fmt', 'yuv420p', '-g', '60', '-maxrate', '6M', '-bufsize', '12M']  # fmt: skip
-AAC = ['-c:a', 'aac', '-b:a', '128k', '-ar', '48000', '-ac', '2']
+        '-pix_fmt', 'yuv420p', '-g', '60']  # fmt: skip
+X265 = ['-c:v', 'libx265', '-preset', 'slow', '-crf', '20', '-profile:v', 'main', '-tag:v', 'hvc1',
+        '-pix_fmt', 'yuv420p', '-g', '60', '-x265-params', 'log-level=error']  # fmt: skip
+AUDIO_RATE = 128_000
+AAC = ['-c:a', 'aac', '-b:a', str(AUDIO_RATE), '-ar', '48000', '-ac', '2']
+# [DOC: note-size]
+NOTE_BYTES = 10_000_000
+HEADROOM = 0.97
+MAX_RATE = 6_000_000
+BUFFER_S = 2
+SHRINK = 0.95
+FIT_TRIES = 3
 TAPS = 3
 DEPTH = 4
 PROGRESS_EVERY = 15
@@ -81,13 +92,41 @@ def writer(proc) -> tuple[queue.Queue, threading.Thread]:
     return q, t
 
 
-def encoder(src, meta: dict, start: float, dur: float, rate: float, out, options: dict) -> subprocess.Popen:
+# [DOC: high-resolution]
+def codec(options: dict) -> list[str]:
+    return X265 if options.get('hevc') else X264
+
+
+# [DOC: note-size]
+def vbv(dur: float, has_audio: bool, size: int, scale: float = 1.0) -> list[str]:
+    room = NOTE_BYTES * 8 * HEADROOM - (AUDIO_RATE * dur if has_audio else 0)
+    cap = int(min(MAX_RATE * (size / OUT_SIZE) ** 1.5, room / (dur + BUFFER_S)) * scale)
+    return ['-maxrate', str(cap), '-bufsize', str(cap * BUFFER_S)]
+
+
+# [DOC: note-size]
+def shrink(out, dur: float, has_audio: bool, size: int, options: dict) -> None:
+    scale, tmp = 1.0, f'{out}.fit.mp4'
+    for _ in range(FIT_TRIES):
+        size = os.path.getsize(out)
+        if size <= NOTE_BYTES:
+            return
+        scale *= SHRINK * NOTE_BYTES / size
+        subprocess.run(['ffmpeg', '-v', 'error', '-y', '-nostdin', '-i', str(out), '-map', '0:v', *codec(options),
+                        *vbv(dur, has_audio, size, scale), '-map', '0:a?', '-c:a', 'copy', '-movflags', '+faststart',
+                        tmp], check=True)  # fmt: skip
+        os.replace(tmp, out)
+    if os.path.getsize(out) > NOTE_BYTES:
+        raise RuntimeError(f'note still over {NOTE_BYTES} bytes after {FIT_TRIES} tries')
+
+
+def encoder(src, meta: dict, start: float, dur: float, rate: float, out, options: dict, size: int) -> subprocess.Popen:
     # [DOC: render-options]
     audio = ['-map', '1:a:0', '-af', media.audio_filter(src, start, dur, options), *AAC] if meta['has_audio'] else []
     cmd = ['ffmpeg', '-v', 'error', '-y', '-nostdin', '-f', 'rawvideo', '-pix_fmt', 'yuv420p',
-           '-s', f'{OUT_SIZE}x{OUT_SIZE}', '-framerate', str(rate), '-i', 'pipe:0',
+           '-s', f'{size}x{size}', '-framerate', str(rate), '-i', 'pipe:0',
            *media.audio_input(src, meta, start, dur),
-           '-map', '0:v', '-vf', f'{media.BT709},setsar=1', *X264, *audio,
+           '-map', '0:v', '-vf', f'{media.BT709},setsar=1', *codec(options), *vbv(dur, meta['has_audio'], size), *audio,
            *tags.created(tags.kept(meta, options)), '-t', f'{dur:.3f}', '-movflags', '+faststart',
            str(out)]  # fmt: skip
     return subprocess.Popen(cmd, stdin=subprocess.PIPE)
@@ -96,24 +135,25 @@ def encoder(src, meta: dict, start: float, dur: float, rate: float, out, options
 # [DOC: output-rate]
 def render(src, meta: dict, start: float, end: float, path, cuts, out, options: dict, progress=None) -> dict:
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    rate = source.out_rate(meta, options)
+    rate, size = source.out_rate(meta, options), source.out_size(meta, options)
     n, (w, h), bits = media.frame_count(start, end, rate), (meta['width'], meta['height']), max(meta['bit_depth'], 8)
     cw, ch = (w + 1) // 2, (h + 1) // 2
     deep = bits > 8
     matrix = meta.get('matrix') or ('bt709' if meta['transfer'] == 'sdr' else 'bt2020')
     geo = (w, h, cw, ch), (10 if deep else 8, meta.get('full_range', False), matrix, meta['transfer'])
     raw = w * h + 2 * cw * ch, np.int16 if deep else np.uint8, 'yuv420p10le' if deep else 'yuv420p'
-    at, cut, stats = camera.sampler(np.asarray(path, np.float64), cuts), partial(crop, geo=geo, device=device), {}
+    at, stats = camera.sampler(np.asarray(path, np.float64), cuts), {}
+    cut = partial(crop, geo=geo, device=device, size=size)
     if source.interpolating(meta, options):
         stats = {'synth': 0, 'dupes': 0}
         frames = media.retrying(
-            lambda slow: smooth.frames(src, meta, start, n, rate, at, cuts, cut, raw, device, stats, slow)
+            lambda slow: smooth.frames(src, meta, start, n, rate, at, cuts, cut, size, raw, device, stats, slow)
         )
     else:
         frames = media.retrying(lambda slow: cfr(src, meta, start, n, rate, at, cut, raw, slow))
-    enc = encoder(src, meta, start, n / rate, rate, out, options)
+    enc = encoder(src, meta, start, n / rate, rate, out, options, size)
     q, t = writer(enc)
-    noise, k, last = color.dither(OUT_SIZE, device), 0, None
+    noise, k, last = color.dither(size, device), 0, None
     try:
         with torch.inference_mode(), contextlib.closing(frames):
             for rgb in frames:
@@ -134,7 +174,10 @@ def render(src, meta: dict, start: float, end: float, path, cuts, out, options: 
     t.join()
     if enc.wait():
         raise RuntimeError(f'encoder failed (ffmpeg exit {enc.returncode})')
+    shrink(out, n / rate, meta['has_audio'], size, options)
     tags.write(out, tags.kept(meta, options))
     if progress:
         progress(1.0)
-    return {'size': Path(out).stat().st_size, 'duration': n / rate, 'rate': rate, 'frames': n, **stats}
+    kind = 'hevc' if options.get('hevc') else 'h264'
+    return {'size': Path(out).stat().st_size, 'side': size, 'codec': kind, 'duration': n / rate, 'rate': rate,
+            'frames': n, **stats}  # fmt: skip

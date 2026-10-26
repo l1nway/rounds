@@ -1,5 +1,3 @@
-import {useLayoutEffect, useRef} from 'react'
-
 const MOBILE = ['ios', 'android']
 const SETTLE = 1000
 
@@ -36,28 +34,7 @@ export const setupTelegram = () => {
   app.ready()
   app.expand()
   if (since('6.1')) {app.setHeaderColor('bg_color'); app.setBackgroundColor('bg_color')}
-  if (since('7.10')) app.setBottomBarColor('bottom_bar_bg_color')
   if (since('7.7')) app.disableVerticalSwipes()
   if (fullscreen) app.requestFullscreen()
   settle(app, fullscreen)
-}
-
-// [DOC: main-button]
-export const useMainButton = ({text, visible, active, progress, onClick}) => {
-  const click = useRef(onClick)
-  useLayoutEffect(() => {click.current = onClick})
-  useLayoutEffect(() => {
-    const button = tg()?.MainButton
-    if (!button) return
-    const handler = () => click.current()
-    button.onClick(handler)
-    return () => {button.offClick(handler); button.hideProgress().hide()}
-  }, [])
-  useLayoutEffect(() => {
-    const button = tg()?.MainButton
-    if (!button) return
-    button.setParams({text, is_visible: visible, is_active: active && !progress})
-    if (progress) button.showProgress(false)
-    else button.hideProgress()
-  }, [text, visible, active, progress])
 }

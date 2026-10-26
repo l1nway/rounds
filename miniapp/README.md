@@ -18,7 +18,7 @@ The app runs on Preact 10 with the React API of `preact/compat` (owner decision 
 
 Differences that matter here:
 
-- No `useEffectEvent` (not exported by `preact/compat` 10.29): `useMainButton` keeps the handler in a ref updated by a layout effect (`services/README.md`, Main button).
+- No `useEffectEvent` (not exported by `preact/compat` 10.29): a handler an effect reads goes into a ref updated by a layout effect.
 - No `StrictMode` (a Fragment in compat), so effects are not double-invoked in dev.
 - Renders are batched to a microtask even for discrete events (React flushes a click or a keydown synchronously): code that reads the DOM right after a `dispatch` sees the old render. Nothing in the app does; a test must wait a tick.
 - `onChange` of a text input is mapped to `input` by compat (as in React); the app has only a checkbox, where both fire on click.

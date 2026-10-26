@@ -152,7 +152,8 @@ async def render_job(job_id: str, jobs, state, volume, models) -> None:
             job = await stage(jobs, job, 'framing')
             with timed(job_id, 'render.camera'):
                 found = to_source(found, frames, meta)
-                path = await asyncio.to_thread(camera.solve, found, meta['width'], meta['height'], cuts)
+                size = source.out_size(meta, request['options'])
+                path = await asyncio.to_thread(camera.solve, found, meta['width'], meta['height'], cuts, out_size=size)
             np.savez(f'{job_dir}/track.npz', **found)
             np.save(f'{job_dir}/path.npy', path)
             job = await stage(jobs, job, 'rendering')
@@ -161,7 +162,7 @@ async def render_job(job_id: str, jobs, state, volume, models) -> None:
                 result = await asyncio.to_thread(
                     render.render, src, meta, start, end, path, cuts, out, request['options'], report
                 )
-                stats = {k: v for k, v in result.items() if k in ('rate', 'synth', 'dupes')}
+                stats = {k: v for k, v in result.items() if k in ('side', 'codec', 'rate', 'synth', 'dupes')}
                 facts.update(fps=(result['frames'], ''), mb=round(result['size'] / MB, 1), **stats)
             with timed(job_id, 'render.commit'):
                 await volume.commit.aio()

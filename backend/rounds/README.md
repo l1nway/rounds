@@ -144,7 +144,7 @@ Two detectors for one thing: a repeated (frozen) frame, as written by apps that 
 
 ## Output rate
 
-`source.out_rate`: `MAX_FPS` (60) when `options.interpolate` and `meta.interpolable`, else the source rate capped at 60 (a 24 fps source gives a 24 fps note, 120 fps is decimated to 60). `meta.interpolable` (set at ingest): a rate under 60 (59.94 included: owner decision, anything under 60), `gaps` ≥ 0.5 %, or `dupes` ≥ 0.5 % (`SHARE`). Otherwise the Mini App shows the "Smooth to 60 fps" switch disabled ("Already a steady 60 fps"; the options seam disables, never hides). Interpolation always targets 60, never ×2 (owner decision). Tracking and the camera stay at `FPS` 30, so SAM costs the same; the path is resampled (Path sampler). The proxy stays 30 fps. x264 settings are unchanged: `-g 60` is 1 s at 60 fps, maxrate 6M is shared by twice the frames. Not yet checked: how the Telegram clients (iOS, Desktop) play a 60 fps note.
+`source.out_rate`: `MAX_FPS` (60) when `options.interpolate` and `meta.interpolable`, else the source rate capped at 60 (a 24 fps source gives a 24 fps note, 120 fps is decimated to 60). `meta.interpolable` (set at ingest): a rate under 60 (59.94 included: owner decision, anything under 60), `gaps` ≥ 0.5 %, or `dupes` ≥ 0.5 % (`SHARE`). Otherwise the Mini App shows the "Smooth to 60 fps" switch disabled ("Already a steady 60 fps"; the options seam disables, never hides). Interpolation always targets 60, never ×2 (owner decision). Tracking and the camera stay at `FPS` 30, so SAM costs the same; the path is resampled (Path sampler). The proxy stays 30 fps. x264 settings are unchanged: `-g 60` is 1 s at 60 fps, the size cap (Note size) is shared by twice the frames. Not yet checked: how the Telegram clients (iOS, Desktop) play a 60 fps note.
 
 ## Path sampler
 
@@ -156,7 +156,7 @@ Two detectors for one thing: a repeated (frozen) frame, as written by apps that 
 
 1. Source frames as they are, each with its own pts (Timed decode); no `fps` filter.
 2. Duplicates dropped (Duplicate frames).
-3. Each kept frame cropped by the camera path at its own time to `smooth.SIDE` 704² (640 + `PAD` 32 px each side; 704 is a multiple of 64, RIFE's input step; same centre, side × 704 / 640), in gamma (BT.1886 2.4: plain video pixels, what RIFE was trained on), half precision on the GPU; `Head` features once per frame.
+3. Each kept frame cropped by the camera path at its own time to a padded side: the output side + `PAD` 32 px each side, rounded up to a multiple of 64 (`MULTIPLE`, RIFE's input step): 704 for 640, 832 for 720, 1152 for 1080 (High resolution); same centre, window × padded / output, in gamma (BT.1886 2.4: plain video pixels, what RIFE was trained on), half precision on the GPU; `Head` features once per frame.
 4. Output slot j at j / 60: a real frame within a quarter of a slot (`SNAP`) is used as is (30 fps: every even slot; 60 fps with gaps: all but the gaps); otherwise RIFE between the neighbouring kept frames at `(t − t_a) / (t_b − t_a)`, so VFR timing is honoured. A pair more than 1 s apart (`MAX_GAP`) or across a scene cut (the tracking cuts) is not morphed: the nearer frame is held. Slots before the first or after the last frame hold it.
 5. The result is cropped back to the output size, brought back to linear light, then the usual `color.encode` and x264.
 
@@ -205,7 +205,14 @@ Why crop first: RIFE at 704² costs the same for every source, 4K included, and 
 
 ## High resolution
 
-Tried and removed (2026-10-26): an experimental `hires` switch rendered the note at up to 1080×1080 and sent it through `sendVideoNote` (MTProto, `round_message=True`, `length=640`, since TDLib rejects more). In the owner's test it arrived as a regular video, not a round. So 640×640 is the ceiling (`OUT_SIZE`), and the note stays at the best 640 settings (Output encode). Do not retry a larger file unless Telegram changes how it treats video notes. An old request that still carries `options.hires` renders normally at 640 (unknown option keys are ignored, Job).
+Experimental again (owner request 2026-10-26): switches `hd720`, `hd1080` and `hevc` let the owner test which notes Telegram keeps a round. History: an earlier `hires` switch rendered up to 1080×1080 and the note arrived as a regular video; its size was not recorded, and a 640 note of 13.2 MB later failed the same way (Note size), so the size may have been the cause, not the side. Now every variant goes through the same 10 MB cap, which isolates the side and the codec.
+
+- `source.out_size`: 1080 with `hd1080` when the short side is at least 1080, else 720 with `hd720` when it is at least 720, else `OUT_SIZE` 640 (`SIDES`, first match wins, so 1080 beats 720). The Mini App enables the rows with the same test. `pipeline` passes the side to `camera.solve` (`out_size`: the window never gets smaller than the output, no upscale), `render` to `crop`, the dither, the encoder and `smooth.frames` (RIFE pads the frame to a multiple of 64: 704 / 832 / 1152).
+- `render.codec`: `hevc` picks `X265` (libx265 slow, CRF 20, Main, `-tag:v hvc1`, which Apple players need for HEVC in MP4; g 60), else `X264`. The VBV cap (Note size) and `shrink` use the same codec; libx265 reads `-maxrate` / `-bufsize` as its `vbv-maxrate` / `vbv-bufsize`. The `media.BT709` `setparams` tags the raw input, which libx265 needs (Output encode, trap).
+- `MAX_RATE` scales with the side as `(size / 640) ** 1.5` (1080: about 13 Mbit/s), but past a few seconds the 10 MB budget decides, so a long 1080 note gets the same bytes as a 640 one, spread over 2.8× the pixels.
+- `transfer.send_note` still declares 640×640 (`DocumentAttributeVideo`, `round_message=True`) whatever the file: the same as the failed 1080 test, so only the file changes between experiments. Untested: declaring the real side.
+- Logged as `side` and `codec` in `render.encode` (Stage timings).
+- Next, if a test passes: a "smart" pick (the largest side whose expected quality at this duration beats 640), owner request. Until then the switches are manual.
 
 ## Lanczos matrix
 
@@ -228,9 +235,18 @@ On the output frame only: BT.2390 EETF in the PQ domain, source peak `HDR_PEAK` 
 
 ## Output encode
 
-`color.encode`: BT.1886 inverse, BT.709 Y'CbCr limited, 4:2:0 as above, then a static dither (uniform ±0.5 LSB, fixed seed, the same pattern every frame: temporal noise would cost bitrate). Raw yuv420p 640² goes through a writer thread into x264 (`render.X264`: slower, CRF 16, tune film, High, g 60, maxrate 6M / bufsize 12M; level left to x264, 3.1).
+`color.encode`: BT.1886 inverse, BT.709 Y'CbCr limited, 4:2:0 as above, then a static dither (uniform ±0.5 LSB, fixed seed, the same pattern every frame: temporal noise would cost bitrate). Raw yuv420p 640² goes through a writer thread into x264 (`render.X264`: slower, CRF 16, tune film, High, g 60; maxrate and bufsize from `render.vbv`, Note size; level left to x264, 3.1).
 Tags come from `setparams` + `setsar=1`. Decode, GPU work and encode overlap: a reader thread with `DEPTH` reusable buffers and a bounded writer queue; on any exception both ffmpeg processes are killed.
-Size per minute: CRF decides, maxrate bounds the worst case, so a minute is at most maxrate × 60 s plus one buffer: ≈ 46 MB (the owner's real 60 fps note averaged 5.4 Mbit/s, ≈ 40 MB/min). Measured (CPU, 2026-10-26; short clips, so the initial VBV buffer lets them run over maxrate): testsrc2 1080p60, 2 s → 1.53 MB (6.0 Mbit/s); the owner's `IMG_0402.MOV` (4K HEVC 60 fps), 1.5 s → 0.82 MB (4.2 Mbit/s). That goes over the recommended 12 MiB long before 60 s (at the cap after about 17 s), which the Telegram experiment still has to settle.
+Size per minute: CRF decides, maxrate bounds the worst case, so a minute is at most maxrate × 60 s plus one buffer: ≈ 46 MB (the owner's real 60 fps note averaged 5.4 Mbit/s, ≈ 40 MB/min). Measured (CPU, 2026-10-26; short clips, so the initial VBV buffer lets them run over maxrate): testsrc2 1080p60, 2 s → 1.53 MB (6.0 Mbit/s); the owner's `IMG_0402.MOV` (4K HEVC 60 fps), 1.5 s → 0.82 MB (4.2 Mbit/s). That went over 12 MiB after about 17 s, and Telegram then delivered the note as a regular video (Note size).
+
+## Note size
+
+A note file over the size limit arrives as a regular square video, not a round, even with `round_message=True` and `length=640` (owner, 2026-10-26: job `WKRXzRMgDi`, 18.9 s at 60 fps, 13.2 MB, twice, with and without metadata; the last round that worked, `pRBvJxLSTr` at 00:06, was 8.4 s, 5.7 MB, the same H.264 High 640² 60 fps AAC layout by ffprobe). The exact threshold is not verified: the server config recommends `max_size` 12 MiB (Telegram limits); third-party bot guides say 10 MB (dev-help.postmypost.io, Telegram requirements). `render.vbv` caps the whole file at `NOTE_BYTES` 10 MB with `HEADROOM` 0.97, for every side and codec (High resolution): `maxrate = min(MAX_RATE 6M × (side / 640)^1.5, (budget − audio 128k × dur) / (dur + BUFFER_S 2))`, `bufsize = 2 × maxrate` (x264 VBV bounds the video at about maxrate × dur plus one buffer). CRF 16 still decides below the cap, so short notes are unchanged (≤ 6.7 s keeps maxrate 6M).
+
+- Measured (local ffmpeg, 2026-10-26, re-encoding the 18.9 s note with `render.X264` + `vbv`): 18.9 s → 8.88 MB (maxrate 3.6M); looped to 60 s → 9.61 MB (1.13M), and 9.61 MB with added temporal noise; 5 s with noise → 4.39 MB (6M). So the cap holds even for content x264 cannot compress.
+- Cost: a long note gets far fewer bits (60 s at 60 fps: about 1.1 Mbit/s, the level Telegram's own recorder uses at 384 px 30 fps). Levers if that looks bad: a lower rate for long notes (30 fps doubles the bits per frame), or raising `NOTE_BYTES` toward 12 MiB once an owner test shows where the limit is.
+- Hard ceiling (owner request 2026-10-26: always a round, never a regular video): VBV is a bound on the average, not a promise, so after the encode `render.shrink` checks the file. Over `NOTE_BYTES`, it re-encodes the note itself (video only, audio copied, same codec settings) with the cap scaled by `SHRINK` 0.95 × limit / size, up to `FIT_TRIES` 3 times, then fails the job rather than send a note that would arrive as a video. Runs before `tags.write`, so the kept metadata is added to the final file. A second generation costs a little quality, but it is only a fallback: no encode in the tests above needed it. Tested by forcing it on the 13.2 MB note: one pass, 13.87 → 6.34 MB (the VBV cap undershoots), H.264 640² 60 fps BT.709 kept.
+- Do not raise `MAX_RATE` or drop the cap without a send test on the phone.
 Trap: libx265 converted untagged `rawvideo` input to full range. Tag the frames (`setparams ... range=tv`) whenever raw frames go into an encoder.
 
 ## Ffmpeg build
@@ -322,6 +338,6 @@ Verified in sources (2026-10-25): TDLib rejects a video note `length` over 640 (
 
 ## Telegram experiment
 
-Done (2026-10-26, owner's test): a 1080×1080 file sent with `length=640` arrives as a regular video, not a round (High resolution); the note keeps its metadata (Note metadata).
+Done (2026-10-26, owner's test): a 1080×1080 file of unknown size sent with `length=640` arrives as a regular video, not a round (High resolution, now retested under the size cap); the note keeps its metadata (Note metadata).
 
-Open until run (needs the bot token): a note over 12 MiB, a note longer than 60 s, HEVC; each checked on iOS, Android and Desktop, and the downloaded file hashed against the uploaded one (server re-encoding).
+Done (2026-10-26): a 640² note of 13.2 MB arrives as a regular video (Note size). Open until run (needs the bot token): the exact size threshold (between 5.7 and 13.2 MB), a note longer than 60 s, 720 / 1080 and HEVC under the cap (switches in the Mini App, High resolution); each checked on iOS, Android and Desktop, and the downloaded file hashed against the uploaded one (server re-encoding).

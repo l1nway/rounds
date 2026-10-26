@@ -26,14 +26,14 @@ Flow: video sent to the bot → webhook → `ingest` (CPU: MTProto download to t
 
 ## Telegram limits (verified, see `backend/rounds/README.md` for sources)
 
-- Video note: square H.264 MP4, `length` ≤ 640 (TDLib rejects more with 400), "up to 1 minute". No re-encoding by the Bot API or TDLib: what we upload is what people see.
+- Video note: square H.264 MP4, `length` ≤ 640 (TDLib rejects more with 400), "up to 1 minute". No re-encoding by the Bot API or TDLib: what we upload is what people see. A file of 13.2 MB arrived as a regular video, so the encoder caps every note at 10 MB (`backend/rounds/README.md`, Note size).
 - Cloud Bot API: download 20 MB, upload 50 MB. MTProto (bots included): up to 2000 MB.
 - Mini App data goes back through our API with `initData` validated by HMAC; `sendData` is not used (keyboard-button launches only).
 
 ## Owner decisions
 
 - Free hosting only (Modal Starter + GitHub Pages). Bot restricted to `ALLOWED_USER_IDS`.
-- Output 640×640, the ceiling: a 1080×1080 note was tried (2026-10-26) and Telegram delivered it as a regular video, not a round; do not retry without a Telegram change (`backend/rounds/README.md`, High resolution). The duration ceiling is settled by the Telegram experiment (`backend/rounds/README.md`, Telegram experiment).
+- Output 640×640 by default. A 1080×1080 note (size not recorded) arrived as a regular video; since a 13.2 MB 640 note failed the same way, 720 / 1080 and HEVC are back as experimental switches under the 10 MB cap (2026-10-26) for the owner to test; a "smart" size pick may follow (`backend/rounds/README.md`, High resolution). The duration ceiling is settled by the Telegram experiment (`backend/rounds/README.md`, Telegram experiment).
 - Object at the frame edge: honest pixels first, an unnoticeable fill where the circle leaves the frame; an AI outpainting model may come later.
 - Frame rate: the note keeps the source rate up to 60. "Smooth to 60 fps" (RIFE interpolation, off by default) is offered for anything below 60 (59.94 included), with dropped frames or with frozen duplicate frames, and always targets 60. It must never fail on broken phone files (`backend/rounds/README.md`, Broken sources, Output rate).
 - Loudness normalization is an option, off by default. Leave room for more audio filters and for video stabilization (shaky handheld sources) as later options.

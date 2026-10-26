@@ -1,8 +1,8 @@
 import {memo, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState} from 'react'
-import {MIN_RANGE, clamp, ms, seek, setRange} from '../../hooks/player.js'
+import {MIN_RANGE, clamp, ms, seek, setRange, usePlayer} from '../../hooks/player.js'
 import {merge, useOnline} from '../../hooks/state.js'
 import {postRender} from '../../services/api.js'
-import {close, haptic, useMainButton} from '../../services/telegram.js'
+import {close, haptic} from '../../services/telegram.js'
 import Timeline from '../timeline/timeline.jsx'
 import Viewer from '../viewer/viewer.jsx'
 import './editor.css'
@@ -13,14 +13,19 @@ const NOTES = {
   failed: 'The last render failed. Adjust and retry.'
 }
 const OFFLINE = 'Offline: editing works, sending waits.'
+const short = meta => Math.min(meta.width, meta.height)
 // [DOC: options-seam]
 const OPTIONS = [
   {key: 'loudnorm', label: 'Normalize loudness', hint: 'Evens out quiet and loud parts', needs: meta => meta.has_audio, missing: 'This video has no sound'},
   {key: 'interpolate', label: 'Smooth to 60 fps', hint: 'AI draws in-between frames, fixes stutter', needs: meta => meta.interpolable, missing: 'Already a steady 60 fps'},
-  {key: 'metadata', label: 'Keep original metadata', hint: 'Date, camera, GPS: recipients see where it was filmed', needs: meta => Object.keys(meta.tags ?? {}).length > 0, missing: 'This video has no metadata'}
+  {key: 'metadata', label: 'Keep original metadata', hint: 'Date, camera, GPS: recipients see where it was filmed', needs: meta => Object.keys(meta.tags ?? {}).length > 0, missing: 'This video has no metadata'},
+  {key: 'hd720', label: '720p round (experimental)', hint: 'Test whether Telegram keeps it a round', needs: meta => short(meta) >= 720, missing: 'The video is below 720p'},
+  {key: 'hd1080', label: '1080p round (experimental)', hint: 'Test whether Telegram keeps it a round; wins over 720p', needs: meta => short(meta) >= 1080, missing: 'The video is below 1080p'},
+  {key: 'hevc', label: 'HEVC codec (experimental)', hint: 'Smaller file, more detail per MB; test playback', needs: () => true, missing: ''}
 ]
 const DEFAULT_OPTIONS = Object.fromEntries(OPTIONS.map(({key}) => [key, false]))
 const TRAVEL = 13
+const FIRST_OPTION = 3
 const SLOP = 4
 
 const optionsFor = (meta, options) => Object.fromEntries(OPTIONS.map(({key, needs}) => [key, needs(meta) && Boolean(options[key])]))
@@ -39,7 +44,7 @@ const isValid = ({start, end, time, points, box}, job) => Boolean(job) && (Boole
   && time !== null && time >= start && time <= end
 
 // [DOC: switch]
-function Switch({name, label, text, checked, disabled, onSet}) {
+function Switch({name, label, text, checked, disabled, order, onSet}) {
   const gesture = useRef(null)
   const [first] = useState(text)
 
@@ -80,7 +85,7 @@ function Switch({name, label, text, checked, disabled, onSet}) {
   }
 
   return (
-    <label className='options-row' onPointerDown={down} onPointerMove={move} onPointerUp={end} onPointerCancel={end} onClickCapture={click}>
+    <label className='options-row enter' style={{'--i': order}} onPointerDown={down} onPointerMove={move} onPointerUp={end} onPointerCancel={end} onClickCapture={click}>
       <span className='options-text'>
         {label}
         <small key={text} data-swap={text !== first || undefined}>{text}</small>
@@ -93,11 +98,11 @@ function Switch({name, label, text, checked, disabled, onSet}) {
 const Options = memo(function Options({meta, options, dispatch, disabled}) {
   const set = (name, value) => dispatch(prev => ({options: {...prev.options, [name]: value}}))
   return (
-    <fieldset className='options enter' disabled={disabled}>
+    <fieldset className='options' disabled={disabled}>
       <legend className='visually-hidden'>Options</legend>
-      {OPTIONS.map(({key, label, hint, needs, missing}) => {
+      {OPTIONS.map(({key, label, hint, needs, missing}, i) => {
         const off = Boolean(meta) && !needs(meta)
-        return <Switch key={key} name={key} label={label} text={off ? missing : hint} checked={!off && Boolean(options[key])} disabled={off} onSet={set}/>
+        return <Switch key={key} name={key} label={label} text={off ? missing : hint} checked={!off && Boolean(options[key])} disabled={off} order={FIRST_OPTION + i} onSet={set}/>
       })}
     </fieldset>
   )
@@ -106,6 +111,7 @@ const Options = memo(function Options({meta, options, dispatch, disabled}) {
 // [DOC: editor-draft]
 export default memo(function Editor({job, notice}) {
   const online = useOnline()
+  const loaded = usePlayer(state => state.loaded)
   const [draft, dispatch] = useReducer(merge, job, init)
   const {start, end, time, points, box, mask, options, posting, error} = draft
   // [DOC: render-boundaries]
@@ -133,19 +139,28 @@ export default memo(function Editor({job, notice}) {
     }
   }
 
-  useMainButton({text: 'Make round', visible: !readOnly, active: valid && online, progress: posting, onClick: submit})
-
   const note = error ? '' : !online ? OFFLINE : NOTES[job?.status] ?? ''
   return (
-    <main className='editor' aria-busy={!job || undefined}>
-      <h1 className='visually-hidden'>Round editor</h1>
-      <Viewer job={job} notice={notice} selection={selection} dispatch={dispatch} readOnly={readOnly}/>
-      <Timeline job={job} start={start} end={end} time={time} dispatch={dispatch} readOnly={readOnly}/>
-      <Options meta={job?.meta} options={options} dispatch={dispatch} disabled={!job || readOnly}/>
-      <div className='editor-status enter'>
-        <p role='alert'><span key={error}>{error}</span></p>
-        <p role='status'><span key={note}>{note}</span></p>
-      </div>
-    </main>
+    <>
+      <main className='editor' aria-busy={!job || undefined}>
+        <h1 className='visually-hidden'>Round editor</h1>
+        <Viewer job={job} notice={notice} selection={selection} dispatch={dispatch} readOnly={readOnly}/>
+        <Timeline job={job} start={start} end={end} time={time} dispatch={dispatch} readOnly={readOnly}/>
+        <Options meta={job?.meta} options={options} dispatch={dispatch} disabled={!job || readOnly}/>
+        <div className='editor-status enter' style={{'--i': FIRST_OPTION + OPTIONS.length}}>
+          <p role='alert'><span key={error}>{error}</span></p>
+          <p role='status'><span key={note}>{note}</span></p>
+        </div>
+      </main>
+      {/* [DOC: submit-bar] */}
+      {job && loaded && !readOnly && (
+        <div className='editor-bar enter'>
+          <button type='button' className='editor-submit' disabled={!valid || !online || posting} aria-busy={posting || undefined} onClick={submit}>
+            <span>Make round</span>
+            {posting && <span className='spinner' aria-hidden='true'/>}
+          </button>
+        </div>
+      )}
+    </>
   )
 })
