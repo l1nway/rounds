@@ -1,9 +1,10 @@
+import os
 from pathlib import Path
 
 import modal
 
 from . import pipeline
-from .config import DATA_DIR, RIFE_WEIGHTS
+from .config import DATA_DIR, JOBS_DIR, RIFE_WEIGHTS
 
 PROJECT = Path(__file__).parent.parent
 FFMPEG = (
@@ -17,6 +18,7 @@ RIFE = (
 )
 MODELS_DIR = '/models'
 GPU = 'L4'
+LIFT_IDLE = 120
 
 
 def image(*groups: str, commands: tuple[str, ...] = ()) -> modal.Image:
@@ -53,7 +55,10 @@ secrets = [modal.Secret.from_name('rounds')]
 def web():
     from .api import create
 
-    return create(jobs, data, {'ingest': ingest.spawn.aio, 'render': render.spawn.aio})
+    lift = Lift()
+    calls = {'ingest': ingest.spawn.aio, 'render': render.spawn.aio, 'warm': lift.warm.spawn.aio,
+             'segment': lift.segment.remote.aio}  # fmt: skip
+    return create(jobs, data, calls)
 
 
 @app.function(image=cpu_image, secrets=secrets, volumes={DATA_DIR: data}, cpu=4, memory=4096, timeout=3600,
@@ -66,6 +71,31 @@ async def ingest(job_id: str) -> None:
               memory=32768, timeout=3600, max_containers=1)  # fmt: skip
 async def render(job_id: str) -> None:
     await pipeline.render_job(job_id, jobs, state, data, models)
+
+
+# [DOC: lift]
+@app.cls(image=gpu_image, gpu=GPU, volumes={DATA_DIR: data, MODELS_DIR: models}, cpu=2, memory=8192, timeout=120,
+         max_containers=1, scaledown_window=LIFT_IDLE, enable_memory_snapshot=True)  # fmt: skip
+class Lift:
+    @modal.enter(snap=True)
+    def load(self):
+        from .segment import Segmenter
+
+        self.segmenter = Segmenter()
+
+    @modal.enter(snap=False)
+    def to_gpu(self):
+        self.segmenter.to('cuda')
+
+    @modal.method()
+    def warm(self) -> None:
+        pass
+
+    @modal.method()
+    def segment(self, job_id: str, at: float, points: list, box: list | None, size: tuple[int, int]) -> dict:
+        if not os.path.exists(f'{JOBS_DIR}/{job_id}/proxy.mp4'):
+            data.reload()
+        return self.segmenter.segment(job_id, at, points, box, size)
 
 
 @app.function(image=cpu_image, secrets=secrets)

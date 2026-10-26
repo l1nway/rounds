@@ -15,6 +15,11 @@
 
 .timeline-clock output {color: var(--text); font-size: 17px; font-weight: 600}
 
+.timeline-head, .timeline-length {transition: opacity var(--dur) var(--ease)}
+
+/* [DOC: timeline-loading] */
+.timeline[data-empty] :is(.timeline-head, .timeline-length) {opacity: 0}
+
 .timeline-mode {min-height: 1.35em; opacity: 0; transition: opacity var(--dur) var(--ease)}
 
 .timeline-mode[data-on] {opacity: 1}
@@ -30,14 +35,16 @@
   -webkit-touch-callout: none;
 }
 
-.timeline-film {position: absolute; inset: 0; display: flex; overflow: hidden; border-radius: 6px; background: var(--surface)}
+.timeline-film {position: absolute; inset: 0; isolation: isolate; display: flex; overflow: hidden; border-radius: 6px; background: var(--surface)}
 
 .timeline-film i {flex: none; width: var(--strip); height: 100%; background-image: var(--film); background-repeat: no-repeat}
 
-.timeline-film[data-ready] i {animation: film-in var(--dur) var(--ease)}
+.timeline-film[data-ready] i {animation: appear var(--dur-long) var(--ease)}
 
-@keyframes film-in {
-  from {opacity: 0}
+.timeline-shade, .timeline-trim, .timeline-playhead {transition: opacity var(--dur-long) var(--ease)}
+
+@starting-style {
+  .timeline-shade, .timeline-trim, .timeline-playhead {opacity: 0}
 }
 
 .timeline-shade {position: absolute; top: 0; bottom: 0; background: rgb(0 0 0 / 0.55); pointer-events: none}

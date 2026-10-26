@@ -7,6 +7,7 @@ MAX_DURATION = 60
 DATA_DIR = '/data'
 JOBS_DIR = f'{DATA_DIR}/jobs'
 RIFE_WEIGHTS = '/opt/rife/flownet_v4.25.pkl'
+SAM_MODEL = 'facebook/sam2.1-hiera-large'
 
 
 def env(name: str, default: str = '') -> str:

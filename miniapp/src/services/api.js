@@ -20,8 +20,14 @@ const mock = () => import('./mock.js')
 
 export const jobId = () => new URLSearchParams(location.search).get('job')
 
-export const getJob = id => MOCK ? mock().then(m => m.getJob(id)) : request(`/api/jobs/${encodeURIComponent(id)}`)
+const jobPath = id => `/api/jobs/${encodeURIComponent(id)}`
+const post = (path, body) => request(path, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
 
-export const postRender = (id, body) => MOCK
-  ? mock().then(m => m.postRender(id, body))
-  : request(`/api/jobs/${encodeURIComponent(id)}/render`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
+export const getJob = id => MOCK ? mock().then(m => m.getJob(id)) : request(jobPath(id))
+
+export const postRender = (id, body) => MOCK ? mock().then(m => m.postRender(id, body)) : post(`${jobPath(id)}/render`, body)
+
+// [DOC: lift]
+export const warmLift = id => MOCK ? Promise.resolve() : post(`${jobPath(id)}/warm`)
+
+export const segment = (id, prompt) => MOCK ? mock().then(m => m.segment(id, prompt)) : post(`${jobPath(id)}/segment`, prompt)

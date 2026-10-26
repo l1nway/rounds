@@ -14,7 +14,14 @@
   overflow: hidden;
 }
 
-.options {margin: 0; padding: 0 16px; border: 0; min-width: 0}
+/* [DOC: switch] */
+.options {
+  --spring: linear(0, 0.039, 0.137, 0.269, 0.414, 0.558, 0.691, 0.805, 0.899, 0.972, 1.024, 1.058, 1.078, 1.086, 1.085, 1.078, 1.067, 1.055, 1.043, 1.031, 1.02, 1.011, 1.005, 0.999, 1);
+  margin: 0;
+  padding: 0 16px;
+  border: 0;
+  min-width: 0;
+}
 
 .options-row {
   display: flex;
@@ -32,6 +39,8 @@
 
 .options-text small {color: var(--hint); font-size: 13px}
 
+.options-text small[data-swap] {animation: appear var(--dur) var(--ease)}
+
 .options-row input {
   appearance: none;
   flex: none;
@@ -42,8 +51,20 @@
   border-radius: 16px;
   background: var(--surface);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hint) 40%, transparent);
-  transition: background-color var(--dur) var(--ease);
+  touch-action: none;
 }
+
+.options-row input::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--button);
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease);
+}
+
+.options-row input:checked::before {opacity: 1}
 
 .options-row input::after {
   content: '';
@@ -52,18 +73,24 @@
   left: 2px;
   width: 27px;
   height: 27px;
-  border-radius: 50%;
+  border-radius: 13.5px;
   background: #fff;
   box-shadow: 0 2px 4px rgb(0 0 0 / 0.25);
-  transition: translate var(--dur) var(--ease);
+  transition: translate var(--dur-long) var(--spring), width var(--dur-long) var(--spring);
 }
 
-.options-row input:checked {background: var(--button)}
-
 .options-row input:checked::after {translate: 20px}
+
+.options-row input[data-press]::after {width: 34px}
+
+.options-row input:checked[data-press]::after {translate: 13px}
+
+.options-row input[data-drag]::after {translate: var(--x); transition: width var(--dur-long) var(--spring)}
 
 .editor-status {min-height: 1.35em; padding: 4px 16px 8px; font-size: 13px; color: var(--hint)}
 
 .editor-status p {margin: 0}
+
+.editor-status span {animation: appear var(--dur) var(--ease)}
 
 .editor-status [role='alert'] {color: var(--danger)}

@@ -14,10 +14,11 @@ export const formatTime = t => {
   return `${Math.floor(total / 60000)}:${pad(Math.floor(total / 1000) % 60, 2)}.${pad(total % 1000, 3)}`
 }
 
-const store = createStore({time: 0, paused: true, waiting: true, failed: false})
+const store = createStore({time: 0, paused: true, waiting: true, loaded: false, failed: false})
 const live = {video: null, target: null, busy: false, loop: 0, frame: 0, start: 0, end: Infinity}
 
 export const usePlayer = store.use
+export const useAway = time => usePlayer(state => time !== null && frameOf(state.time) !== frameOf(time))
 export const getTime = () => store.get().time
 export const setRange = (start, end) => {live.start = start; live.end = end}
 
@@ -78,7 +79,7 @@ export const attach = video => {
   live.video = video
   const handlers = {
     loadedmetadata: flush,
-    loadeddata: () => store.set({waiting: false, failed: false}),
+    loadeddata: () => store.set({waiting: false, loaded: true, failed: false}),
     error: () => store.set({waiting: false, failed: true}),
     seeking: () => store.set({waiting: true}),
     seeked: () => {live.busy = false; store.set({waiting: false}); flush()},
@@ -89,7 +90,7 @@ export const attach = video => {
     emptied: () => {live.busy = false}
   }
   Object.entries(handlers).forEach(([type, fn]) => video.addEventListener(type, fn))
-  if (video.readyState >= 2) store.set({waiting: false})
+  if (video.readyState >= 2) store.set({waiting: false, loaded: true})
   flush()
   return () => {
     stop()

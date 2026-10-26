@@ -1,3 +1,4 @@
+import base64
 from functools import cache
 
 import cv2
@@ -7,7 +8,8 @@ import torch.nn.functional as F
 from transformers import Sam2VideoInferenceSession, Sam2VideoModel
 from transformers.image_utils import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 
-MODEL_ID = 'facebook/sam2.1-hiera-large'
+from .config import SAM_MODEL
+
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 DTYPE = torch.bfloat16 if DEVICE == 'cuda' else torch.float32
 MEAN, STD = (torch.tensor(v, device=DEVICE).view(3, 1, 1) for v in (IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD))
@@ -21,13 +23,22 @@ PROGRESS_EVERY = 30
 # [DOC: tracker-swap]
 @cache
 def load() -> Sam2VideoModel:
-    return Sam2VideoModel.from_pretrained(MODEL_ID, dtype=DTYPE).to(DEVICE).eval()
+    return Sam2VideoModel.from_pretrained(SAM_MODEL, dtype=DTYPE).to(DEVICE).eval()
 
 
 def _pixels(frame: np.ndarray, side: int) -> torch.Tensor:
     x = torch.from_numpy(np.array(frame)).to(DEVICE).permute(2, 0, 1)[None].float() / 255
     x = F.interpolate(x, (side, side), mode='bilinear', antialias=True)[0]
     return ((x - MEAN) / STD).to(DTYPE)
+
+
+# [DOC: lift-mask]
+def _mask(data: str, side: int) -> torch.Tensor | None:
+    img = cv2.imdecode(np.frombuffer(base64.b64decode(data.split(',', 1)[-1]), np.uint8), cv2.IMREAD_UNCHANGED)
+    if img is None or img.ndim < 3 or img.shape[2] < 4 or not img[..., 3].any():
+        return None
+    m = torch.from_numpy(img[..., 3].copy()).to(DEVICE).float()[None, None] / 255
+    return (F.interpolate(m, (side, side), mode='bilinear', antialias=True) >= 0.5).float()
 
 
 def _prompt(points: list, box: list | None, h: int, w: int, side: int) -> dict:
@@ -41,7 +52,10 @@ def _prompt(points: list, box: list | None, h: int, w: int, side: int) -> dict:
 def _pass(net: Sam2VideoModel, frames: np.ndarray, index: int, prompt: dict, reverse: bool):
     h, w = frames.shape[1:3]
     session = Sam2VideoInferenceSession(video_height=h, video_width=w, dtype=DTYPE, **dict.fromkeys(PLACES, DEVICE))
-    session.add_point_inputs(session.obj_id_to_idx(OBJ), index, prompt)
+    if 'mask' in prompt:
+        session.add_mask_inputs(session.obj_id_to_idx(OBJ), index, prompt['mask'])
+    else:
+        session.add_point_inputs(session.obj_id_to_idx(OBJ), index, prompt)
     session.obj_with_new_inputs = [OBJ]
     memory = session.output_dict_per_obj[0]['non_cond_frame_outputs']
     step, window = -1 if reverse else 1, net.config.max_object_pointers_in_encoder
@@ -67,9 +81,10 @@ def _measure(logits: torch.Tensor, h: int, w: int) -> tuple[float, float, float,
 
 
 # [DOC: tracking]
-def track(frames: np.ndarray, index: int, points: list, box: list | None, progress=None) -> dict:
+def track(frames: np.ndarray, index: int, points: list, box: list | None, mask: str = '', progress=None) -> dict:
     net, (n, h, w) = load(), frames.shape[:3]
-    prompt = _prompt(points or [], box, h, w, net.config.image_size)
+    lifted = _mask(mask, net.config.image_size) if mask else None
+    prompt = {'mask': lifted} if lifted is not None else _prompt(points or [], box, h, w, net.config.image_size)
     values, score, done = np.zeros((4, n)), np.zeros(n), 0
     with torch.inference_mode():
         for reverse in (False, True):

@@ -6,7 +6,8 @@ import subprocess
 import numpy as np
 from scipy.ndimage import maximum_filter1d
 
-from .config import FPS, MAX_FPS
+from . import tags
+from .config import FPS, MAX_FPS, OUT_SIZE
 
 TRANSFERS = {'arib-std-b67': 'hlg', 'smpte2084': 'pq'}
 MATRICES = {'bt2020nc': 'bt2020', 'bt2020c': 'bt2020', 'bt470bg': 'bt601', 'smpte170m': 'bt601', 'bt709': 'bt709'}
@@ -15,7 +16,13 @@ PACKETS = ['ffprobe', '-v', 'error', '-show_entries', 'packet=pts_time', '-of', 
 RATES = (24000 / 1001, 24, 25, 30000 / 1001, 30, 48, 50, 60000 / 1001, 60, 100, 120, 240)
 SNAP, FPS_RANGE = 0.015, (1, 480)
 JITTER = 0.25
+HIRES, BLOCK = 1080, 16
 THUMB, DUP_LEVEL, MOTION, SHARE = 32, 1, 1.0, 0.005
+
+
+# [DOC: broken-sources]
+class Unreadable(ValueError):
+    pass
 
 
 def run(cmd: list[str]) -> str:
@@ -47,9 +54,15 @@ def cadence(path, stream: int) -> tuple[float, float, float]:
 
 
 def probe(path) -> dict:
-    info = json.loads(run([*PROBE, str(path)]))
+    try:
+        info = json.loads(run([*PROBE, str(path)]))
+    except subprocess.CalledProcessError as error:
+        raise Unreadable('The file is damaged or incomplete and cannot be opened') from error
     streams = info['streams']
-    v = next(s for s in streams if s['codec_type'] == 'video' and not s.get('disposition', {}).get('attached_pic'))
+    videos = [s for s in streams if s['codec_type'] == 'video' and not s.get('disposition', {}).get('attached_pic')]
+    if not videos:
+        raise Unreadable('The file has no video track')
+    v = videos[0]
     sides = [s['rotation'] for s in v.get('side_data_list', []) if 'rotation' in s]
     rot = int(float(sides[0] if sides else v.get('tags', {}).get('rotate', 0)))
     w, h = (v['height'], v['width']) if rot % 180 else (v['width'], v['height'])
@@ -58,7 +71,7 @@ def probe(path) -> dict:
     fps = next((x for x in (nominal, listed) if FPS_RANGE[0] <= x <= FPS_RANGE[1]), FPS)
     duration = float(info['format'].get('duration') or v.get('duration') or span)
     if not duration > 0:
-        raise ValueError('Could not read the length of the video')
+        raise Unreadable('Could not read the length of the video')
     pix = v.get('pix_fmt', 'yuv420p')
     return {
         'duration': duration,
@@ -74,6 +87,7 @@ def probe(path) -> dict:
         'matrix': MATRICES.get(v.get('color_space'), ''),
         'full_range': v.get('color_range') == 'pc' or pix.startswith('yuvj'),
         'stream': v['index'],
+        'tags': tags.read(path, info['format'].get('tags', {})),
     }
 
 
@@ -88,6 +102,14 @@ def interpolating(meta: dict, options: dict) -> bool:
 
 def out_rate(meta: dict, options: dict) -> float:
     return MAX_FPS if interpolating(meta, options) else min(meta['fps'], MAX_FPS)
+
+
+# [DOC: high-resolution]
+def out_size(meta: dict, options: dict) -> int:
+    short = min(meta['width'], meta['height'])
+    if not options.get('hires'):
+        return OUT_SIZE
+    return HIRES if short >= HIRES else max(OUT_SIZE, short // BLOCK * BLOCK)
 
 
 # [DOC: duplicate-frames]

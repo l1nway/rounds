@@ -1,5 +1,6 @@
 import {memo, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react'
 import Icon from '../../components/icon.jsx'
+import Sheen from '../../components/sheen.jsx'
 import {MIN_RANGE, clamp, formatTime, frameOf, frameTime, getTime, ms, seek, step, toggle, usePlayer} from '../../hooks/player.js'
 import {haptic} from '../../services/telegram.js'
 import useDrag from './use-drag.js'
@@ -46,6 +47,7 @@ const Filmstrip = memo(function Filmstrip({url, tiles, tileWidth, tileHeight}) {
 
   return (
     <div ref={ref} className='timeline-film' data-ready={ready || undefined} style={{'--film': url ? `url(${JSON.stringify(url)})` : 'none'}} aria-hidden='true'>
+      <Sheen on={!ready}/>
       {cells.map((style, i) => <i key={i} style={style}/>)}
     </div>
   )
@@ -121,7 +123,7 @@ export default memo(function Timeline({job, start, end, time, dispatch, readOnly
 
   const film = job?.filmstrip ?? {}
   return (
-    <section className='timeline' aria-label='Trim' style={{'--strip': `${STRIP}px`}}>
+    <section className='timeline' aria-label='Trim' data-empty={!job || undefined} style={{'--strip': `${STRIP}px`}}>
       <div className='timeline-head'>
         <span>{formatTime(start)}</span>
         <Clock mode={mode}/>

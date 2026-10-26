@@ -1,6 +1,6 @@
 # services
 
-`api.js`: the two backend calls (`Authorization: tma <initData>`, errors as `{detail}`, FastAPI validation lists read through `detail[0].msg`). `telegram.js`: the `Telegram.WebApp` integration. `mock.js` / `mock.css`: the dev mock.
+`api.js`: the backend calls (`getJob`, `postRender`, and for Lift `warmLift`, `segment`) (`Authorization: tma <initData>`, errors as `{detail}`, FastAPI validation lists read through `detail[0].msg`). `telegram.js`: the `Telegram.WebApp` integration. `mock.js` / `mock.css`: the dev mock.
 
 ## Telegram setup
 
@@ -12,8 +12,16 @@ APIs used, all checked in core.telegram.org/bots/webapps (2026-10-25): `initData
 
 ## Main button
 
-The submit control is Telegram's MainButton ("Make round"), driven by `useMainButton`. It is visible from the first render (inactive while loading) except in the read-only `rendering` state: showing it only after the job loaded resized the page under the editor (CLS 0.05 in the mock). Both effects are layout effects on purpose: when the editor remounts with the loaded job, the old instance's cleanup (`hide`) must run before the new instance's `setParams` (`show`); with a passive cleanup the order flips and the button disappears. `is_active` combines a valid draft and `navigator.onLine`; while posting, `showProgress(false)` disables it. The click handler is read through a ref that a layout effect without deps sets to the latest `onClick` (Preact has no `useEffectEvent`, `miniapp/README.md`, Preact), so it always submits the current draft; the subscription itself is made once.
+The submit control is Telegram's MainButton ("Make round"), driven by `useMainButton`. It is visible from the first render (inactive while loading) except in the read-only `rendering` state: showing it only after the job loaded resized the page under the editor (CLS 0.05 in the mock). The editor is never remounted (`features/editor/README.md`, Editor draft), so the cleanup `hide` runs only on a real unmount. Do not reintroduce a remount: a `hide` immediately followed by a `show` is two messages to the native side, and Telegram for iOS animates both, sliding the button out and back in over about 250 ms (`IMG_0406.MP4`, 2026-10-26; the page did not move, the bottom bar went black for a frame). `telegram-web-app.js` drops a `setParams` that leaves the button state unchanged, so re-sending the same params is free. Both effects stay layout effects so the button state is sent in the same frame as the render that changed it. `is_active` combines a valid draft and `navigator.onLine`; while posting, `showProgress(false)` disables it. The click handler is read through a ref that a layout effect without deps sets to the latest `onClick` (Preact has no `useEffectEvent`, `miniapp/README.md`, Preact), so it always submits the current draft; the subscription itself is made once.
+
+## Lift
+
+`warmLift(id)` and `segment(id, {time, points, box})` back tap-to-lift (`features/viewer/README.md`, Lift). In mock mode `warmLift` resolves at once and `segment` goes to `mock.js` (Mock lift).
+
+## Mock lift
+
+`mock.segment` draws fake outlines on a canvas at half the mock proxy width: three discs (8, 16, 30 % of the short side, `best` the middle) around a single positive point, one disc for two or more points, the box itself for a box; 600 ms delay. `?job=nolift` rejects, to see the fallback. The discs are not SAM: only the gestures, the timing and the look can be checked with them.
 
 ## Mock mode
 
-`VITE_API_URL` unset means mock mode. `main.jsx` imports `mock.js` before `setupTelegram()`; the module replaces `window.Telegram.WebApp` with a shim (`initData: 'mock'`, every method a no-op, `MainButton` drawn as a real `<button>` under `#root`, haptics logged to `window.mockHaptics`, `close()` covers the page with a note). `api.js` routes both calls to it. Both checks read `!import.meta.env.VITE_API_URL` directly so Rollup folds them: a build with the variable set contains no mock code (checked: no `mock` chunk, 75.5 KB gzip with React on 2026-10-25; 15.0 KB with Preact, also without a `mock` chunk). The CI workflow refuses to build with the variable empty, since that would publish the mock. `mock.css` makes `body` a column so the fake button takes real space like Telegram's bottom bar.
+`VITE_API_URL` unset means mock mode. `main.jsx` imports `mock.js` before `setupTelegram()`; the module replaces `window.Telegram.WebApp` with a shim (`initData: 'mock'`, every method a no-op, `MainButton` drawn as a real `<button>` under `#root`, haptics logged to `window.mockHaptics`, `close()` covers the page with a note). `api.js` routes its calls to it. Both checks read `!import.meta.env.VITE_API_URL` directly so Rollup folds them: a build with the variable set contains no mock code (checked: no `mock` chunk, 75.5 KB gzip with React on 2026-10-25; 15.0 KB with Preact, also without a `mock` chunk). The CI workflow refuses to build with the variable empty, since that would publish the mock. `mock.css` makes `body` a column so the fake button takes real space like Telegram's bottom bar.

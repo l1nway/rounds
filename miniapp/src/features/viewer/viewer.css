@@ -10,13 +10,20 @@
   overflow: hidden;
 }
 
-.viewer-stage {position: relative; aspect-ratio: var(--aspect); width: min(100cqw, 100cqh * var(--aspect))}
+.viewer-stage {position: relative; isolation: isolate; aspect-ratio: var(--aspect); width: min(100cqw, 100cqh * var(--aspect))}
 
 @supports not (width: 1cqw) {
   .viewer-stage {width: auto; height: 100%; max-width: 100%}
 }
 
-.viewer-video {display: block; width: 100%; height: 100%; object-fit: contain}
+.viewer-video {display: block; width: 100%; height: 100%; object-fit: contain; opacity: 0}
+
+/* [DOC: loading-crossfade] */
+.viewer-stage[data-loaded] :is(.viewer-video, .viewer-marks, .lift) {animation: appear var(--dur-long) var(--ease)}
+
+.viewer-stage[data-loaded] .viewer-video {opacity: 1}
+
+.viewer-stage:not([data-loaded]) :is(.viewer-marks, .lift) {visibility: hidden}
 
 .viewer-input {
   position: absolute;
@@ -80,18 +87,28 @@
 .viewer-notice {
   position: absolute;
   inset: 0;
+  isolation: isolate;
   display: grid;
   place-content: center;
-  justify-items: center;
-  gap: 8px;
   padding: 24px;
   background: var(--stage);
   text-align: center;
+  transition: opacity var(--dur-long) var(--ease);
 }
+
+.viewer-notice-body {display: grid; justify-items: center; gap: 8px}
+
+.viewer-notice-body[data-swap] {animation: appear var(--dur) var(--ease)}
+
+.viewer-notice[data-off] {opacity: 0; visibility: hidden; transition: opacity var(--dur-long) var(--ease), visibility 0s var(--dur-long)}
+
+.viewer-notice[data-busy] {color: var(--text)}
 
 .viewer-notice h2 {margin: 0; font-size: 17px}
 
 .viewer-notice p {max-width: 32ch; margin: 0; color: rgb(255 255 255 / 0.72)}
+
+.viewer-notice[data-busy] p {color: var(--hint)}
 
 .viewer-action {
   min-height: var(--control);

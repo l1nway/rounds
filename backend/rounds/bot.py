@@ -30,7 +30,7 @@ TEXTS = {
     'rendering': 'Rendering the round… {:.0%}',
     'sending': 'Sending the round…',
     'done': 'Done. Open the editor again to make another round from this video.',
-    'failed': 'Something went wrong: {}',
+    'failed': 'Something went wrong. {}.',
 }
 ACTION_EVERY = 4
 VIDEO = F.video | F.document.mime_type.startswith('video/')

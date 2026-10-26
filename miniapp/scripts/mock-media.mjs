@@ -10,6 +10,15 @@ const TILE_HEIGHT = 96
 const BALL = 'format=rgba,geq=r=255:g=59:b=48:a=\'if(lt(hypot(X-60,Y-60),56),255,0)\''
 const PATH = 'x=\'420+330*sin(t*0.6)\':y=\'210+160*sin(t*1.1)\''
 
+const TAGS = {
+  creation_time: '2026-10-25T22:57:45.000000Z',
+  'com.apple.quicktime.creationdate': '2026-10-25T23:57:45+0100',
+  'com.apple.quicktime.location.ISO6709': '+52.3207+021.0548+092.015/',
+  'com.apple.quicktime.make': 'Apple',
+  'com.apple.quicktime.model': 'iPhone SE (2nd generation)',
+  'com.apple.quicktime.camera.lens_model': 'iPhone SE (2nd generation) back camera 3.99mm f/1.8'
+}
+
 const run = (tool, args) => execFileSync(tool, args, {cwd: OUT, encoding: 'utf8'})
 
 mkdirSync(OUT, {recursive: true})
@@ -28,7 +37,7 @@ run('ffmpeg', ['-v', 'error', '-y', '-i', 'proxy.mp4', '-vf', `fps=${TILES}/${DU
 const duration = Number(run('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', 'proxy.mp4']).trim())
 const [width] = run('ffprobe', ['-v', 'error', '-show_entries', 'stream=width', '-of', 'csv=p=0', 'filmstrip.jpg']).trim().split(',')
 const job = {
-  meta: {duration, width: 1920, height: 1080, fps: 30, gaps: 0, dupes: 0, interpolable: true, has_audio: true},
+  meta: {duration, width: 1920, height: 1080, fps: 30, gaps: 0, dupes: 0, interpolable: true, has_audio: true, tags: TAGS},
   filmstrip: {tiles: TILES, tile_width: Number(width) / TILES, tile_height: TILE_HEIGHT}
 }
 writeFileSync(`${OUT}job.json`, JSON.stringify(job, null, 2))

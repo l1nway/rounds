@@ -16,4 +16,8 @@ The strip itself (`.timeline-scrub`, full width) is the playhead slider for focu
 
 ## Filmstrip cells
 
-The sprite (`filmstrip_url`, `tiles` frames in one row) is cut into square cells of the strip height (48 px, `STRIP`, also fed to CSS as `--strip`), each showing the tile nearest to its time, centre-cropped (`background-size` / `background-position` in px from the tile size). Stretching the whole sprite across the strip would distort it at any width. The cell count follows the measured width (`ResizeObserver`). The sprite is decoded (`img.decode()`) before the cells render, then they fade in once.
+The sprite (`filmstrip_url`, `tiles` frames in one row) is cut into square cells of the strip height (48 px, `STRIP`, also fed to CSS as `--strip`), each showing the tile nearest to its time, centre-cropped (`background-size` / `background-position` in px from the tile size). Stretching the whole sprite across the strip would distort it at any width. The cell count follows the measured width (`ResizeObserver`). The sprite is decoded (`img.decode()`) before the cells render, then they fade in once (`appear`, `--dur-long`) over the `Sheen` placeholder (`components/README.md`), which holds still under them and hides when the fade is done.
+
+## Timeline loading
+
+While `job` is null the section carries `data-empty`: the head (start, clock, end) and the length text keep their lines but are transparent, so the meaningless `0:00.000` placeholders never show, and they fade in when the job arrives. The trim frame, shades and playhead mount with the job and fade in through `@starting-style` (opacity only, so no layout shift; the playhead is already at the selection frame on its first painted frame because the editor seeks in a layout effect). Measured in the mock under slow 4G + CPU ×4: CLS 0 for `?job=done` and `?job=ingest`; before, the playhead mounted at 0 and jumped to the seek target (0.0004).

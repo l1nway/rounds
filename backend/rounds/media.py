@@ -1,4 +1,5 @@
 import json
+import math
 import queue
 import subprocess
 import tempfile
@@ -18,8 +19,13 @@ PROXY_X264 = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-g', '15'
 BT709 = 'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv'
 TILES, TILE_H = 24, 96
 LOUDNORM = 'loudnorm=I=-16:TP=-1.5:LRA=11'
+MEASURED = ('I', 'TP', 'LRA', 'thresh')
+GAPLESS = 'aresample=48000:async=1:first_pts=0'
 # [DOC: broken-sources]
-LENIENT = ['-fflags', '+genpts+discardcorrupt']
+LENIENT = ['-max_error_rate', '1', '-fflags', '+genpts+discardcorrupt']
+AUDIO_TRACK = ['ffprobe', '-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=index', '-of', 'csv=p=0']
+NO_FRAMES = 'Not a single frame of the video could be decoded'
+NO_RANGE = 'No frame of the chosen range could be decoded'
 
 
 def even(x: float) -> int:
@@ -64,7 +70,7 @@ def sdr_chain(meta: dict, w: int, h: int) -> str:
     )
 
 
-def make_proxy(src, job_dir, meta: dict) -> tuple[dict, float]:
+def make_proxy(src, job_dir, meta: dict) -> tuple[dict, dict]:
     job_dir = Path(job_dir)
     w, h = fit(meta, min(PROXY_LONG, max(meta['width'], meta['height'])))
     tw, step = even(TILE_H * meta['width'] / meta['height']), meta['duration'] / TILES
@@ -76,13 +82,19 @@ def make_proxy(src, job_dir, meta: dict) -> tuple[dict, float]:
     audio = ['-map', '0:a:0', '-c:a', 'aac', '-b:a', '96k'] if meta['has_audio'] else []
     with tempfile.TemporaryDirectory() as tmp:
         thumbs = Path(tmp) / 'thumbs.u8'
-        run(['ffmpeg', '-v', 'error', '-y', '-nostdin', *LENIENT, '-i', str(src), '-filter_complex', graph,
-             '-map', '[p]', *PROXY_X264, *audio, '-movflags', '+faststart', str(job_dir / 'proxy.mp4'),
-             '-map', '[f]', '-frames:v', '1', '-q:v', '3', str(job_dir / 'filmstrip.jpg'),
-             '-map', '[g]', '-fps_mode', 'passthrough', '-f', 'rawvideo', str(thumbs)])  # fmt: skip
+        try:
+            run(['ffmpeg', '-v', 'error', '-y', '-nostdin', *LENIENT, '-i', str(src), '-filter_complex', graph,
+                 '-map', '[p]', *PROXY_X264, *audio, '-movflags', '+faststart', str(job_dir / 'proxy.mp4'),
+                 '-map', '[f]', '-frames:v', '1', '-q:v', '3', str(job_dir / 'filmstrip.jpg'),
+                 '-map', '[g]', '-fps_mode', 'passthrough', '-f', 'rawvideo', str(thumbs)])  # fmt: skip
+        except subprocess.CalledProcessError as error:
+            if thumbs.exists() and thumbs.stat().st_size:
+                raise
+            raise source.Unreadable(NO_FRAMES) from error
         share = source.dupes(np.fromfile(thumbs, np.uint8).reshape(-1, source.THUMB, source.THUMB), meta['fps'])
     strip = {'tiles': TILES, 'tile_width': tw, 'tile_height': TILE_H}
-    return {'proxy': {'width': w, 'height': h, 'fps': FPS}, 'filmstrip': strip}, share
+    heard = meta['has_audio'] and bool(run([*AUDIO_TRACK, str(job_dir / 'proxy.mp4')]).strip())
+    return {'proxy': {'width': w, 'height': h, 'fps': FPS}, 'filmstrip': strip}, {'dupes': share, 'has_audio': heard}
 
 
 def frame_count(start: float, end: float, rate: float = FPS) -> int:
@@ -146,7 +158,7 @@ def track_frames(src, meta: dict, start: float, end: float, long_side: int = 102
     frames = np.memmap(Path(tempfile.mkdtemp()) / 'frames.u8', np.uint8, 'w+', shape=(n, h, w, 3))
     chain = f'{sdr_chain(meta, w, h)},format=rgb24'
     if not any(fill(decode(src, meta, start, n, chain, 'rgb24', slow=slow), frames, n) for slow in (False, True)):
-        raise RuntimeError('no frames decoded')
+        raise source.Unreadable(NO_RANGE)
     return frames
 
 
@@ -171,14 +183,17 @@ def scene_cuts(frames, window: int = 15, floor: float = 0.3, ratio: float = 3.0,
 # [DOC: audio-chain]
 def audio_filter(src, start: float, dur: float, options: dict) -> str:
     if not options.get('loudnorm'):
-        return 'aresample=48000'
-    cmd = ['ffmpeg', '-v', 'info', '-nostdin', '-hide_banner', '-ss', f'{start:.3f}', '-t', f'{dur:.3f}',
-           '-i', str(src), '-map', '0:a:0', '-af', f'{LOUDNORM}:print_format=json', '-f', 'null', '-']  # fmt: skip
+        return GAPLESS
+    cmd = ['ffmpeg', '-v', 'info', '-nostdin', '-hide_banner', *LENIENT, '-ss', f'{start:.3f}', '-t', f'{dur:.3f}',
+           '-i', str(src), '-map', '0:a:0', '-af', f'{GAPLESS},{LOUDNORM}:print_format=json',
+           '-f', 'null', '-']  # fmt: skip
     err = subprocess.run(cmd, check=True, capture_output=True, text=True).stderr
     m = json.loads(err[err.rindex('{') : err.rindex('}') + 1])
-    measured = ':'.join(f'measured_{k}={m[f"input_{k.lower()}"]}' for k in ('I', 'TP', 'LRA', 'thresh'))
-    return f'{LOUDNORM}:{measured}:offset={m["target_offset"]}:linear=true,aresample=48000'
+    if not all(math.isfinite(float(m[k])) for k in ('target_offset', *(f'input_{k.lower()}' for k in MEASURED))):
+        return GAPLESS
+    measured = ':'.join(f'measured_{k}={m[f"input_{k.lower()}"]}' for k in MEASURED)
+    return f'{GAPLESS},{LOUDNORM}:{measured}:offset={m["target_offset"]}:linear=true,aresample=48000'
 
 
 def audio_input(src, meta: dict, start: float, dur: float) -> list[str]:
-    return ['-ss', f'{start:.3f}', '-t', f'{dur:.3f}', '-i', str(src)] if meta['has_audio'] else []
+    return [*LENIENT, '-ss', f'{start:.3f}', '-t', f'{dur:.3f}', '-i', str(src)] if meta['has_audio'] else []

@@ -41,7 +41,7 @@ export default function useJob() {
   const notice = useMemo(() => {
     if (blocked) return blocked
     if (job?.status === 'ingesting') return INGESTING
-    if (job) return job.proxy_url ? null : BROKEN
+    if (job) return job.proxy_url ? null : {...BROKEN, text: [job.error, BROKEN.text].filter(Boolean).join('. ')}
     if (error) return {title: 'Could not load the video', text: error, action: 'Try again', onAction: retry}
     return online ? LOADING : OFFLINE
   }, [blocked, job, error, online, retry])

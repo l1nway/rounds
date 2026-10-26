@@ -15,6 +15,7 @@
   --radius: 12px;
   --control: 44px;
   --dur: 200ms;
+  --dur-long: 400ms;
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
@@ -31,7 +32,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :root {--dur: 0ms}
+  :root {--dur: 0ms; --dur-long: 0ms}
 }
 
 html {
@@ -86,4 +87,9 @@ button {font: inherit; color: inherit}
 
 @keyframes spin {
   to {rotate: 1turn}
+}
+
+/* [DOC: motion-tokens] */
+@keyframes appear {
+  from {opacity: 0}
 }

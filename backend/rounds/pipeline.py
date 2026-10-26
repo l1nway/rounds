@@ -11,6 +11,8 @@ from .config import FPS, JOBS_DIR
 
 PROGRESS_INTERVAL = 3
 MB = 1 << 20
+UNEXPECTED = 'The details are in the bot log'
+STDERR_TAIL = 4000
 
 
 def reporter(job: dict, stage: str, loop: asyncio.AbstractEventLoop):
@@ -63,10 +65,15 @@ async def stage(jobs, job: dict, name: str) -> dict:
     return await save(jobs, job, stage=name)
 
 
+# [DOC: broken-sources]
 async def fail(jobs, job: dict, error: Exception) -> None:
     traceback.print_exception(error)
-    job = await save(jobs, job, status='failed', stage=None, error=str(error))
-    await bot.status(job, bot.TEXTS['failed'].format(error), bot.editor(job['id']))
+    for cause in (error, error.__cause__):
+        if getattr(cause, 'stderr', None):
+            print(cause.stderr[-STDERR_TAIL:], flush=True)
+    reason = str(error) if isinstance(error, source.Unreadable) else UNEXPECTED
+    job = await save(jobs, job, status='failed', stage=None, error=reason)
+    await bot.status(job, bot.TEXTS['failed'].format(reason), bot.editor(job['id']))
 
 
 async def ingest_job(job_id: str, jobs, state, volume) -> None:
@@ -86,13 +93,13 @@ async def ingest_job(job_id: str, jobs, state, volume) -> None:
             await bot.status(job, bot.TEXTS['probing'])
             with timed(job_id, 'ingest.probe') as facts:
                 meta = await asyncio.to_thread(source.probe, src)
-                facts.update(describe(meta))
+                facts.update(describe(meta), tags=len(meta['tags']))
             await bot.status(job, bot.TEXTS['preparing'])
             with timed(job_id, 'ingest.proxy') as facts:
-                extra, dupes = await asyncio.to_thread(media.make_proxy, src, job_dir, meta)
-                meta = {**meta, 'dupes': dupes}
+                extra, checked = await asyncio.to_thread(media.make_proxy, src, job_dir, meta)
+                meta = {**meta, **checked}
                 meta['interpolable'] = source.interpolable(meta)
-                facts.update(speed=(meta['duration'], 'x'), dupes=dupes, interpolable=meta['interpolable'])
+                facts.update(speed=(meta['duration'], 'x'), **checked, interpolable=meta['interpolable'])
             with timed(job_id, 'ingest.commit'):
                 await volume.commit.aio()
         job = await save(jobs, job, source=os.path.basename(src), meta=meta, status='ready', **extra)
@@ -135,7 +142,7 @@ async def render_job(job_id: str, jobs, state, volume, models) -> None:
             job = await stage(jobs, job, 'tracking')
             with timed(job_id, 'render.track') as facts:
                 found = await asyncio.to_thread(
-                    track.track, frames, index, points, box, progress=reporter(job, 'tracking', loop)
+                    track.track, frames, index, points, box, prompt.get('mask') or '', reporter(job, 'tracking', loop)
                 )
                 facts.update(fps=(len(frames), ''))
             job = await stage(jobs, job, 'cuts')
@@ -145,7 +152,8 @@ async def render_job(job_id: str, jobs, state, volume, models) -> None:
             job = await stage(jobs, job, 'framing')
             with timed(job_id, 'render.camera'):
                 found = to_source(found, frames, meta)
-                path = await asyncio.to_thread(camera.solve, found, meta['width'], meta['height'], cuts)
+                size = source.out_size(meta, request['options'])
+                path = await asyncio.to_thread(camera.solve, found, meta['width'], meta['height'], cuts, out_size=size)
             np.savez(f'{job_dir}/track.npz', **found)
             np.save(f'{job_dir}/path.npy', path)
             job = await stage(jobs, job, 'rendering')
@@ -154,7 +162,7 @@ async def render_job(job_id: str, jobs, state, volume, models) -> None:
                 result = await asyncio.to_thread(
                     render.render, src, meta, start, end, path, cuts, out, request['options'], report
                 )
-                stats = {k: v for k, v in result.items() if k in ('rate', 'synth', 'dupes')}
+                stats = {k: v for k, v in result.items() if k in ('side', 'rate', 'synth', 'dupes')}
                 facts.update(fps=(result['frames'], ''), mb=round(result['size'] / MB, 1), **stats)
             with timed(job_id, 'render.commit'):
                 await volume.commit.aio()
