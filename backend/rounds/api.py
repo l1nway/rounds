@@ -49,6 +49,7 @@ class RenderRequest(BaseModel):
     prompt: Prompt
     options: dict[str, bool] = {}
     codec: Literal['av1', 'hevc', 'vp9'] = 'av1'  # [DOC: codecs]
+    denoise: float = Field(0, ge=0, le=1)  # [DOC: denoise]
 
     @model_validator(mode='after')
     def check(self):

@@ -1,5 +1,3 @@
-import json
-import math
 import queue
 import subprocess
 import tempfile
@@ -18,10 +16,6 @@ DEPTH = 4
 PROXY_X264 = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-g', '15', '-pix_fmt', 'yuv420p']
 BT709 = 'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv'
 TILES, TILE_H = 24, 96
-# [DOC: loudness]
-LOUDNORM = 'loudnorm=I=-16:TP=-1:LRA=7'
-MEASURED = ('I', 'TP', 'LRA', 'thresh')
-GAPLESS = 'aresample=48000:async=1:first_pts=0'
 # [DOC: broken-sources]
 LENIENT = ['-max_error_rate', '1', '-fflags', '+genpts+discardcorrupt']
 AUDIO_TRACK = ['ffprobe', '-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=index', '-of', 'csv=p=0']
@@ -179,22 +173,3 @@ def scene_cuts(frames, window: int = 15, floor: float = 0.3, ratio: float = 3.0,
         if d[k] > floor and d[k] > ratio * local + 0.05 and k - (cuts[-1] if cuts else 0) >= min_shot:
             cuts.append(k)
     return cuts
-
-
-# [DOC: audio-chain]
-def audio_filter(src, start: float, dur: float, options: dict) -> str:
-    if not options.get('loudnorm'):
-        return GAPLESS
-    cmd = ['ffmpeg', '-v', 'info', '-nostdin', '-hide_banner', *LENIENT, '-ss', f'{start:.3f}', '-t', f'{dur:.3f}',
-           '-i', str(src), '-map', '0:a:0', '-af', f'{GAPLESS},{LOUDNORM}:print_format=json',
-           '-f', 'null', '-']  # fmt: skip
-    err = subprocess.run(cmd, check=True, capture_output=True, text=True).stderr
-    m = json.loads(err[err.rindex('{') : err.rindex('}') + 1])
-    if not all(math.isfinite(float(m[k])) for k in ('target_offset', *(f'input_{k.lower()}' for k in MEASURED))):
-        return GAPLESS
-    measured = ':'.join(f'measured_{k}={m[f"input_{k.lower()}"]}' for k in MEASURED)
-    return f'{GAPLESS},{LOUDNORM}:{measured}:offset={m["target_offset"]}:linear=false,aresample=48000'
-
-
-def audio_input(src, meta: dict, start: float, dur: float) -> list[str]:
-    return [*LENIENT, '-ss', f'{start:.3f}', '-t', f'{dur:.3f}', '-i', str(src)] if meta['has_audio'] else []

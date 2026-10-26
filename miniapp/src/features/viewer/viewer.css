@@ -13,7 +13,7 @@
 /* [DOC: viewer-fit] */
 @property --aspect {syntax: '<number>'; inherits: true; initial-value: 1.7778}
 
-.viewer {height: min(100cqw / var(--aspect), 70cqh)}
+.viewer {height: min(100cqw / var(--aspect), 0.7 * var(--room))}
 
 /* [DOC: selection-gestures] */
 .viewer-stage {

@@ -8,6 +8,7 @@ DATA_DIR = '/data'
 JOBS_DIR = f'{DATA_DIR}/jobs'
 RIFE_WEIGHTS = '/opt/rife/flownet_v4.25.pkl'
 SEEDVR_CODE = '/opt/seedvr'
+DEEP_FILTER = '/usr/local/bin/deep-filter'
 SAM_MODEL = 'facebook/sam2.1-hiera-large'
 
 

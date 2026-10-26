@@ -1,5 +1,6 @@
 /* [DOC: safe-areas] */
 :root {
+  --safe-top: calc(max(env(safe-area-inset-top), var(--tg-safe-area-inset-top, 0px)) + var(--tg-content-safe-area-inset-top, 0px));
   --safe-left: max(env(safe-area-inset-left), var(--tg-safe-area-inset-left, 0px));
   --safe-right: max(env(safe-area-inset-right), var(--tg-safe-area-inset-right, 0px));
   --safe-bottom: calc(max(env(safe-area-inset-bottom), var(--tg-safe-area-inset-bottom, 0px)) + var(--tg-content-safe-area-inset-bottom, 0px));
@@ -8,20 +9,14 @@
 
 /* [DOC: editor-scroll] */
 .editor {
+  --room: calc(var(--tg-viewport-stable-height, 100dvh) - var(--safe-top) - var(--safe-bottom) - var(--bar));
   display: grid;
   grid-template-rows: auto auto auto 1fr;
-  box-sizing: border-box;
-  height: 100%;
+  min-height: var(--tg-viewport-stable-height, 100dvh);
   max-width: 720px;
   margin-inline: auto;
-  padding:
-    calc(max(env(safe-area-inset-top), var(--tg-safe-area-inset-top, 0px)) + var(--tg-content-safe-area-inset-top, 0px))
-    var(--safe-right)
-    calc(var(--safe-bottom) + var(--bar))
-    var(--safe-left);
-  overflow: hidden auto;
-  scrollbar-gutter: stable;
-  container-type: size;
+  padding: var(--safe-top) var(--safe-right) calc(var(--safe-bottom) + var(--bar)) var(--safe-left);
+  container-type: inline-size;
 }
 
 /* [DOC: editor-draft] */
@@ -83,3 +78,16 @@
 .editor-submit[aria-busy] > :first-child {visibility: hidden}
 
 .editor-submit .spinner {width: 24px; height: 24px; border-width: 2px}
+
+/* [DOC: split-layout] */
+@media (orientation: landscape) and (min-width: 900px) and (min-height: 560px) {
+  .editor[data-split] {grid-template: auto 1fr auto / minmax(0, 1fr) 380px; max-width: none}
+
+  .editor[data-split] > .viewer {grid-area: 1 / 1 / 3; height: auto; background: none}
+
+  .editor[data-split] > .timeline {grid-area: 3 / 1}
+
+  .editor[data-split] > .options {grid-area: 1 / 2}
+
+  .editor[data-split] > .editor-status {grid-area: 2 / 2}
+}

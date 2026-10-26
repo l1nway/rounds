@@ -3,13 +3,12 @@ import Sheen from '../../components/sheen.jsx'
 import Swap from '../../components/swap.jsx'
 import {attach, useAway, usePlayer} from '../../hooks/player.js'
 import {useOnline, usePresence} from '../../hooks/state.js'
-import {launchAspect, segment, warmLift} from '../../services/api.js'
+import {segment, warmLift} from '../../services/api.js'
 import {boxStyle, pct, useGestures} from './gestures.js'
 import Lift from './lift.jsx'
 import './viewer.css'
 
 const CORNERS = ['tl', 'tr', 'bl', 'br']
-const FALLBACK_ASPECT = launchAspect() ?? 16 / 9
 // [DOC: viewer-fit]
 const FIT = {duration: 600, easing: 'cubic-bezier(0.4, 0, 0.2, 1)'}
 const BROKEN = {title: 'The video did not load', text: 'Check the connection and open the editor again.'}
@@ -111,7 +110,7 @@ function Notice({notice}) {
   )
 }
 
-export default memo(function Viewer({job, notice, selection, dispatch, readOnly}) {
+export default memo(function Viewer({job, notice, aspect, selection, dispatch, readOnly}) {
   const refs = useRef({video: null, stage: null, draw: null, drag: null})
   const viewer = useRef(null)
   const waiting = usePlayer(state => state.waiting)
@@ -123,7 +122,6 @@ export default memo(function Viewer({job, notice, selection, dispatch, readOnly}
   const {time, points, box} = selection
   const {lift, ask, cycle} = useLift(job, dispatch, readOnly)
   const {down, move, up, hide} = useGestures({job, selection, dispatch, readOnly, refs, ask, cycle})
-  const aspect = job ? job.meta.width / job.meta.height : FALLBACK_ASPECT
   useFit(viewer, aspect)
 
   useEffect(() => job ? attach(refs.current.video) : undefined, [job])

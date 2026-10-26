@@ -8,7 +8,11 @@ Why inline in `index.html` (owner request 2026-10-26, a white flash on reload): 
 
 The Telegram script sets `--tg-theme-*` and `--tg-color-scheme` on `<html>` synchronously while it runs: `telegram-web-app.js?64` reads `tgWebAppThemeParams` from the URL hash (or `sessionStorage` after a reload) at load and calls `setThemeParams`, which writes each colour through `document.documentElement.style.setProperty('--tg-…')` (read 2026-10-26), and keeps them current on `theme_changed`. It is a parser-blocking script in `<head>`, so the variables exist before the first paint (observed: `--tg-theme-bg-color` set while the module script was still held back). Nothing in JS reads `themeParams`.
 
-Fixed colours: `--stage` (black behind the video in both themes, with `--on-stage` white for text and marks on it, the playhead and the switch thumb, which is white in both iOS themes), `--trim` (iOS yellow trim frame). Literal `rgb(0 0 0 / a)` shadows and scrims and the lift's white glows (`lift.css`, its own variables) are the only other colours: they darken or light whatever video is under them, the same in both themes. Every other colour comes from the Telegram theme. Motion: every transition reads `--dur` / `--ease`; `prefers-reduced-motion` sets `--dur: 0ms`, so state changes still happen, just without the tween. `#root` takes `--tg-viewport-stable-height` (Telegram's own recommendation for bottom-pinned layout), `100dvh` outside Telegram.
+Fixed colours: `--stage` (black behind the video in both themes, with `--on-stage` white for text and marks on it, the playhead and the switch thumb, which is white in both iOS themes), `--trim` (iOS yellow trim frame). Literal `rgb(0 0 0 / a)` shadows and scrims and the lift's white glows (`lift.css`, its own variables) are the only other colours: they darken or light whatever video is under them, the same in both themes. Every other colour comes from the Telegram theme. Motion: every transition reads `--dur` / `--ease`; `prefers-reduced-motion` sets `--dur: 0ms`, so state changes still happen, just without the tween.
+
+## Document scroll
+
+The document is the page's only scroller; `#root` has no height rule. `html` has `scrollbar-gutter: stable`, so a classic Windows scrollbar never narrows the layout and `100cqw` of the editor stays its content width (`features/editor/README.md`, Editor scroll, which also says why an inner scroller broke iOS).
 
 ## Reset
 

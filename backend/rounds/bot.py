@@ -14,6 +14,7 @@ from .config import allowed_users, env
 MAX_FILE = 2000 * 1024 * 1024
 TEXTS = {
     'start': 'Send me a video, ideally as a file (attach → File) so Telegram does not compress it. '
+    'An old round or a forwarded video works too. '
     'I will turn it into a round video note that follows the object you pick.',
     'private': 'This bot is private.',
     'not_video': 'Send a video file.',
@@ -33,7 +34,7 @@ TEXTS = {
     'failed': 'Something went wrong. {}.',
 }
 ACTION_EVERY = 4
-VIDEO = F.video | F.document.mime_type.startswith('video/')
+VIDEO = F.video | F.video_note | F.document.mime_type.startswith('video/')
 
 dp = Dispatcher()
 
@@ -101,7 +102,7 @@ async def start(message: Message) -> None:
 
 @dp.message(VIDEO)
 async def video(message: Message, jobs, spawn) -> None:
-    media = message.video or message.document
+    media = message.video or message.video_note or message.document
     if media.file_size and media.file_size > MAX_FILE:
         await message.reply(TEXTS['too_big'])
         return

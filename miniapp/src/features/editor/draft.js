@@ -8,6 +8,8 @@ export const OPTIONS = [
   {key: 'upscale', label: 'AI upscale', hint: 'Redraws a small video in sharp 640 px. Slow: about 4 min per 10 s', needs: meta => Math.min(meta.width, meta.height) < 640},
   {key: 'metadata', label: 'Keep original metadata', hint: 'Date, camera, GPS: recipients see where it was filmed', needs: meta => Object.keys(meta.tags ?? {}).length > 0}
 ]
+// [DOC: noise-slider]
+export const NOISE = [{to: 0, hint: 'Off'}, {to: 1, hint: 'AI keeps voices, cuts the rest, music too'}]
 // [DOC: codec-picker]
 export const CODECS = [
   {key: 'av1', label: 'AV1', hint: 'Most detail per MB'},
@@ -25,7 +27,8 @@ export const init = job => {
   return {
     start: last?.start ?? 0, end: last?.end ?? ms(Math.min(job?.meta.duration ?? 0, job?.max_duration ?? 0)),
     time: last?.prompt.time ?? null, points: last?.prompt.points ?? [], box: last?.prompt.box ?? null,
-    mask: last?.prompt.mask ?? null, options: {...last?.options}, codec: codecOf(last?.codec), posting: false, error: null
+    mask: last?.prompt.mask ?? null, options: {...last?.options}, codec: codecOf(last?.codec), denoise: last?.denoise ?? 0,
+    posting: false, error: null
   }
 }
 

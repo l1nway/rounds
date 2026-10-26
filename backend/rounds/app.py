@@ -4,7 +4,7 @@ from pathlib import Path
 import modal
 
 from . import pipeline
-from .config import DATA_DIR, JOBS_DIR, RIFE_WEIGHTS, SEEDVR_CODE
+from .config import DATA_DIR, DEEP_FILTER, JOBS_DIR, RIFE_WEIGHTS, SEEDVR_CODE
 
 PROJECT = Path(__file__).parent.parent
 FFMPEG = (
@@ -15,6 +15,11 @@ FFMPEG = (
 RIFE = (
     'https://github.com/HolyWu/vs-rife/releases/download/model/flownet_v4.25.pkl',
     '6615790efd627772917205db291f51cd392528a157ecbb2ecaeec3bff8eb6de2',
+)
+# [DOC: denoise]
+VOICE = (
+    'https://github.com/Rikorose/DeepFilterNet/releases/download/v0.5.6/deep-filter-0.5.6-x86_64-unknown-linux-musl',
+    '70775e251eee44c0f2451a1e833326cf8bcbbe304d3e7cd12851e6fce72ef7da',
 )
 # [DOC: upscale]
 SEEDVR = 'https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler', '4490bd1f482e026674543386bb2a4d176da245b9'
@@ -45,7 +50,9 @@ app = modal.App('rounds')
 weights = (f'curl -fsSL --create-dirs -o {RIFE_WEIGHTS} {RIFE[0]}', f'echo "{RIFE[1]}  {RIFE_WEIGHTS}" | sha256sum -c')
 seedvr = (f'git init -q {SEEDVR_CODE} && git -C {SEEDVR_CODE} fetch -q --depth 1 {SEEDVR[0]} {SEEDVR[1]}',
           f'git -C {SEEDVR_CODE} checkout -q FETCH_HEAD')  # fmt: skip
-cpu_image, gpu_image = image(), image('gpu', commands=(*weights, *seedvr))
+voice = (f'curl -fsSL -o {DEEP_FILTER} {VOICE[0]}', f'echo "{VOICE[1]}  {DEEP_FILTER}" | sha256sum -c',
+         f'chmod +x {DEEP_FILTER} && {DEEP_FILTER} --version')  # fmt: skip
+cpu_image, gpu_image = image(), image('gpu', commands=(*weights, *seedvr, *voice))
 data = modal.Volume.from_name('rounds-data', create_if_missing=True)
 models = modal.Volume.from_name('rounds-models', create_if_missing=True)
 jobs = modal.Dict.from_name('rounds-jobs', create_if_missing=True)

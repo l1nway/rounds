@@ -1,7 +1,7 @@
 import {memo, useRef} from 'react'
 import Swap from '../../components/swap.jsx'
 import {haptic} from '../../services/telegram.js'
-import {CODECS, OPTIONS} from './draft.js'
+import {CODECS, NOISE, OPTIONS} from './draft.js'
 import './options.css'
 
 const FIRST_OPTION = 3
@@ -70,6 +70,26 @@ function Switch({name, label, hint, checked, disabled, order, onSet}) {
   )
 }
 
+const zone = value => NOISE.findIndex(({to}) => value <= to)
+
+// [DOC: noise-slider]
+function Noise({value, disabled, order, onSet}) {
+  const {hint} = NOISE[zone(value)]
+  const input = event => {
+    const next = event.target.valueAsNumber / 100
+    if (zone(next) !== zone(value)) haptic.tick()
+    onSet(next)
+  }
+  return (
+    <label className='options-row options-level enter' style={{'--i': order}}>
+      <span>
+        <span className='options-text'>Reduce noise<Swap as='small' text={hint}/></span>
+        <input type='range' name='denoise' min='0' max='100' step='1' value={Math.round(value * 100)} aria-valuetext={hint} disabled={disabled} style={{'--p': value}} onInput={input}/>
+      </span>
+    </label>
+  )
+}
+
 function Codec({codec, disabled, order, onSet}) {
   const index = CODECS.findIndex(({key}) => key === codec)
   return (
@@ -83,13 +103,15 @@ function Codec({codec, disabled, order, onSet}) {
 }
 
 // [DOC: late-rows]
-export default memo(function Options({meta, options, codec, readOnly, dispatch}) {
+export default memo(function Options({meta, options, codec, denoise, readOnly, dispatch}) {
   const rows = meta ? OPTIONS.filter(({needs}) => needs(meta)) : []
+  const late = rows.length + Number(Boolean(meta?.has_audio))
   const set = (name, value) => dispatch(prev => ({options: {...prev.options, [name]: value}}))
   return (
     <>
       {rows.map(({key, label, hint}, i) => <Switch key={key} name={key} label={label} hint={hint} checked={Boolean(options[key])} disabled={readOnly} order={`calc(${i} + ${FIRST_OPTION} * var(--early, 0))`} onSet={set}/>)}
-      <Codec codec={codec} disabled={!meta || readOnly} order={`calc(${FIRST_OPTION} + ${rows.length} * var(--early, 0))`} onSet={value => dispatch({codec: value})}/>
+      {meta?.has_audio && <Noise value={denoise} disabled={readOnly} order={`calc(${rows.length} + ${FIRST_OPTION} * var(--early, 0))`} onSet={value => dispatch({denoise: value})}/>}
+      <Codec codec={codec} disabled={!meta || readOnly} order={`calc(${FIRST_OPTION} + ${late} * var(--early, 0))`} onSet={value => dispatch({codec: value})}/>
     </>
   )
 })

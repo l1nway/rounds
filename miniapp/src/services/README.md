@@ -20,7 +20,7 @@ APIs used, all checked in core.telegram.org/bots/webapps (2026-10-25): `initData
 
 ## Launch aspect
 
-`launchAspect()` reads `a` from the launch URL (width / height of the video, written by the bot, `backend/rounds/README.md`, Launch aspect) or returns `null` when it is missing, `0` or not a number. The viewer uses it as `FALLBACK_ASPECT` until the job arrives (`features/viewer/README.md`, Viewer fit). A hint for the layout only: everything else reads `job.meta`.
+`launchAspect()` reads `a` from the launch URL (width / height of the video, written by the bot, `backend/rounds/README.md`, Launch aspect) or returns `null` when it is missing, `0` or not a number. The editor uses it as `FALLBACK_ASPECT` until the job arrives: the viewer's shape (`features/viewer/README.md`, Viewer fit) and the split or stacked layout (`features/editor/README.md`, Split layout) are right from the first paint. A hint for the layout only: everything else reads `job.meta`.
 
 ## API URL
 

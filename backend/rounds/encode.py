@@ -4,7 +4,7 @@ import queue
 import subprocess
 import threading
 
-from . import media, tags
+from . import audio, media, tags
 from .config import OUT_SIZE
 
 # [DOC: codecs]
@@ -84,13 +84,13 @@ def second_pass(tmp: str, src, meta: dict, start: float, dur: float, n: int, rat
                 codec: str, progress=None) -> float:  # fmt: skip
     has_audio, scale = meta['has_audio'], 1.0
     # [DOC: render-options]
-    audio = ['-map', '1:a:0', '-af', media.audio_filter(src, start, dur, options), *AAC] if has_audio else []
+    inputs, af = audio.chain(src, meta, start, dur, options, tmp)
+    sound = ['-map', '1:a:0', '-af', af, *AAC] if has_audio else []
     end = [*tags.created(tags.kept(meta, options)), '-t', f'{dur:.3f}', '-movflags', '+faststart',
            '-progress', 'pipe:1', '-nostats', str(out)]  # fmt: skip
     for _ in range(FIT_TRIES):
         bits = target(dur, has_audio, scale)
-        run([*FFMPEG, *raw(rate, f'{tmp}/{RAW}'), *media.audio_input(src, meta, start, dur),
-             *video(codec, bits, 2, tmp), *audio, *end], n, progress)  # fmt: skip
+        run([*FFMPEG, *raw(rate, f'{tmp}/{RAW}'), *inputs, *video(codec, bits, 2, tmp), *sound, *end], n, progress)
         size = os.path.getsize(out)
         if size <= NOTE_BYTES:
             return scale
