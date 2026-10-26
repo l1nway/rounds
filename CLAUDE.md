@@ -26,7 +26,7 @@ Flow: video sent to the bot → webhook → `ingest` (CPU: MTProto download to t
 
 ## Telegram limits (verified, see `backend/rounds/README.md` for sources)
 
-- Video note: square MP4, `length` ≤ 640 (TDLib rejects more with 400), "up to 1 minute". H.264 and (owner's test) HEVC stay rounds; AV1 and VP9 are experimental; H.266 is a test only: no VVC decoder in Telegram iOS or Desktop, Android 17 adds a platform VVC decoder where the SoC has one (`backend/rounds/README.md`, Codecs). No re-encoding by the Bot API or TDLib: what we upload is what people see. A file of 13.2 MB arrived as a regular video; the encoder fills and never exceeds 12 000 000 B (`backend/rounds/README.md`, Note size).
+- Video note: square MP4, `length` ≤ 640 (TDLib rejects more with 400), "up to 1 minute". H.264 and (owner's test) HEVC stay rounds; AV1 and VP9 are experimental; H.266 is a test only: no VVC decoder in Telegram iOS or Desktop, Android 17 adds a platform VVC decoder where the SoC has one (`backend/rounds/README.md`, Codecs). No re-encoding by the Bot API or TDLib: what we upload is what people see. A file of 13.2 MB arrived as a regular video, and so did AV1 / VP9 notes of about 11.6 MB; the encoder fills and never exceeds 10 000 000 B (`backend/rounds/README.md`, Note size).
 - Cloud Bot API: download 20 MB, upload 50 MB. MTProto (bots included): up to 2000 MB.
 - Mini App data goes back through our API with `initData` validated by HMAC; `sendData` is not used (keyboard-button launches only).
 
@@ -37,6 +37,7 @@ Flow: video sent to the bot → webhook → `ingest` (CPU: MTProto download to t
 - Object at the frame edge: honest pixels first, an unnoticeable fill where the circle leaves the frame; an AI outpainting model may come later.
 - Frame rate: the note keeps the source rate up to 60. "Smooth to 60 fps" (RIFE interpolation, off by default) is offered for anything below 60 (59.94 included), with dropped frames or with frozen duplicate frames, and always targets 60. It must never fail on broken phone files (`backend/rounds/README.md`, Broken sources, Output rate).
 - Codec: HEVC by default, picked in the Mini App among HEVC, AV1, VP9 and H.266 (the last three experimental); H.264 dropped (owner, 2026-10-26: old format). Every note spends its size budget in two passes (`backend/rounds/README.md`, Codecs, Note size).
+- Zoom on the object is an option, off by default: without it the note is only the square crop that follows the object (`backend/rounds/README.md`, Zoom option). A square source needs no selection unless zoom is on (Square source).
 - Loudness normalization is an option, off by default. Leave room for more audio filters and for video stabilization (shaky handheld sources) as later options.
 - Tap-to-lift (2026-10-26): the owner accepts about $8 a month of the Starter credits for the warm GPU `Lift` class, as long as it looks iOS-grade; the look was approved on the iPhone (`miniapp/src/features/viewer/README.md`, Lift look).
 - Optional note metadata (date, location, camera) is a switch, off by default; when on, the note's camera name also says "Round from Telegram" (`backend/rounds/README.md`, Note metadata).

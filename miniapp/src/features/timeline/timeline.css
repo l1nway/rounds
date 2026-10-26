@@ -115,7 +115,7 @@
   width: 4px;
   margin-left: -2px;
   border-radius: 2px;
-  background: #fff;
+  background: var(--on-stage);
   box-shadow: 0 0 0 1px rgb(0 0 0 / 0.35), 0 1px 4px rgb(0 0 0 / 0.4);
   pointer-events: none;
 }

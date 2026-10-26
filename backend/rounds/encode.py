@@ -21,7 +21,7 @@ QUIET = {**os.environ, 'SVT_LOG': '1'}
 AUDIO_RATE = 128_000
 AAC = ['-c:a', 'aac', '-b:a', str(AUDIO_RATE), '-ar', '48000', '-ac', '2']
 # [DOC: note-size]
-NOTE_BYTES = 12_000_000
+NOTE_BYTES = 10_000_000
 HEADROOM = 0.97
 MAX_RATE = 14_000_000
 SHRINK = 0.95

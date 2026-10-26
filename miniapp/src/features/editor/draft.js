@@ -2,6 +2,7 @@ import {MIN_RANGE, ms} from '../../hooks/player.js'
 
 // [DOC: options-seam]
 export const OPTIONS = [
+  {key: 'zoom', label: 'Zoom in on the object', hint: 'Off: only crops to a square that follows it', needs: meta => Math.min(meta.width, meta.height) > 640},
   {key: 'loudnorm', label: 'Normalize loudness', hint: 'Evens out quiet and loud parts', needs: meta => meta.has_audio},
   {key: 'interpolate', label: 'Smooth to 60 fps', hint: 'AI draws in-between frames, fixes stutter', needs: meta => meta.interpolable},
   {key: 'upscale', label: 'AI upscale', hint: 'Redraws a small video in sharp 640 px. Slow: about 4 min per 10 s', needs: meta => Math.min(meta.width, meta.height) < 640},
@@ -29,6 +30,9 @@ export const init = job => {
   }
 }
 
-export const isValid = ({start, end, time, points, box}, job) => Boolean(job) && (Boolean(box) || points.some(p => p[2] === 1))
-  && end - start >= Math.min(MIN_RANGE, job.meta.duration) && end - start <= job.max_duration + 1e-6
-  && time !== null && time >= start && time <= end
+// [DOC: square-source]
+const optional = ({meta}, options) => meta.width === meta.height && !optionsFor(meta, options).zoom
+const selected = ({start, end, time, points, box}) => (Boolean(box) || points.some(p => p[2] === 1)) && time !== null && time >= start && time <= end
+
+export const isValid = (draft, job) => Boolean(job) && (draft.time === null ? optional(job, draft.options) : selected(draft))
+  && draft.end - draft.start >= Math.min(MIN_RANGE, job.meta.duration) && draft.end - draft.start <= job.max_duration + 1e-6

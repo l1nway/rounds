@@ -27,15 +27,18 @@ MASK_CHARS = 90_000
 
 
 class Prompt(BaseModel):
-    time: float
+    time: float | None = None
     points: list[tuple[float, float, int]] = []
     box: tuple[float, float, float, float] | None = None
     mask: str | None = Field(None, max_length=MASK_CHARS, pattern=MASK)
 
+    # [DOC: square-source]
     @model_validator(mode='after')
     def check(self):
         coords = [v for x, y, _ in self.points for v in (x, y)] + list(self.box or ())
-        if self.time < 0 or not coords or any(not 0 <= v <= 1 for v in coords):
+        if self.time is None and not coords and not self.mask:
+            return self
+        if self.time is None or self.time < 0 or not coords or any(not 0 <= v <= 1 for v in coords):
             raise ValueError('Select the object')
         return self
 
@@ -51,7 +54,7 @@ class RenderRequest(BaseModel):
     def check(self):
         if not 0 < self.end - self.start <= MAX_DURATION + 1e-3:
             raise ValueError(f'The range must be up to {MAX_DURATION} s')
-        if not self.start <= self.prompt.time <= self.end:
+        if self.prompt.time is not None and not self.start <= self.prompt.time <= self.end:
             raise ValueError('The selection must be inside the range')
         return self
 
@@ -118,6 +121,8 @@ def create(jobs, volume, spawn) -> FastAPI:
             raise HTTPException(409, 'The video is busy, wait for it to finish')
         if body.end > job['meta']['duration'] + 1e-3:
             raise HTTPException(422, 'The range is outside the video')
+        if body.prompt.time is None and job['meta']['width'] != job['meta']['height']:
+            raise HTTPException(422, 'Select the object')
         reply = await bot.get_bot().send_message(
             job['chat_id'], bot.TEXTS['queued'], reply_to_message_id=job['source_message_id']
         )
@@ -139,6 +144,8 @@ def create(jobs, volume, spawn) -> FastAPI:
     @api.post('/api/jobs/{job_id}/segment')
     async def segment(job_id: str, body: Prompt, authorization: str = Header('')):
         job = await own_job(job_id, authorization)
+        if body.time is None:
+            raise HTTPException(422, 'Select the object')
         if not job.get('proxy') or body.time > job['meta']['duration'] + 1e-3:
             raise HTTPException(409, 'The video is not ready yet')
         size = job['proxy']['width'], job['proxy']['height']

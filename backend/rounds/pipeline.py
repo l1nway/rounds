@@ -116,65 +116,76 @@ def to_source(found: dict, frames: np.ndarray, meta: dict) -> dict:
     return {**found, 'cx': found['cx'] * sx, 'cy': found['cy'] * sy, 'r': found['r'] * max(sx, sy)}
 
 
+# [DOC: square-source]
+def follows(meta: dict, request: dict) -> bool:
+    square = meta['width'] == meta['height']
+    return request['prompt']['time'] is not None and (not square or request['options'].get('zoom', False))
+
+
+async def frame_path(job_id: str, jobs, job: dict, src: str) -> tuple[dict, np.ndarray, list]:
+    from . import camera, track
+
+    request, meta, loop = job['request'], job['meta'], asyncio.get_running_loop()
+    start, end, prompt = request['start'], request['end'], request['prompt']
+    if not follows(meta, request):
+        return job, camera.still(media.frame_count(start, end), meta['width'], meta['height']), []
+    frames = None
+    try:
+        job = await stage(jobs, job, 'decoding')
+        with timed(job_id, 'render.decode') as facts:
+            frames = await asyncio.to_thread(media.track_frames, src, meta, start, end)
+            h, w = frames.shape[1:3]
+            facts.update(frames=len(frames), size=f'{w}x{h}', fps=(len(frames), ''))
+        index = min(len(frames) - 1, round((prompt['time'] - start) * FPS))
+        points = [[x * w, y * h, label] for x, y, label in prompt['points']]
+        box = [v * s for v, s in zip(prompt['box'], (w, h, w, h), strict=True)] if prompt['box'] else None
+        job = await stage(jobs, job, 'tracking')
+        with timed(job_id, 'render.track') as facts:
+            found = await asyncio.to_thread(
+                track.track, frames, index, points, box, prompt.get('mask') or '', reporter(job, 'tracking', loop)
+            )
+            facts.update(fps=(len(frames), ''))
+        job = await stage(jobs, job, 'cuts')
+        with timed(job_id, 'render.cuts') as facts:
+            cuts = await asyncio.to_thread(media.scene_cuts, frames)
+            facts.update(cuts=len(cuts))
+        job = await stage(jobs, job, 'framing')
+        with timed(job_id, 'render.camera'):
+            found = to_source(found, frames, meta)
+            zoom = request['options'].get('zoom', False)
+            path = await asyncio.to_thread(camera.solve, found, meta['width'], meta['height'], cuts, zoom=zoom)
+        np.savez(f'{JOBS_DIR}/{job_id}/track.npz', **found)
+        return job, path, cuts
+    finally:
+        if getattr(frames, 'filename', None):
+            os.remove(frames.filename)
+
+
 async def render_job(job_id: str, jobs, state, volume, models) -> None:
-    from . import camera, render, track, upscale
+    from . import render, track, upscale
 
     began = time.monotonic()
     job = await jobs.get.aio(job_id)
     note(job_id, 'render.wait', waited(job))
     with timed(job_id, 'render.load'):
-        await asyncio.to_thread(track.load)
+        if follows(job['meta'], job['request']):
+            await asyncio.to_thread(track.load)
         if upscale.wanted(job['meta'], job['request']['options']):
             await asyncio.to_thread(upscale.fetch)
         await models.commit.aio()
     await volume.reload.aio()
     job_dir, request, meta = f'{JOBS_DIR}/{job_id}', job['request'], job['meta']
-    start, end, prompt = request['start'], request['end'], request['prompt']
-    loop = asyncio.get_running_loop()
-    frames = None
+    start, end, loop = request['start'], request['end'], asyncio.get_running_loop()
     try:
         src, out = f'{job_dir}/{job["source"]}', f'{job_dir}/note.mp4'
         async with bot.acting(job['chat_id'], 'record_video_note'):
-            job = await stage(jobs, job, 'decoding')
-            with timed(job_id, 'render.decode') as facts:
-                frames = await asyncio.to_thread(media.track_frames, src, meta, start, end)
-                h, w = frames.shape[1:3]
-                facts.update(frames=len(frames), size=f'{w}x{h}', fps=(len(frames), ''))
-            index = min(len(frames) - 1, round((prompt['time'] - start) * FPS))
-            points = [[x * w, y * h, label] for x, y, label in prompt['points']]
-            box = [v * s for v, s in zip(prompt['box'], (w, h, w, h), strict=True)] if prompt['box'] else None
-            job = await stage(jobs, job, 'tracking')
-            with timed(job_id, 'render.track') as facts:
-                found = await asyncio.to_thread(
-                    track.track, frames, index, points, box, prompt.get('mask') or '', reporter(job, 'tracking', loop)
-                )
-                facts.update(fps=(len(frames), ''))
-            job = await stage(jobs, job, 'cuts')
-            with timed(job_id, 'render.cuts') as facts:
-                cuts = await asyncio.to_thread(media.scene_cuts, frames)
-                facts.update(cuts=len(cuts))
-            job = await stage(jobs, job, 'framing')
-            with timed(job_id, 'render.camera'):
-                found = to_source(found, frames, meta)
-                path = await asyncio.to_thread(camera.solve, found, meta['width'], meta['height'], cuts)
-            np.savez(f'{job_dir}/track.npz', **found)
+            job, path, cuts = await frame_path(job_id, jobs, job, src)
             np.save(f'{job_dir}/path.npy', path)
             job = await stage(jobs, job, 'rendering')
             report = reporter(job, 'rendering', loop)
+            args = (src, meta, start, end, path, cuts, out, request['options'], request.get('codec', 'hevc'), report)
             with timed(job_id, 'render.encode') as facts:
-                result = await asyncio.to_thread(
-                    render.render,
-                    src,
-                    meta,
-                    start,
-                    end,
-                    path,
-                    cuts,
-                    out,
-                    request['options'],
-                    request.get('codec', 'hevc'),
-                    report,
-                )
+                result = await asyncio.to_thread(render.render, *args)
                 stats = {k: v for k, v in result.items() if k in ('codec', 'fit', 'upscale', 'rate', 'synth', 'dupes')}
                 facts.update(fps=(result['frames'], ''), mb=round(result['size'] / MB, 1), **stats)
             with timed(job_id, 'render.commit'):
@@ -189,6 +200,3 @@ async def render_job(job_id: str, jobs, state, volume, models) -> None:
         note(job_id, 'render', time.monotonic() - began, clip=round(end - start, 2), **describe(meta))
     except Exception as error:
         await fail(jobs, job, error)
-    finally:
-        if getattr(frames, 'filename', None):
-            os.remove(frames.filename)

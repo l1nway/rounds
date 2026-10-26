@@ -1,49 +1,61 @@
 import {memo, useRef} from 'react'
 import Swap from '../../components/swap.jsx'
-import {clamp} from '../../hooks/player.js'
+import {haptic} from '../../services/telegram.js'
 import {CODECS, OPTIONS} from './draft.js'
 import './options.css'
 
-const TRAVEL = 13
 const FIRST_OPTION = 3
-const SLOP = 4
+const HOLD = 200
+const REACH = 0.4
+
+// [DOC: switch-gesture]
+const flipAt = ({start, on, flipped, box: {width: w, height: h}}) =>
+  flipped ? w / 2 : !on && start > w - h ? start + REACH * w : on && start < h ? start - REACH * w : w / 2
 
 // [DOC: switch]
 function Switch({name, label, hint, checked, disabled, order, onSet}) {
   const gesture = useRef(null)
+  const set = (value, felt) => {if (!felt) haptic.tap('light'); onSet(name, value)}
 
   const down = event => {
-    const input = event.currentTarget.control
+    clearTimeout(gesture.current?.timer)
+    const row = event.currentTarget, input = row.control
     const own = event.target === input && !input.matches(':disabled') && event.isPrimary && event.button < 1
-    gesture.current = own ? {id: event.pointerId, x0: event.clientX, from: input.checked ? TRAVEL : 0, x: 0} : null
-    if (own) input.dataset.press = ''
+    const g = own ? {id: event.pointerId, x: event.clientX, on: input.checked} : null
+    gesture.current = g
+    if (!own) return
+    const track = () => {g.box = input.getBoundingClientRect(); g.start = g.x - g.box.left; g.tracking = true; row.setPointerCapture(g.id)}
+    if (event.pointerType === 'mouse') track()
+    else g.timer = setTimeout(() => {track(); input.dataset.press = ''}, HOLD)
   }
 
   const move = event => {
     const g = gesture.current
-    if (!g || g.done) return
-    const dx = event.clientX - g.x0
-    if (!g.moved && Math.abs(dx) < SLOP) return
+    if (g?.id !== event.pointerId || g.done) return
+    g.x = event.clientX
+    if (!g.tracking || (g.x - g.box.left < flipAt(g)) !== g.on) return
     const input = event.currentTarget.control
-    if (!g.moved) {g.moved = true; event.currentTarget.setPointerCapture(g.id); input.dataset.drag = ''}
-    g.x = clamp(g.from + dx, 0, TRAVEL)
-    input.style.setProperty('--x', `${g.x}px`)
+    g.on = !g.on
+    g.flipped = true
+    input.toggleAttribute('data-flip', g.on !== input.checked)
+    haptic.tap('light')
   }
 
   const end = event => {
     const g = gesture.current
-    if (!g || g.done) return
+    if (g?.id !== event.pointerId || g.done) return
     const input = event.currentTarget.control
+    clearTimeout(g.timer)
     delete input.dataset.press
-    delete input.dataset.drag
-    input.style.removeProperty('--x')
+    delete input.dataset.flip
     g.done = true
-    if (!g.moved || event.type !== 'pointerup') gesture.current = null
-    else onSet(name, g.x > TRAVEL / 2)
+    const value = g.flipped ? g.on : !input.checked
+    if (event.type === 'pointercancel' && !g.tracking) gesture.current = null
+    else if (value !== input.checked) set(value, g.flipped)
   }
 
   const click = event => {
-    if (!gesture.current?.moved || !event.detail) return
+    if (!gesture.current?.done || !event.detail) return
     event.preventDefault()
     gesture.current = null
   }
@@ -51,7 +63,9 @@ function Switch({name, label, hint, checked, disabled, order, onSet}) {
   return (
     <label className='options-row enter' style={{'--i': order}} onPointerDown={down} onPointerMove={move} onPointerUp={end} onPointerCancel={end} onClickCapture={click}>
       <span className='options-text'>{label}<small>{hint}</small></span>
-      <input type='checkbox' role='switch' name={name} checked={checked} disabled={disabled} onChange={event => onSet(name, event.target.checked)}/>
+      <span className='options-switch'>
+        <input type='checkbox' role='switch' name={name} checked={checked} disabled={disabled} onChange={event => set(event.target.checked)}/>
+      </span>
     </label>
   )
 }

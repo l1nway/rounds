@@ -55,7 +55,7 @@
   height: 22px;
   margin: -11px 0 0 -11px;
   box-sizing: border-box;
-  border: 2px solid #fff;
+  border: 2px solid var(--on-stage);
   border-radius: 50%;
   background: var(--button);
   box-shadow: 0 1px 4px rgb(0 0 0 / 0.5);
@@ -64,12 +64,12 @@
 
 .viewer-point[data-negative] {background: var(--danger)}
 
-.viewer-point[data-negative]::after {content: ''; position: absolute; inset: 7px 3px; border-radius: 1px; background: #fff}
+.viewer-point[data-negative]::after {content: ''; position: absolute; inset: 7px 3px; border-radius: 1px; background: var(--on-stage)}
 
 .viewer-box {
   position: absolute;
   box-sizing: border-box;
-  border: 2px solid #fff;
+  border: 2px solid var(--on-stage);
   border-radius: 4px;
   box-shadow: 0 0 0 1px rgb(0 0 0 / 0.45), inset 0 0 0 1px rgb(0 0 0 / 0.45);
   transition: opacity var(--dur) var(--ease);
@@ -83,7 +83,7 @@
   width: 10px;
   height: 10px;
   border-radius: 2px;
-  background: #fff;
+  background: var(--on-stage);
   box-shadow: 0 0 0 1px rgb(0 0 0 / 0.45);
 }
 
@@ -124,15 +124,27 @@
 
 .viewer-notice[data-leaving] {opacity: 0}
 
+/* [DOC: notice-unveil] */
+@media (prefers-reduced-motion: no-preference) {
+  .viewer-notice[data-leaving] {animation: unveil 600ms cubic-bezier(0.4, 0, 0.2, 1) forwards; transition-delay: 600ms}
+}
+
+@keyframes unveil {
+  from {clip-path: inset(0)}
+  to {clip-path: inset(calc(50cqh - min(50cqw / var(--aspect), 50cqh)) calc(50cqw - min(50cqw, 50cqh * var(--aspect))))}
+}
+
 .viewer-notice[data-busy] {color: var(--text)}
 
-.viewer-notice-body {place-items: center}
+.viewer-notice-body {place-items: center; transition: opacity var(--dur-long) var(--ease)}
+
+.viewer-notice[data-leaving] .viewer-notice-body {opacity: 0}
 
 .viewer-notice-body > .swap {display: grid; justify-items: center; gap: 8px}
 
 .viewer-notice h2 {font-size: 17px}
 
-.viewer-notice p {max-width: 32ch; color: rgb(255 255 255 / 0.72); transition: color var(--dur-long) var(--ease)}
+.viewer-notice p {max-width: 32ch; color: color-mix(in srgb, var(--on-stage) 72%, transparent); transition: color var(--dur-long) var(--ease)}
 
 .viewer-notice[data-busy] p {color: var(--hint)}
 

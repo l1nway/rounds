@@ -44,7 +44,7 @@ status: 'ingesting' | 'ready' | 'rendering' | 'done' | 'failed'
 stage: None | 'queued' | 'decoding' | 'tracking' | 'cuts' | 'framing' | 'rendering' | 'sending',  progress: 0..1,  error: str | None
 meta: source.probe() result (tags included) + dupes, has_audio (re-checked on the proxy), interpolable (set by ingest after the proxy)
 proxy: {width, height, fps},  filmstrip: {tiles, tile_width, tile_height}
-request: None | {start, end, prompt: {time, points: [[x, y, label]], box: [x0, y0, x1, y1] | None, mask: str | None}, options: {loudnorm: bool, interpolate: bool, metadata: bool, upscale: bool}, codec: 'hevc' | 'av1' | 'vp9' | 'h266'}
+request: None | {start, end, prompt: {time | None, points: [[x, y, label]], box: [x0, y0, x1, y1] | None, mask: str | None}, options: {zoom: bool, loudnorm: bool, interpolate: bool, metadata: bool, upscale: bool}, codec: 'hevc' | 'av1' | 'vp9' | 'h266'}
 ```
 
 `options` is a free `dict[str, bool]` read with `.get`, so an unknown or retired key (`hires`, `hd720`, `hd1080`, `hevc` of older Mini App builds, High resolution) is ignored. `label` is 1 for "this object", 0 for "not this". `prompt.time` lies inside `[start, end]`; `end - start ≤ MAX_DURATION`. `codec` (default `hevc`; requests stored before the field have none, `pipeline` reads it with `.get` and the same default) must match the keys of `encode.CODECS` and the Mini App's `CODECS` (Codecs). `prompt.mask` is the outline the owner picked in the Mini App (Lift mask), a `data:image/png;base64,` URL of at most `MASK_CHARS` (90 000) characters; jobs and clients without it send `None`.
@@ -57,7 +57,8 @@ request: None | {start, end, prompt: {time, points: [[x, y, label]], box: [x0, y
 - `media.scene_cuts(frames) -> list[int]`: indices of frames that start a new shot.
 - `segment.Segmenter().segment(job_id, at, points, box, (w, h)) -> {candidates: [{mask, area}], best}` (Lift).
 - `track.track(frames, index, points, box, mask='') -> dict` of `(N,)` arrays in `frames` pixels: `present` (bool), `cx`, `cy`, `r` (minimum enclosing circle of the mask), `area`. `points` / `box` are in `frames` pixels; `index` is the prompt frame; a decodable `mask` replaces both as the prompt (Lift mask).
-- `camera.solve(track, width, height, cuts=(), fps=FPS) -> np.ndarray` `(N, 3)`: `cx, cy, side` of the square window per frame, source pixels (`track` scaled to source pixels by the caller).
+- `camera.solve(track, width, height, cuts=(), fps=FPS, zoom=False) -> np.ndarray` `(N, 3)`: `cx, cy, side` of the square window per frame, source pixels (`track` scaled to source pixels by the caller).
+- `camera.still(n, width, height) -> np.ndarray` `(n, 3)`: the centred full-frame window, for an untracked square source (Square source).
 - `camera.sampler(path, cuts) -> at(frames)`: path rows at fractional tracking frames (Path sampler).
 - `render.render(src, meta, start, end, path, cuts, out, options, codec, progress=None) -> dict` (`size` in bytes, `duration`, `rate`, `frames`, `codec`, `fit` (the bitrate scale the fit loop ended at, 1.0 = first try), `upscale` (bool, Upscale), plus `synth`, `dupes` when interpolating): `path` from `camera.solve` on the tracking timeline; `progress(fraction)` optional.
 
@@ -78,6 +79,14 @@ request: None | {start, end, prompt: {time, points: [[x, y, label]], box: [x0, y
 - Fallback: LP failure or `TIME_LIMIT` (30 s), or a shot under 8 samples → the subject centre interpolated over gaps, Gaussian σ = 1 s, a constant zoom from the median `r`, clamped to the frame; no detections → widest centred window. Never raises.
 - Do not: switch to `highs-ipm` (timed out at 30 s on N=1800); put inclusion back for subjects bigger than the window; use a non-uniform sample grid.
 - Not yet checked on real SAM tracks or real footage.
+
+## Zoom option
+
+Owner request 2026-10-26: zooming in on the subject is an option, `options.zoom` ("Zoom in on the object"), off by default and off for requests without the key. Off: `camera.solve` pins `h` to 1 (`lo` = 1, `# [DOC: zoom-option]`), so the window is always the whole short side of the frame and the path only pans along the long side; a square source gets a still, full-frame note. Everything else in the LP stays (smoothness, pan caps, soft inclusion against `h` = 1); the framing and zoom terms become constants, and `_clamp` / `_fallback` follow `lo`. On: the path described above, `h ∈ [OUT_SIZE/2, 1]`. The Mini App shows the switch only when the short side is over 640 px: below that the window is already the whole short side either way (Upscale). Checked with a synthetic 4K track (300 frames, subject crossing the frame): off, side 2160 on every frame and `cy` fixed at the centre; on, side 640.
+
+## Square source
+
+Owner request 2026-10-26: an already square video becomes a round without a selection. `api.Prompt` accepts either a full selection (`time` plus points or a box, as before) or none at all (`time` None, no points, no box, no mask; anything in between is 422 "Select the object"). `POST /render` takes an empty prompt only when `meta.width == meta.height` (else 422), `RenderRequest.check` skips the range test for it, and `/segment` still demands a selection. `pipeline.follows(meta, request)`: track only with a selection and either a non-square source or `options.zoom`; otherwise `pipeline.frame_path` returns `camera.still` (the centred full frame on every tracking frame, `media.frame_count` rows, no cuts) and skips decoding, SAM (and its model load in `render.load`), scene cuts and the solver; no `track.npz` is written. A square source with a selection and zoom off is not tracked either: without zoom its window is the whole frame anyway (Zoom option). `# [DOC: square-source]` marks `api`, `camera.still` and `pipeline.follows`. Checked locally: the validator cases (empty, point, box, time without coords, coords without time, out of range) and `follows` for square / wide × selection × zoom; not run on Modal.
 
 ## Edge fill
 
@@ -202,7 +211,7 @@ Why crop first: RIFE at 704² costs the same for every source, 4K included, and 
 
 ## Render options
 
-`encode.second_pass` is the seam: audio options go through `media.audio_filter(options)` (computed once, before the fit loop). `options.metadata` adds `creation_time` to the encoder and `tags.write` after it (Note metadata). `options.interpolate` picks the frame source in `render.render` (`render.cfr` or `smooth.frames`) and the rate (`source.out_rate`). Stabilization belongs in the camera path (`# [DOC: stabilization]` in `camera`), not in the renderer: render only follows `path`.
+`encode.second_pass` is the seam: audio options go through `media.audio_filter(options)` (computed once, before the fit loop). `options.metadata` adds `creation_time` to the encoder and `tags.write` after it (Note metadata). `options.zoom` goes to `camera.solve` in `pipeline.render_job` (Zoom option). `options.interpolate` picks the frame source in `render.render` (`render.cfr` or `smooth.frames`) and the rate (`source.out_rate`). Stabilization belongs in the camera path (`# [DOC: stabilization]` in `camera`), not in the renderer: render only follows `path`.
 
 ## Note metadata
 
@@ -252,13 +261,13 @@ Trap: libx265 converted untagged `rawvideo` input to full range. Tag the frames 
 
 A note file over the size limit arrives as a regular square video, not a round, even with `round_message=True` and `length=640` (owner, 2026-10-26: job `WKRXzRMgDi`, 18.9 s at 60 fps, 13.2 MB, twice, with and without metadata; the last round that worked, `pRBvJxLSTr`, was 8.4 s, 5.7 MB). The exact threshold is not verified; the server config recommends `max_size` 12 MiB = 12 582 912 B (Telegram limits).
 
-Owner decision 2026-10-26: every note spends its budget (short notes get far more bits, long ones are trimmed and never go over), and the budget is `encode.NOTE_BYTES` = 12 000 000 B, 0.58 MB under 12 MiB. The earlier design (CRF 16 with a VBV maxrate cap, 10 MB) left short notes at CRF quality and gave long ones an uneven clamp.
+Owner decision 2026-10-26: every note spends its budget (short notes get far more bits, long ones are trimmed and never go over), and the budget is `encode.NOTE_BYTES` = 10 000 000 B. It was 12 000 000 B (0.58 MB under 12 MiB) for a few hours: the AV1 and VP9 test notes of 12.8 s, which filled that budget to about 11.6 MB (reasoned from the target, the files were not measured), arrived as regular videos, while every round that worked (the HEVC one included) was under 10 MB. So the owner (2026-10-26) put the cap back to 10 MB to tell size from codec; retest AV1 and VP9 under it before dropping them. The earlier design (CRF 16 with a VBV maxrate cap, 10 MB) left short notes at CRF quality and gave long ones an uneven clamp.
 
-- `encode.target`: `bits/s = min(MAX_RATE 14M, (NOTE_BYTES × 8 × HEADROOM 0.97 − audio 128k × dur) / dur)`. A 60 s note gets 1.42 Mbit/s of video (it was 1.1 with the old cap), 18.9 s gets 4.8. `MAX_RATE` is the "reasonable" ceiling: H.264 High at level 4 allows 25 Mbit/s and beyond about 14 Mbit/s nothing is visible at 640² (reasoned, not measured); notes up to about 6.6 s hit it and stay under the budget.
+- `encode.target`: `bits/s = min(MAX_RATE 14M, (NOTE_BYTES × 8 × HEADROOM 0.97 − audio 128k × dur) / dur)`. A 60 s note gets 1.17 Mbit/s of video, 18.9 s gets 4.0 (1.42 and 4.8 under the 12 MB budget). `MAX_RATE` is the "reasonable" ceiling: H.264 High at level 4 allows 25 Mbit/s and beyond about 14 Mbit/s nothing is visible at 640² (reasoned, not measured); notes up to about 5.5 s hit it and stay under the budget.
 - Two-pass ABR lands within about 1 % of the target (measured below), `HEADROOM` 0.97 covers that and the MP4 overhead. Short notes overshoot more (4 s at 14 Mbit/s: AV1 +16 %, VP9 +12 %, H.264 −5 %), harmless under the ceiling. VVC undershoots short notes instead (4 s: 2.3 MB for a 7 MB aim), on target at 18.9 s.
 - Hard ceiling (owner: always a round, never a regular video): `encode.second_pass` checks the file after every second pass; over `NOTE_BYTES` it reruns the second pass from the same raw frames and first-pass stats with the target scaled by `SHRINK` 0.95 × limit / size, up to `FIT_TRIES` 3, then fails the job. No second generation of lossy frames any more (the old `render.shrink` re-encoded the note itself). `fit` in the result and the log is the final scale. Runs before `tags.write`, so the kept metadata is added to the final file.
-- Measured (local ffmpeg 9.0.2, 6 cores, 2026-10-26; the 18.9 s note `WKRXzRMgDi` as the source, looped to 60 s; two passes at the target, video only): 18.9 s → x264 11.57 MB, x265 11.24, SVT-AV1 11.42, VP9 11.35 for an aim of 11.34; 60 s → 10.66–10.78 MB for an aim of 10.68. With audio the 60 s note ends near 11.6 MB.
-- Do not raise `NOTE_BYTES` or `MAX_RATE` without a send test on the phone; the 12 000 000 B budget itself still waits for one (Telegram experiment).
+- Measured under the 12 MB budget (local ffmpeg 9.0.2, 6 cores, 2026-10-26; the 18.9 s note `WKRXzRMgDi` as the source, looped to 60 s; two passes at the target, video only): 18.9 s → x264 11.57 MB, x265 11.24, SVT-AV1 11.42, VP9 11.35 for an aim of 11.34; 60 s → 10.66–10.78 MB for an aim of 10.68. With audio the 60 s note ends near 11.6 MB.
+- Do not raise `NOTE_BYTES` or `MAX_RATE` without a send test on the phone; the 10 000 000 B budget is the one known to keep rounds, the threshold lies between 10 and about 11.6 MB (Telegram experiment).
 
 ## Codecs
 
@@ -376,7 +385,7 @@ The chat header shows the matching action: `typing` during ingest, `record_video
 
 The note's file name is the source's with the extension swapped for `.mp4` (`IMG_4359.MOV` → `IMG_4359.mp4`, `round.mp4` if the source has no name), set through `DocumentAttributeFilename` in `transfer.send_note`. Telegram clients do not show it on a round, it surfaces when the note is saved.
 
-Ideas for later modes (owner): "no subject" (a plain centre or a slow auto-crop with nothing to track, so the prompt becomes optional), and more audio and video options next to `loudnorm`. The seams are `Prompt` (its validator `check` demands a selection today), `pipeline.render_job` (the tracking and camera stages are skippable: `camera.solve` only needs a found track) and `options`.
+Ideas for later modes (owner): "no subject" (a plain centre or a slow auto-crop with nothing to track, so the prompt becomes optional), and more audio and video options next to `loudnorm`. The seams are `Prompt` (its validator `check` accepts an empty selection, Square source; `render` allows it only for square sources today), `pipeline.render_job` (the tracking and camera stages are skippable: `camera.solve` only needs a found track) and `options`.
 
 ## Telegram limits
 
@@ -386,4 +395,4 @@ Verified in sources (2026-10-25): TDLib rejects a video note `length` over 640 (
 
 Done (2026-10-26, owner's test): 720 and 1080 notes arrive as regular videos, not rounds, even under the 10 MB cap (High resolution); the note keeps its metadata (Note metadata).
 
-Done (2026-10-26): a 640² note of 13.2 MB arrives as a regular video (Note size). Owner (2026-10-26): a 640 HEVC note works, so HEVC became the default (Codecs). Open: a note that fills the new 12 000 000 B budget (a 60 s note ends near 11.6 MB) stays a round; AV1 and VP9 notes stay rounds and play on iOS and Desktop, what an H.266 note does on iOS, Desktop and an Android 17 phone (Codecs); an upscaled note (Upscale) looks right on the phone; the exact size threshold (between 5.7 and 13.2 MB), a note longer than 60 s; each checked on iOS, Android and Desktop, and the downloaded file hashed against the uploaded one (server re-encoding).
+Done (2026-10-26): a 640² note of 13.2 MB arrives as a regular video (Note size). Owner (2026-10-26): a 640 HEVC note works, so HEVC became the default (Codecs). Done (2026-10-26): AV1 and VP9 notes of 12.8 s that filled the 12 000 000 B budget arrived as regular videos (they played on iOS 18); an H.266 note was not sent as a round and played neither on iOS nor on Desktop. The budget went back to 10 000 000 B (Note size). Open: AV1 and VP9 notes under 10 MB stay rounds and play on iOS and Desktop, what an H.266 note does on iOS, Desktop and an Android 17 phone (Codecs); an upscaled note (Upscale) looks right on the phone; the exact size threshold (between 10 and about 11.6 MB), a note longer than 60 s; each checked on iOS, Android and Desktop, and the downloaded file hashed against the uploaded one (server re-encoding).
