@@ -74,7 +74,7 @@ def render(
     at, stats = camera.sampler(np.asarray(path, np.float64), cuts), {}
     cut = partial(crop, geo=geo, device=device, size=size)
     if source.interpolating(meta, options):
-        stats = {'synth': 0, 'dupes': 0}
+        stats = {'synth': 0, 'dupes': 0, 'seams': 0}
         frames = media.retrying(
             lambda slow: smooth.frames(src, meta, start, n, rate, at, cuts, cut, raw, device, stats, slow, size)
         )

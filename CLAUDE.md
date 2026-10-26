@@ -26,7 +26,7 @@ Flow: video sent to the bot → webhook → `ingest` (CPU: MTProto download to t
 
 ## Telegram limits (verified, see `backend/rounds/README.md` for sources)
 
-- Video note: square MP4, `length` ≤ 640 (TDLib rejects more with 400), "up to 1 minute". H.264 and (owner's test) HEVC stay rounds; AV1 and VP9 are experimental; H.266 is a test only: no VVC decoder in Telegram iOS or Desktop, Android 17 adds a platform VVC decoder where the SoC has one (`backend/rounds/README.md`, Codecs). No re-encoding by the Bot API or TDLib: what we upload is what people see. A file of 13.2 MB arrived as a regular video, and so did AV1 / VP9 notes of about 11.6 MB; the encoder fills and never exceeds 10 000 000 B (`backend/rounds/README.md`, Note size).
+- Video note: square MP4, `length` ≤ 640 (TDLib rejects more with 400), "up to 1 minute". H.264, HEVC, AV1 and VP9 stay rounds and play on iOS (owner's tests); H.266 does not (no VVC decoder in Telegram iOS or Desktop, `backend/rounds/README.md`, Codecs). No re-encoding by the Bot API or TDLib: what we upload is what people see. Size, not codec, decides round or regular video: 13.2 MB and AV1 / VP9 notes of about 11.6 MB arrived as regular videos, the same codecs under 10 MB as rounds; the encoder fills and never exceeds 10 000 000 B (`backend/rounds/README.md`, Note size).
 - Cloud Bot API: download 20 MB, upload 50 MB. MTProto (bots included): up to 2000 MB.
 - Mini App data goes back through our API with `initData` validated by HMAC; `sendData` is not used (keyboard-button launches only).
 
@@ -36,9 +36,9 @@ Flow: video sent to the bot → webhook → `ingest` (CPU: MTProto download to t
 - Output 640×640, the ceiling: 720 and 1080 notes (H.264 and HEVC, under the size cap) arrive as regular videos (owner's tests, 2026-10-26); do not retry without a Telegram change (`backend/rounds/README.md`, High resolution). The duration ceiling is settled by the Telegram experiment (`backend/rounds/README.md`, Telegram experiment).
 - Object at the frame edge: honest pixels first, an unnoticeable fill where the circle leaves the frame; an AI outpainting model may come later.
 - Frame rate: the note keeps the source rate up to 60. "Smooth to 60 fps" (RIFE interpolation, off by default) is offered for anything below 60 (59.94 included), with dropped frames or with frozen duplicate frames, and always targets 60. It must never fail on broken phone files (`backend/rounds/README.md`, Broken sources, Output rate).
-- Codec: HEVC by default, picked in the Mini App among HEVC, AV1, VP9 and H.266 (the last three experimental); H.264 dropped (owner, 2026-10-26: old format). Every note spends its size budget in two passes (`backend/rounds/README.md`, Codecs, Note size).
+- Codec: AV1 by default, HEVC and VP9 to pick in the Mini App; H.264 dropped (old format) and H.266 dropped (nothing plays it), owner 2026-10-26. Every note spends its size budget in two passes (`backend/rounds/README.md`, Codecs, Note size).
 - Zoom on the object is an option, off by default: without it the note is only the square crop that follows the object (`backend/rounds/README.md`, Zoom option). A square source needs no selection unless zoom is on (Square source).
-- Loudness normalization is an option, off by default. Leave room for more audio filters and for video stabilization (shaky handheld sources) as later options.
+- Loudness levelling is an option, off by default: quiet parts louder, loud parts softer, the note at Apple's −16 LKFS, true peak −1 dBFS (`backend/rounds/README.md`, Loudness). Noise reduction will be its own option. Leave room for more audio filters and for video stabilization (shaky handheld sources) as later options.
 - Tap-to-lift (2026-10-26): the owner accepts about $8 a month of the Starter credits for the warm GPU `Lift` class, as long as it looks iOS-grade; the look was approved on the iPhone (`miniapp/src/features/viewer/README.md`, Lift look).
 - Optional note metadata (date, location, camera) is a switch, off by default; when on, the note's camera name also says "Round from Telegram" (`backend/rounds/README.md`, Note metadata).
 - UI copy (bot messages and Mini App) is English.

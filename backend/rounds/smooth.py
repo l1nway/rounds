@@ -1,3 +1,5 @@
+import bisect
+import math
 import queue
 import re
 import subprocess
@@ -9,14 +11,14 @@ from typing import NamedTuple
 import numpy as np
 import torch
 
-from . import media, rife
+from . import media, rife, seam
 from .color import GAMMA
 from .config import FPS, OUT_SIZE, RIFE_WEIGHTS
 
 PAD = 32
 SNAP = 0.25
 MAX_GAP = 1.0
-DUP_LEVEL, DUP_GRID, DUP_STEP = 0.5, 8, 4
+DUP_LEVEL, DUP_GRID, DUP_STEP = 2.0, 16, 4
 STAMP = re.compile(rb'\bn:\s*\d+\s+pts:\s*\S+\s+pts_time:(\S+)')
 STAMP_WAIT = 60
 
@@ -26,6 +28,7 @@ class Anchor(NamedTuple):
     luma: np.ndarray
     img: torch.Tensor
     feat: torch.Tensor
+    jump: float
 
 
 @cache
@@ -65,20 +68,47 @@ def stamp(raw: str | None, last: float, fps: float) -> float:
 
 # [DOC: duplicate-frames]
 def luma(buf: np.ndarray, w: int, h: int) -> np.ndarray:
-    y = buf[: w * h].reshape(h, w)[::DUP_STEP, ::DUP_STEP]
-    return y[: y.shape[0] // DUP_GRID * DUP_GRID, : y.shape[1] // DUP_GRID * DUP_GRID].astype(np.float32)
+    s = DUP_STEP
+    y = buf[: w * h].reshape(h, w)[: h // s * s, : w // s * s]
+    return y.reshape(h // s, s, w // s, s).mean((1, 3), dtype=np.float32)
 
 
-def still(a: np.ndarray, b: np.ndarray, level: float) -> bool:
-    return np.abs(a - b).reshape(DUP_GRID, a.shape[0] // DUP_GRID, DUP_GRID, -1).mean((1, 3)).max() <= level
+def cells(v: np.ndarray) -> np.ndarray:
+    return v.reshape(DUP_GRID, v.shape[0] // DUP_GRID, DUP_GRID, -1).sum((1, 3))
+
+
+@cache
+def disc(k: int) -> tuple[np.ndarray, np.ndarray]:
+    r = np.arange(k) + 0.5 - k / 2
+    mask = np.hypot(*np.meshgrid(r, r)) <= k / 2
+    return mask, cells(mask)
+
+
+def moved(a: np.ndarray, b: np.ndarray, win: np.ndarray) -> np.ndarray:
+    k = max(int(win[2] / DUP_STEP) // DUP_GRID * DUP_GRID, DUP_GRID)
+    x, y = np.clip(np.round(win[:2] / DUP_STEP - k / 2), 0, np.subtract(a.shape[::-1], k)).astype(int)
+    mask, inside = disc(k)
+    return (cells(np.abs(a - b)[y : y + k, x : x + k] * mask) / np.maximum(inside, 1))[inside >= inside.max() / 4]
 
 
 def pick(a: Anchor | None, b: Anchor, tau: float, bounds: np.ndarray, snap: float) -> tuple[Anchor | None, float]:
-    if a is None or tau - a.t <= snap:
-        return a or b, 0.0
+    if a is None or b.t - tau <= snap < tau - a.t:
+        return b, 0.0
+    if tau - a.t <= snap:
+        return a, 0.0
     if b.t - a.t > MAX_GAP or ((bounds > a.t) & (bounds <= b.t)).any():
         return (a if tau - a.t < b.t - tau else b), 0.0
     return None, (tau - a.t) / (b.t - a.t)
+
+
+# [DOC: seams]
+def switch(chain: list[Anchor], level: float, plain: bool) -> Anchor | None:
+    for x, y in zip(reversed(chain[:-2]), reversed(chain[1:-1]), strict=True):
+        if chain[-2].t - y.t > seam.LONE:
+            break
+        if y.jump > level:
+            return x
+    return chain[-2] if chain[-1].jump > level or plain else None
 
 
 def final(img: torch.Tensor) -> torch.Tensor:
@@ -91,31 +121,52 @@ def frames(src, meta: dict, start: float, n: int, rate: float, at, cuts, cut, ra
            out: int = OUT_SIZE):  # fmt: skip
     (size, dtype, pix_fmt), (w, h), side = raw, (meta['width'], meta['height']), out + 2 * PAD
     net, head, half, base = model(device, side)
-    level = DUP_LEVEL * (4 if dtype == np.int16 else 1)
-    bounds, snap = (np.asarray(cuts, float) - 0.5) / FPS, SNAP / rate
-    prev, slot, last, ended = None, 0, -1 / meta['fps'], False
+    deep = 4 if dtype == np.int16 else 1
+    level, jump = DUP_LEVEL * deep, seam.CUT_LEVEL * deep
+    bounds, snap, end = (np.asarray(cuts, float) - 0.5) / FPS, SNAP / rate, n / rate
+    kept, seams, slot, last, ended = [], [], 0, -1 / meta['fps'], False
+
+    def image(s: float) -> torch.Tensor:
+        i = bisect.bisect_right(kept, s, key=lambda x: x.t)
+        if i == len(kept):
+            return kept[-1].img
+        a, b = kept[i - 1] if i else None, kept[i]
+        hold, k = pick(a, b, s, bounds, snap)
+        stats['synth'] += hold is None
+        return hold.img if hold else net(a.img, b.img, torch.full_like(b.img[:, :1], k), a.feat, b.feat, base)
+
+    def emit(top: float):
+        nonlocal slot
+        while slot < n:
+            parts, soft = seam.sources(slot / rate, seams)
+            if slot / rate >= top - seam.LONE - seam.LEAD or parts[-1][0] >= top - snap:
+                return
+            while len(kept) > 1 and kept[1].t <= parts[0][0]:
+                kept.pop(0)
+            yield final(seam.dissolve([(image(s), k) for s, k in parts], soft))
+            slot += 1
+
     proc, stamps = decode(src, meta, start, n / rate + 2 / meta['fps'], pix_fmt, slow)
     try:
         for buf in media.reader(proc, sys.maxsize, size, dtype):
             raw_t = None if ended else stamps.get(timeout=STAMP_WAIT)
             ended = raw_t is None
-            t = last = stamp(raw_t, last, meta['fps'])
-            y = luma(buf, w, h)
-            if prev is not None and t - prev.t < MAX_GAP and still(y, prev.luma, level):
+            t = stamp(raw_t, last, meta['fps'])
+            gap, last = t - last, t
+            y, win = luma(buf, w, h), at(t * FPS)[0]
+            diff = moved(y, kept[-1].luma, win) if kept else np.zeros(1)
+            if kept and gap <= seam.HOLE and t - kept[-1].t < MAX_GAP and diff.max() <= level:
                 stats['dupes'] += 1
                 continue
-            img = (cut(buf, at(t * FPS)[0] * [1, 1, side / out], size=side).clamp(0, 1) ** (1 / GAMMA))[None]
+            img = (cut(buf, win * [1, 1, side / out], size=side).clamp(0, 1) ** (1 / GAMMA))[None]
             img = img.to(half)
-            cur = Anchor(t, y, img, head(img))
-            while slot < n and slot / rate < t - snap:
-                hold, k = pick(prev, cur, slot / rate, bounds, snap)
-                stats['synth'] += hold is None
-                yield final(hold.img if hold else net(prev.img, cur.img, torch.full_like(img[:, :1], k), prev.feat,
-                                                      cur.feat, base))  # fmt: skip
-                slot += 1
-            prev = cur
+            kept.append(Anchor(t, y, img, head(img), float(diff.mean())))
+            frozen = diff.max() <= level
+            if len(kept) > 1 and gap > seam.HOLE and (a := switch(kept, jump, gap > MAX_GAP or frozen)):
+                seams.append(seam.make(a.t, t, end, float(moved(y, a.luma, win).mean()) / jump))
+                stats['seams'] += 1
+            yield from emit(t)
     finally:
         media.stop(proc)
-    while prev is not None and slot < n:
-        yield final(prev.img)
-        slot += 1
+    if kept:
+        yield from emit(math.inf)

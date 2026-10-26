@@ -18,6 +18,7 @@ One Modal app (`app.py`) that receives the source video, serves the Mini App and
 | `encode.py` | note encoder: codecs, two passes to the size budget, audio, fit loop | `render` |
 | `upscale.py` | AI upscale of a small source to 640 (SeedVR2 3B, code in the GPU image, weights in `rounds-models`) | `render` |
 | `smooth.py` | 60 fps interpolation: timed decode, duplicate drop, retiming with RIFE | `render` |
+| `seam.py` | seams over holes in the source: time remap, blurred dissolve | `render` |
 | `rife.py` | RIFE 4.25 network, vendored (MIT, `RIFE-LICENSE`) | `render` |
 | `color.py` | torch colour pipeline: YUV↔RGB, transfer functions, HDR→SDR, chroma resampling | `render` |
 | `track.py` | object tracking (SAM 2.1 video, HF transformers) | `render` |
@@ -44,10 +45,10 @@ status: 'ingesting' | 'ready' | 'rendering' | 'done' | 'failed'
 stage: None | 'queued' | 'decoding' | 'tracking' | 'cuts' | 'framing' | 'rendering' | 'sending',  progress: 0..1,  error: str | None
 meta: source.probe() result (tags included) + dupes, has_audio (re-checked on the proxy), interpolable (set by ingest after the proxy)
 proxy: {width, height, fps},  filmstrip: {tiles, tile_width, tile_height}
-request: None | {start, end, prompt: {time | None, points: [[x, y, label]], box: [x0, y0, x1, y1] | None, mask: str | None}, options: {zoom: bool, loudnorm: bool, interpolate: bool, metadata: bool, upscale: bool}, codec: 'hevc' | 'av1' | 'vp9' | 'h266'}
+request: None | {start, end, prompt: {time | None, points: [[x, y, label]], box: [x0, y0, x1, y1] | None, mask: str | None}, options: {zoom: bool, loudnorm: bool, interpolate: bool, metadata: bool, upscale: bool}, codec: 'av1' | 'hevc' | 'vp9'}
 ```
 
-`options` is a free `dict[str, bool]` read with `.get`, so an unknown or retired key (`hires`, `hd720`, `hd1080`, `hevc` of older Mini App builds, High resolution) is ignored. `label` is 1 for "this object", 0 for "not this". `prompt.time` lies inside `[start, end]`; `end - start ≤ MAX_DURATION`. `codec` (default `hevc`; requests stored before the field have none, `pipeline` reads it with `.get` and the same default) must match the keys of `encode.CODECS` and the Mini App's `CODECS` (Codecs). `prompt.mask` is the outline the owner picked in the Mini App (Lift mask), a `data:image/png;base64,` URL of at most `MASK_CHARS` (90 000) characters; jobs and clients without it send `None`.
+`options` is a free `dict[str, bool]` read with `.get`, so an unknown or retired key (`hires`, `hd720`, `hd1080`, `hevc` of older Mini App builds, High resolution) is ignored. `label` is 1 for "this object", 0 for "not this". `prompt.time` lies inside `[start, end]`; `end - start ≤ MAX_DURATION`. `codec` (default `av1`; requests stored before the field have none, `pipeline` reads it with `.get` and the same default) must match the keys of `encode.CODECS` and the Mini App's `CODECS` (Codecs). `prompt.mask` is the outline the owner picked in the Mini App (Lift mask), a `data:image/png;base64,` URL of at most `MASK_CHARS` (90 000) characters; jobs and clients without it send `None`.
 
 **Module functions** (pure of Modal, so they run and test locally):
 
@@ -60,9 +61,9 @@ request: None | {start, end, prompt: {time | None, points: [[x, y, label]], box:
 - `camera.solve(track, width, height, cuts=(), fps=FPS, zoom=False) -> np.ndarray` `(N, 3)`: `cx, cy, side` of the square window per frame, source pixels (`track` scaled to source pixels by the caller).
 - `camera.still(n, width, height) -> np.ndarray` `(n, 3)`: the centred full-frame window, for an untracked square source (Square source).
 - `camera.sampler(path, cuts) -> at(frames)`: path rows at fractional tracking frames (Path sampler).
-- `render.render(src, meta, start, end, path, cuts, out, options, codec, progress=None) -> dict` (`size` in bytes, `duration`, `rate`, `frames`, `codec`, `fit` (the bitrate scale the fit loop ended at, 1.0 = first try), `upscale` (bool, Upscale), plus `synth`, `dupes` when interpolating): `path` from `camera.solve` on the tracking timeline; `progress(fraction)` optional.
+- `render.render(src, meta, start, end, path, cuts, out, options, codec, progress=None) -> dict` (`size` in bytes, `duration`, `rate`, `frames`, `codec`, `fit` (the bitrate scale the fit loop ended at, 1.0 = first try), `upscale` (bool, Upscale), plus `synth`, `dupes`, `seams` when interpolating): `path` from `camera.solve` on the tracking timeline; `progress(fraction)` optional.
 
-**Output** (`config`): `OUT_SIZE` 640 (the ceiling, High resolution), `MAX_DURATION` 60, rate by Output rate (≤ `MAX_FPS` 60). The codec of the request (Codecs), yuv420p (yuv420p10le for H.266), BT.709 limited range tagged, AAC-LC 48 kHz, `+faststart`, at most `encode.NOTE_BYTES` (Note size); always sent with `length=OUT_SIZE`.
+**Output** (`config`): `OUT_SIZE` 640 (the ceiling, High resolution), `MAX_DURATION` 60, rate by Output rate (≤ `MAX_FPS` 60). The codec of the request (Codecs), yuv420p, BT.709 limited range tagged, AAC-LC 48 kHz, `+faststart`, at most `encode.NOTE_BYTES` (Note size); always sent with `length=OUT_SIZE`.
 
 ## Camera path
 
@@ -151,7 +152,9 @@ Checked locally (2026-10-25, ffmpeg 9.0.2, torch 2.14 CPU) on MPEG-TS files with
 Two detectors for one thing: a repeated (frozen) frame, as written by apps that turn VFR into CFR, or by a phone that lagged.
 
 - Ingest (`source.dupes`, decides the offer): the proxy's ffmpeg also scales every native frame (before `fps`) to 32×32 grey (`flags=area`) into a temp raw file (1 KB per frame). A frame is a duplicate when no thumb pixel moved by more than 1 level (`DUP_LEVEL`) while the mean motion within ±0.5 s reaches 1 level (`MOTION`), so a still tripod shot is not a freeze. `dupes` = share of such frames. Measured: 60 fps testsrc2 with 16 frames frozen → 0.067; the clean test files 0.
-- Render (`smooth.still`, decides what to drop): luma of every 4th pixel in 8×8 blocks; a frame is dropped when the largest block mean |diff| to the last kept frame is ≤ 0.5 level (×4 for 10-bit). Blocks, not one global mean: a small moving part of a still frame (a hand, leaves) keeps the frame. Dropped frames are re-created by RIFE from their real neighbours. A run longer than `MAX_GAP` (1 s) is kept as a real still. Known limit: a perfectly static stretch (denoised and compressed to skip blocks) shorter than 1 s is dropped too; RIFE between two near-identical frames returns the same picture, so it only costs the grain.
+- Render (`smooth.still`, decides what to drop): luma averaged over 4×4 pixels (`DUP_STEP`), compared only inside the circle the viewer sees: the camera window of the current frame (`at(t · FPS)`), its inscribed disc, 16×16 cells (`DUP_GRID`) over the window, cells at least a quarter inside the disc. A frame is dropped when the largest cell mean |diff| to the last kept frame is ≤ 2 levels (`DUP_LEVEL`, ×4 for 10-bit). Cells, not one global mean: a small moving part of a still frame (a hand, leaves) keeps the frame. Dropped frames are re-created by RIFE from their real neighbours. A run longer than `MAX_GAP` (1 s) is kept as a real still. Known limit: a perfectly static stretch (denoised and compressed to skip blocks) shorter than 1 s is dropped too; RIFE between two near-identical frames returns the same picture, so it only costs the grain. A false drop is cheap (RIFE redraws it), a missed duplicate is a visible stutter: tune toward dropping.
+- Why the disc and the averaging (owner's IMG_4042, 2026-10-26: an Android round re-sent through Telegram, 384², VFR about 25 fps, 1 Mbps; the 60 fps note stuttered around a camera switch): the first version (every 4th pixel, 8×8 blocks over the whole frame, ≤ 0.5 level) dropped 0 of 469 frames although about 60 are frozen copies. Two reasons, measured on its frames: the Telegram send icon in the corner, outside the circle, changes every frame by up to 31 levels in a 12 px cell; and the copies carry codec noise, so per-pixel |diff| never falls near 0.5. Inside the disc, 4×4 averaged, 16×16 cells: the frozen copies score ≤ 1.46, the first real motion 3.47; the current settings drop 61 frames there, a moving testsrc2 0 of 59. The ingest detector (`source.dupes`, 32² thumbs of the whole frame) has the same blind spot for corner overlays; it only decides the offer, and a source under 60 fps is offered anyway.
+- A stretch with no frames at all (IMG_4042: 494 ms after the camera switch) is not interpolated: it gets a seam (Seams).
 
 ## Output rate
 
@@ -182,12 +185,65 @@ Owner request 2026-10-26: an AI upscale for sources smaller than the note (old 3
 1. Source frames as they are, each with its own pts (Timed decode); no `fps` filter.
 2. Duplicates dropped (Duplicate frames).
 3. Each kept frame cropped by the camera path at its own time to a padded side: the render size (`OUT_SIZE`, or `upscale.side` with Upscale) + `PAD` 32 px each side (704 for 640), a multiple of 64 (RIFE's input step, the reason `upscale.side` rounds to 64); same centre, window × padded / output, in gamma (BT.1886 2.4: plain video pixels, what RIFE was trained on), half precision on the GPU; `Head` features once per frame.
-4. Output slot j at j / 60: a real frame within a quarter of a slot (`SNAP`) is used as is (30 fps: every even slot; 60 fps with gaps: all but the gaps); otherwise RIFE between the neighbouring kept frames at `(t − t_a) / (t_b − t_a)`, so VFR timing is honoured. A pair more than 1 s apart (`MAX_GAP`) or across a scene cut (the tracking cuts) is not morphed: the nearer frame is held. Slots before the first or after the last frame hold it.
+4. Output slot j at j / 60: a real frame within a quarter of a slot (`SNAP`) is used as is (30 fps: every even slot; 60 fps with gaps: all but the gaps); otherwise RIFE between the neighbouring kept frames at `(t − t_a) / (t_b − t_a)`, so VFR timing is honoured. A pair across a scene cut (the tracking cuts) is not morphed: the nearer frame is held. Slots before the first or after the last frame hold it. Holes after a camera switch, frozen across, or longer than `MAX_GAP` get a seam instead (Seams): the slot times there are remapped first.
 5. The result is cropped back to the output size, brought back to linear light, then the usual `color.encode` and the encoder (Two-pass).
 
 Measured on CPU (2026-10-25, testsrc2 640×360, a 200 px pan): output frame counts and `r_frame_rate` exact in every case; 30 → 60: `synth` 30 of 60 (every odd slot); 24 → 60: 38 of 48 (only every 5th slot meets a real frame); 60 with a 16-frame freeze: 16 dropped, 16 synthesized; 60 with 16 frames missing: 16 synthesized; the same gap with a tracking cut inside: 0 synthesized (held). Visually: a clean middle frame at 30 → 60; filling the 0.27 s freeze leaves slightly wavy edges on the moving bars, the expected cost of a long gap (owner: better than a freeze). CPU speed is about 1 s per RIFE frame at 704²; the L4 speed is not measured yet (`render.encode` logs `synth` and `fps`).
 
 Why crop first: RIFE at 704² costs the same for every source, 4K included, and sees the camera move as smooth global motion; the margin keeps the warp's border padding outside the circle. Rejected: interpolating the whole source frame (4K needs `scale=0.5` and about 20× the work); ffmpeg `minterpolate` (block matching, the artifacts the owner wants to avoid); decoding on a 60 Hz `fps` grid and detecting the repeats (would quantize real timestamps by up to 1/120 s, a fifth of a frame interval at 24 fps; reasoned, not tried).
+
+## Seams
+
+Owner request 2026-10-26: a hole in the source (the phone recorded nothing for a while) must never become a still frame in the note ("an obvious defect"). Telegram for Android restarts the camera when a round switches between front and back. IMG_4042 shows the front camera fading to dark until 1.000 s, one frame of the back camera at 1.043, then nothing until 1.537. The audio track is continuous (AAC packets every 21 ms, no level drop). RIFE between 1.043 and 1.537 drew half a second of a nearly static pot: a freeze.
+
+`smooth.frames` + `seam.py`, only with `interpolate`; the CFR path has no frame timestamps and still holds.
+
+- Detection uses real decode timestamps: `gap` = this frame minus the previous decoded frame, not minus the last kept one, so frames dropped as duplicates of a still shot are not a hole. A gap over `HOLE` (0.25 s) gets a seam when one of these holds (`smooth.switch`):
+  - a camera switch: the mean cell motion (`moved().mean()`) of the frame after the hole, or of a frame up to `LONE` (0.2 s) before it, is over `CUT_LEVEL` 50 (×4 for 10-bit);
+  - the frame after the hole would be a duplicate of the one before (a frozen phone: RIFE would show a still);
+  - the gap is over `MAX_GAP` (1 s).
+
+  Any other hole (0.25–1 s of real motion) stays with RIFE, which keeps the timing exact. The frame right after a hole is never dropped as a duplicate.
+- A switch moves the seam start `a` back to the last frame of the old camera. The lone new-camera frames before the hole are never shown; they would flash and then freeze.
+- Remap (`seam.sources`): two slowed streams meet in the middle of the hole and fill the output times `[a − LEAD, b + LEAD]` (`LEAD` 0.75 s, clamped to the clip).
+  - The old side plays `[a − LEAD, a]` until the end of the dissolve; the new side plays `[b, b + LEAD]` from the dissolve's start.
+  - In IMG_4042 both sides play at 0.64×, so motion never stops.
+  - The dissolve (`FADE` 0.3 s, smoothstep) is centred on the middle of the hole.
+  - Every remapped time is a RIFE frame between real neighbours, so the slow motion is smooth.
+- Dissolve (`seam.dissolve`): a mix of the two padded crops in gamma, then a separable Gaussian blur that peaks mid-dissolve.
+  - Blur strength = `BLUR` × side (14 px at 704) × `soft`, where `soft` = motion between the two seam frames / `CUT_LEVEL`, capped at 1.
+  - A camera switch blurs fully. A frozen phone (both sides alike) dissolves without blur.
+  - The look follows iOS camera flips: blur plus cross-fade.
+- Audio is untouched: in these files it is continuous.
+  - Around a seam the picture is off sync by up to half the hole plus `FADE` / 2 (IMG_4042: about 0.27 s), back in sync at both ends.
+  - A hole in the audio itself is still filled with silence (Audio chain). A cross-fade there belongs to the planned feature that joins two videos into one round; that feature will reuse `seam.dissolve`.
+- Streaming:
+  - A slot is drawn only when no future seam can reach it (`LONE + LEAD` behind the newest kept frame) and the frames it needs have arrived.
+  - Kept frames behind the oldest needed time are released.
+  - That holds about 1–1.5 s of crops on the GPU: 704² half plus RIFE features, about 5 MB each.
+- Thresholds measured on IMG_4042 (2026-10-26, `moved().mean()` between consecutive frames):
+
+  | Event | Value |
+  |---|---|
+  | camera switch | 88.3 |
+  | fastest pans | 25–34 |
+  | front camera's fade to dark | 28 |
+  | median / p99 | 7.7 / 28 |
+
+  `CUT_LEVEL` 24 marked a pan before the 11.2 s hole as a switch and dropped two real frames; 50 does not.
+- Checked on CPU (2026-10-26, RIFE at 128 and 640):
+
+  | Source | Result |
+  |---|---|
+  | IMG_4042, whole file | two seams: 1.000 → 1.537 (switch, soft 1) and 11.218 → 11.519 (frozen, soft 0). No output frame repeats except the tail after the video ends (21.07 s; the audio runs 0.3 s longer). |
+  | testsrc2, 0.5 s cut out | no seam, RIFE as before |
+  | testsrc2, 1.2 s cut out | a seam, no repeated frame |
+  | testsrc2 → smptebars, no hole | hard cut, no seam |
+  | testsrc2, 0.1 s of bars, a hole, bars | one seam from the last testsrc2 frame |
+  | IMG_4042 0–3 s at 640 | frame-to-frame motion never drops to 0 through the seam; contact sheet: blur dissolve from the front camera into the pot |
+- Known limits:
+  - Two holes closer than `2 × LEAD` overlap: the first seam wins, the second jumps.
+  - The thresholds come from one Android file. A switch on another phone with less change (both cameras on a white wall) is treated as a frozen or plain hole.
 
 ## Timed decode
 
@@ -207,7 +263,17 @@ Why crop first: RIFE at 704² costs the same for every source, 4K included, and 
 
 ## Audio chain
 
-`media.audio_input` trims the source audio with `-ss start -t n/rate`, the same length as the video. `media.audio_filter` returns the `-af` chain: `GAPLESS` (`aresample=48000:async=1:first_pts=0`), or with `options.loudnorm` `GAPLESS` and a two-pass `loudnorm=I=-16:TP=-1.5:LRA=11` (the first pass prints JSON on stderr, parsed between the last `{` and `}`; the second uses `measured_*`, `offset`, `linear=true`; skipped when a measured value is not finite, Broken sources). `GAPLESS` fills the holes left by undecodable audio with silence, timed by the frames' pts, and pads the start. Without it loudnorm stamped its first 3 s of output contiguously from the first frame (`af_loudnorm.c`, `activate`, `FIRST_FRAME`), so a hole there pulled the later audio forward: `audiogap.mp4` (0.4 s of audio missing at 1.3–1.7 s, range 1–5 s) had its beeps at 0.59 / 1.6 / 2.6 / 3.6 s instead of 1 / 2 / 3 / 4; plain `aresample` kept the timing but stored the hole as one AAC sample lasting 20480 samples in `stts`, which a player may not honour. With `GAPLESS`: 1 / 2 / 3 / 4 on both chains, contiguous packets; clean audio unchanged. AAC-LC 128k, 48 kHz, stereo (`-ac 2` folds 5.1 down). New audio filters are added to this chain.
+`media.audio_input` trims the source audio with `-ss start -t n/rate`, the same length as the video. `media.audio_filter` returns the `-af` chain: `GAPLESS` (`aresample=48000:async=1:first_pts=0`), or with `options.loudnorm` `GAPLESS` and a two-pass `loudnorm=I=-16:TP=-1:LRA=7` (the first pass prints JSON on stderr, parsed between the last `{` and `}`; the second uses `measured_*`, `offset`, `linear=false`; skipped when a measured value is not finite, Broken sources). `GAPLESS` fills the holes left by undecodable audio with silence, timed by the frames' pts, and pads the start. Without it loudnorm stamped its first 3 s of output contiguously from the first frame (`af_loudnorm.c`, `activate`, `FIRST_FRAME`), so a hole there pulled the later audio forward: `audiogap.mp4` (0.4 s of audio missing at 1.3–1.7 s, range 1–5 s) had its beeps at 0.59 / 1.6 / 2.6 / 3.6 s instead of 1 / 2 / 3 / 4; plain `aresample` kept the timing but stored the hole as one AAC sample lasting 20480 samples in `stts`, which a player may not honour. With `GAPLESS`: 1 / 2 / 3 / 4 on both chains, contiguous packets; clean audio unchanged. AAC-LC 128k, 48 kHz, stereo (`-ac 2` folds 5.1 down). New audio filters are added to this chain.
+
+## Loudness
+
+Owner request 2026-10-26: "Even out loudness" (`options.loudnorm`, off by default) makes broken sound comfortable and standard: quiet parts louder, loud parts softer inside the note, and the whole note at the iPhone level. Target: Apple's −16 LKFS ±1 dB integrated, true peak ≤ −1 dBFS, BS.1770 (Apple Podcasts "Audio requirements", podcasters.apple.com/support/audio-requirements; Sound Check normalizes playback to −16 too). Noise is not this option's job: a noise reduction option is planned separately, placed before loudnorm in the chain so the levelling lifts less noise.
+
+- `linear=false` forces loudnorm's dynamic mode for every clip: it steers the gain from the 3 s short-term loudness toward the target, so it levels inside the note, and limits true peaks. The old `linear=true` only levelled quiet clips (it falls back to dynamic when the peaks leave no room for a flat gain, which every quiet iPhone recording did) and turned loud clips down flat.
+- `LRA=7` instead of the broadcast 11: phone listening. On the owner's 6–21 s clips the LRA target changed almost nothing (5 / 7 / 11 within 0.7 LU); the 3 s levelling dominates.
+- Measured (2026-10-26, ffmpeg 9.0.2, the owner's files): a loud clip −6.2 LUFS, LRA 2.1 → −16.0, LRA 1.6 (was −16.1, LRA 2.1, flat); quiet iPhone clips −29.1 / −31.0 → −15.8 / −16.0, LRA 6.5 → 4.5 and 5.2 → 3.6, true peak −1.0; a silent clip keeps `GAPLESS` alone.
+- Rejected: `dynaudnorm` (f 250 or 500 ms, g 11 or 15, max gain 6–8) before loudnorm: no gain on four clips, and on one it raised LRA to 13.3 (quiet stretches pumped); a flat gain plus a limiter (the iPhone peaks are so sharp that the limiter ate about 6 dB: −21.8 instead of −16); no gain cap: the owner wants quiet sources raised, noise is the separate option's job.
+- Not verified: how it sounds (judge on the phone); loud events shorter than the 3 s window (a shout) are held by the true-peak limiter, not levelled.
 
 ## Render options
 
@@ -261,31 +327,32 @@ Trap: libx265 converted untagged `rawvideo` input to full range. Tag the frames 
 
 A note file over the size limit arrives as a regular square video, not a round, even with `round_message=True` and `length=640` (owner, 2026-10-26: job `WKRXzRMgDi`, 18.9 s at 60 fps, 13.2 MB, twice, with and without metadata; the last round that worked, `pRBvJxLSTr`, was 8.4 s, 5.7 MB). The exact threshold is not verified; the server config recommends `max_size` 12 MiB = 12 582 912 B (Telegram limits).
 
-Owner decision 2026-10-26: every note spends its budget (short notes get far more bits, long ones are trimmed and never go over), and the budget is `encode.NOTE_BYTES` = 10 000 000 B. It was 12 000 000 B (0.58 MB under 12 MiB) for a few hours: the AV1 and VP9 test notes of 12.8 s, which filled that budget to about 11.6 MB (reasoned from the target, the files were not measured), arrived as regular videos, while every round that worked (the HEVC one included) was under 10 MB. So the owner (2026-10-26) put the cap back to 10 MB to tell size from codec; retest AV1 and VP9 under it before dropping them. The earlier design (CRF 16 with a VBV maxrate cap, 10 MB) left short notes at CRF quality and gave long ones an uneven clamp.
+Owner decision 2026-10-26: every note spends its budget (short notes get far more bits, long ones are trimmed and never go over), and the budget is `encode.NOTE_BYTES` = 10 000 000 B. It was 12 000 000 B (0.58 MB under 12 MiB) for a few hours: the AV1 and VP9 test notes of 12.8 s, which filled that budget to about 11.6 MB (reasoned from the target, the files were not measured), arrived as regular videos, while every round that worked (the HEVC one included) was under 10 MB. So the owner (2026-10-26) put the cap back to 10 MB to tell size from codec, and under it AV1 and VP9 notes stayed rounds and played on the iPhone (owner, 2026-10-26): the size was the whole problem, 10 MB is the ceiling. The earlier design (CRF 16 with a VBV maxrate cap, 10 MB) left short notes at CRF quality and gave long ones an uneven clamp.
 
 - `encode.target`: `bits/s = min(MAX_RATE 14M, (NOTE_BYTES × 8 × HEADROOM 0.97 − audio 128k × dur) / dur)`. A 60 s note gets 1.17 Mbit/s of video, 18.9 s gets 4.0 (1.42 and 4.8 under the 12 MB budget). `MAX_RATE` is the "reasonable" ceiling: H.264 High at level 4 allows 25 Mbit/s and beyond about 14 Mbit/s nothing is visible at 640² (reasoned, not measured); notes up to about 5.5 s hit it and stay under the budget.
-- Two-pass ABR lands within about 1 % of the target (measured below), `HEADROOM` 0.97 covers that and the MP4 overhead. Short notes overshoot more (4 s at 14 Mbit/s: AV1 +16 %, VP9 +12 %, H.264 −5 %), harmless under the ceiling. VVC undershoots short notes instead (4 s: 2.3 MB for a 7 MB aim), on target at 18.9 s.
+- Two-pass ABR lands within about 1 % of the target (measured below), `HEADROOM` 0.97 covers that and the MP4 overhead. Short notes overshoot more (4 s at 14 Mbit/s: AV1 +16 %, VP9 +12 %, H.264 −5 %), harmless under the ceiling.
 - Hard ceiling (owner: always a round, never a regular video): `encode.second_pass` checks the file after every second pass; over `NOTE_BYTES` it reruns the second pass from the same raw frames and first-pass stats with the target scaled by `SHRINK` 0.95 × limit / size, up to `FIT_TRIES` 3, then fails the job. No second generation of lossy frames any more (the old `render.shrink` re-encoded the note itself). `fit` in the result and the log is the final scale. Runs before `tags.write`, so the kept metadata is added to the final file.
 - Measured under the 12 MB budget (local ffmpeg 9.0.2, 6 cores, 2026-10-26; the 18.9 s note `WKRXzRMgDi` as the source, looped to 60 s; two passes at the target, video only): 18.9 s → x264 11.57 MB, x265 11.24, SVT-AV1 11.42, VP9 11.35 for an aim of 11.34; 60 s → 10.66–10.78 MB for an aim of 10.68. With audio the 60 s note ends near 11.6 MB.
 - Do not raise `NOTE_BYTES` or `MAX_RATE` without a send test on the phone; the 10 000 000 B budget is the one known to keep rounds, the threshold lies between 10 and about 11.6 MB (Telegram experiment).
 
 ## Codecs
 
-Owner request 2026-10-26: a codec choice in the Mini App (`RenderRequest.codec`, Mini App `CODECS`, `encode.CODECS`), HEVC by default ("it works": the owner's 640 HEVC note stayed a round). Every codec goes through the same two passes and budget; MP4 sample entries `hvc1` (`-tag:v hvc1`, Apple players need it), `av01`, `vp09`, `vvc1`, checked with ffprobe.
+Owner request 2026-10-26: a codec choice in the Mini App (`RenderRequest.codec`, Mini App `CODECS`, `encode.CODECS`), AV1 by default, HEVC and VP9 to pick (owner, 2026-10-26, third round, after AV1 and VP9 notes under 10 MB stayed rounds and played on the iPhone). Every codec goes through the same two passes and budget; MP4 sample entries `av01`, `hvc1` (`-tag:v hvc1`, Apple players need it), `vp09`, checked with ffprobe. The list order is the Mini App's segment order, default first.
 
-Owner 2026-10-26, second round: H.264 is dropped ("an old format, only modern codecs"; it stayed a round in every test, measured below for reference); H.266 is added only to see what happens; later the list may shrink to one codec (likely AV1) once AV1 and VP9 are tested on the phone. The key is still accepted nowhere else: `RenderRequest.codec` rejects `h264` (422), the Mini App falls back to its first codec for a stored `h264` draft.
+Dropped keys, accepted nowhere: `h264` (owner, second round: "an old format, only modern codecs"; it stayed a round in every test) and `h266` (owner, third round: nothing played it). `RenderRequest.codec` rejects both with 422; the Mini App falls back to its first codec (`av1`) for a stored draft with either.
 
 | key | encoder | settings | VMAF at 60 s, 1.42 Mbit/s | passes, 60 s at 60 fps (local, 6 cores) | status |
 |---|---|---|---|---|---|
-| `hevc` | libx265 | slow, Main, `slow-firstpass=0` | 93.6 | 71 + 137 s | default; a round (owner) |
-| `av1` | libsvtav1 | preset 6 | 95.5 | 25 + 70 s | experimental: round not verified |
-| `vp9` | libvpx-vp9 | good, cpu-used 4, row-mt, alt-ref, lag 25 | 91.8 | 14 + 153 s | experimental: round not verified |
-| `h266` | libvvenc | preset faster, Main 10 (`yuv420p10le`, the only input vvenc takes) | not run (see below) | 32 + 240 s at 18.9 s | test only: no Telegram iOS or Desktop decoder |
+| `av1` | libsvtav1 | preset 6 | 95.5 | 25 + 70 s | default; a round, plays on iOS (owner) |
+| `hevc` | libx265 | slow, Main, `slow-firstpass=0` | 93.6 | 71 + 137 s | a round (owner) |
+| `vp9` | libvpx-vp9 | good, cpu-used 4, row-mt, alt-ref, lag 25 | 91.8 | 14 + 153 s | a round, plays on iOS (owner) |
+| (dropped) `h266` | libvvenc | preset faster, Main 10 (`yuv420p10le`, the only input vvenc takes) | not run | 32 + 240 s at 18.9 s | not a round; played neither on iOS nor on Desktop |
 | (dropped) `h264` | libx264 | slower, tune film, High | 91.7 | 11 + 46 s | a round (every note before 2026-10-26) |
 
-- VMAF is against the source note, which is itself H.264, so x264 is favoured; HEVC and AV1 are probably better than the table says. At 18.9 s (4.8 Mbit/s) x264, x265, SVT-AV1 and VP9 score 98.2–98.5: the codec matters for long notes. VVC at 18.9 s: `faster` 97.7, `fast` 99.0, `medium` was stopped after 40 min (pass 2 at about 60 %).
-- Speed: the first pass runs while the GPU renders, so the cost on top of the old single encode is mostly the second pass. x265 `slow` with its default slow first pass took 144 + 136 s; `medium` 61 + 78 s for 92.1 (the lever if HEVC renders feel slow). VP9 at cpu-used 2 scored 92.3 for 16 + 320 s, so cpu-used 4. AV1 preset 5 gave the same 95.5 as preset 6, slower. VVC is the slowest by far: pass 2 of 18.9 s took 240 s at `faster`, 468 s at `fast` (local, 6 cores), so a 60 s note at 60 fps needs roughly 13 min at `faster` (reasoned, ×3.2 frames), and `fast` would take about 25; `faster` keeps a test render inside the 3600 s `render` timeout even with Upscale. The Modal `render` function has 8 CPUs; not measured there yet.
-- Who can play what (primary sources, 2026-10-26): Telegram iOS builds FFmpeg with `--enable-decoder=h264,libvpx_vp9,hevc,...,libdav1d,av1` and `--enable-hwaccel=h264_videotoolbox,hevc_videotoolbox,av1_videotoolbox` (`submodules/ffmpeg/Sources/FFMpeg/build-ffmpeg-bazel.sh`) and vendors `third-party/dav1d` and `libvpx`; Telegram Desktop builds dav1d and libvpx (`Telegram/build/prepare/prepare.py`). Neither enables a VVC decoder, so an H.266 note should not play there (libvvenc is in our ffmpeg, the clients are the limit). Android 17 adds a platform VVC decoder through MediaCodec (`MIMETYPE_VIDEO_VVC`, "VVC support" on source.android.com), only where the SoC vendor ships a Codec2 VVC decoder; whether Telegram Android hands such a file to MediaCodec (its player and MP4 parser must know `vvc1`) is unknown. Not verified: Telegram Android (MediaCodec, per device), whether the server keeps an AV1 or VP9 file a round, and whether the inline round player on iOS takes the FFmpeg path for them.
+- VMAF is against the source note, which is itself H.264, so x264 is favoured; HEVC and AV1 are probably better than the table says. At 18.9 s (4.8 Mbit/s) x264, x265, SVT-AV1 and VP9 score 98.2–98.5: the codec matters for long notes.
+- Speed: the first pass runs while the GPU renders, so the cost on top of the old single encode is mostly the second pass. x265 `slow` with its default slow first pass took 144 + 136 s; `medium` 61 + 78 s for 92.1 (the lever if HEVC renders feel slow). VP9 at cpu-used 2 scored 92.3 for 16 + 320 s, so cpu-used 4. AV1 preset 5 gave the same 95.5 as preset 6, slower. The Modal `render` function has 8 CPUs; not measured there yet.
+- Who can play what (primary sources, 2026-10-26): Telegram iOS builds FFmpeg with `--enable-decoder=h264,libvpx_vp9,hevc,...,libdav1d,av1` and `--enable-hwaccel=h264_videotoolbox,hevc_videotoolbox,av1_videotoolbox` (`submodules/ffmpeg/Sources/FFMpeg/build-ffmpeg-bazel.sh`) and vendors `third-party/dav1d` and `libvpx`; Telegram Desktop builds dav1d and libvpx (`Telegram/build/prepare/prepare.py`). Neither enables a VVC decoder, which is why H.266 was dropped. Not verified: Telegram Android (MediaCodec, per device) and Desktop for AV1 and VP9 notes.
+- Why H.266 stays out (do not re-add without a client decoder): VVC at 18.9 s scored 97.7 at `faster`, 99.0 at `fast`, but pass 2 took 240 s and 468 s (local, 6 cores), it undershot short notes (4 s: 2.3 MB for a 7 MB aim), and the clients above cannot decode it. Android 17 has a platform VVC decoder only where the SoC vendor ships one.
 - SVT-AV1 prints its banner to stderr; `encode.QUIET` sets `SVT_LOG=1` (errors only).
 
 ## Two-pass
@@ -353,7 +420,7 @@ Every step of a job prints one line to the Modal log: `[<job id>] <function>.<st
 
 - `ingest.wait`, `render.wait`: from `queued_at` (the webhook or `POST /render`) to the function body. Covers Modal scheduling and the container cold start (image, imports). Jobs created before the field existed print 0.
 - `ingest.download` (`mb`, `speed`): the MTProto download alone, without the login. `ingest.probe` (the source: size, fps, gaps, codec, transfer, bit depth, duration, audio, `tags` = number of kept tags), `ingest.proxy` (`speed` in × realtime of the whole source, `dupes`, `has_audio` after the proxy, `interpolable`), `ingest.commit`, `ingest` (the whole function).
-- `render.load`: the SAM weights to the GPU; near 0 in a warm container (`@cache`), so it tells a cold start from a warm one. `render.decode` (`frames`, `size` of the tracking frames, `fps`), `render.track` (`fps`), `render.cuts`, `render.camera`, `render.encode` (`fps` of the frame loop plus both passes, `mb` of the note, `codec`, `fit` (below 1 when the fit loop had to retry), `rate` of the note, `upscale`, and with interpolation `synth` = RIFE frames, `dupes` = dropped source frames), `render.commit`, `render.send` (login + upload, `speed`), `render` (the whole function, with `clip` length and the source facts).
+- `render.load`: the SAM weights to the GPU; near 0 in a warm container (`@cache`), so it tells a cold start from a warm one. `render.decode` (`frames`, `size` of the tracking frames, `fps`), `render.track` (`fps`), `render.cuts`, `render.camera`, `render.encode` (`fps` of the frame loop plus both passes, `mb` of the note, `codec`, `fit` (below 1 when the fit loop had to retry), `rate` of the note, `upscale`, and with interpolation `synth` = RIFE frames, `dupes` = dropped source frames, `seams` = holes covered by a seam), `render.commit`, `render.send` (login + upload, `speed`), `render` (the whole function, with `clip` length and the source facts).
 
 Keep it to one line per step and only numbers that point to a lever (bandwidth, fps, cold or warm); progress percentages stay in the chat, not in the log.
 
@@ -395,4 +462,4 @@ Verified in sources (2026-10-25): TDLib rejects a video note `length` over 640 (
 
 Done (2026-10-26, owner's test): 720 and 1080 notes arrive as regular videos, not rounds, even under the 10 MB cap (High resolution); the note keeps its metadata (Note metadata).
 
-Done (2026-10-26): a 640² note of 13.2 MB arrives as a regular video (Note size). Owner (2026-10-26): a 640 HEVC note works, so HEVC became the default (Codecs). Done (2026-10-26): AV1 and VP9 notes of 12.8 s that filled the 12 000 000 B budget arrived as regular videos (they played on iOS 18); an H.266 note was not sent as a round and played neither on iOS nor on Desktop. The budget went back to 10 000 000 B (Note size). Open: AV1 and VP9 notes under 10 MB stay rounds and play on iOS and Desktop, what an H.266 note does on iOS, Desktop and an Android 17 phone (Codecs); an upscaled note (Upscale) looks right on the phone; the exact size threshold (between 10 and about 11.6 MB), a note longer than 60 s; each checked on iOS, Android and Desktop, and the downloaded file hashed against the uploaded one (server re-encoding).
+Done (2026-10-26): a 640² note of 13.2 MB arrives as a regular video (Note size). Owner (2026-10-26): a 640 HEVC note works, so HEVC became the default (Codecs). Done (2026-10-26): AV1 and VP9 notes of 12.8 s that filled the 12 000 000 B budget arrived as regular videos (they played on iOS 18); an H.266 note was not sent as a round and played neither on iOS nor on Desktop. The budget went back to 10 000 000 B (Note size), and AV1 and VP9 notes under it stayed rounds and played on iOS (owner, 2026-10-26); H.266 was dropped (Codecs). An upscaled note looked right on the phone (owner's IMG_4042). Open: AV1 and VP9 notes on Desktop and Android; the exact size threshold (between 10 and about 11.6 MB), a note longer than 60 s; each checked on iOS, Android and Desktop, and the downloaded file hashed against the uploaded one (server re-encoding).

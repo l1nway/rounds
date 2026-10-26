@@ -13,6 +13,7 @@ PROGRESS_INTERVAL = 3
 MB = 1 << 20
 UNEXPECTED = 'The details are in the bot log'
 STDERR_TAIL = 4000
+LOGGED = ('codec', 'fit', 'upscale', 'rate', 'synth', 'dupes', 'seams')
 
 
 def reporter(job: dict, stage: str, loop: asyncio.AbstractEventLoop):
@@ -183,10 +184,10 @@ async def render_job(job_id: str, jobs, state, volume, models) -> None:
             np.save(f'{job_dir}/path.npy', path)
             job = await stage(jobs, job, 'rendering')
             report = reporter(job, 'rendering', loop)
-            args = (src, meta, start, end, path, cuts, out, request['options'], request.get('codec', 'hevc'), report)
+            args = (src, meta, start, end, path, cuts, out, request['options'], request.get('codec', 'av1'), report)
             with timed(job_id, 'render.encode') as facts:
                 result = await asyncio.to_thread(render.render, *args)
-                stats = {k: v for k, v in result.items() if k in ('codec', 'fit', 'upscale', 'rate', 'synth', 'dupes')}
+                stats = {k: v for k, v in result.items() if k in LOGGED}
                 facts.update(fps=(result['frames'], ''), mb=round(result['size'] / MB, 1), **stats)
             with timed(job_id, 'render.commit'):
                 await volume.commit.aio()

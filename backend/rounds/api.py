@@ -48,7 +48,7 @@ class RenderRequest(BaseModel):
     end: float
     prompt: Prompt
     options: dict[str, bool] = {}
-    codec: Literal['hevc', 'av1', 'vp9', 'h266'] = 'hevc'  # [DOC: codecs]
+    codec: Literal['av1', 'hevc', 'vp9'] = 'av1'  # [DOC: codecs]
 
     @model_validator(mode='after')
     def check(self):

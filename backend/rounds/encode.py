@@ -14,7 +14,6 @@ CODECS = {
     'av1': ['-c:v', 'libsvtav1', '-preset', '6'],
     'vp9': ['-c:v', 'libvpx-vp9', '-deadline', 'good', '-cpu-used', '4', '-row-mt', '1', '-tile-columns', '1',
             '-auto-alt-ref', '1', '-lag-in-frames', '25'],
-    'h266': ['-c:v', 'libvvenc', '-preset', 'faster', '-pix_fmt', 'yuv420p10le'],
 }  # fmt: skip
 FFMPEG = ['ffmpeg', '-v', 'error', '-y', '-nostdin']
 QUIET = {**os.environ, 'SVT_LOG': '1'}

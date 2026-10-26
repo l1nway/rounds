@@ -3,17 +3,16 @@ import {MIN_RANGE, ms} from '../../hooks/player.js'
 // [DOC: options-seam]
 export const OPTIONS = [
   {key: 'zoom', label: 'Zoom in on the object', hint: 'Off: only crops to a square that follows it', needs: meta => Math.min(meta.width, meta.height) > 640},
-  {key: 'loudnorm', label: 'Normalize loudness', hint: 'Evens out quiet and loud parts', needs: meta => meta.has_audio},
+  {key: 'loudnorm', label: 'Even out loudness', hint: 'Quiet parts louder, loud ones softer', needs: meta => meta.has_audio},
   {key: 'interpolate', label: 'Smooth to 60 fps', hint: 'AI draws in-between frames, fixes stutter', needs: meta => meta.interpolable},
   {key: 'upscale', label: 'AI upscale', hint: 'Redraws a small video in sharp 640 px. Slow: about 4 min per 10 s', needs: meta => Math.min(meta.width, meta.height) < 640},
   {key: 'metadata', label: 'Keep original metadata', hint: 'Date, camera, GPS: recipients see where it was filmed', needs: meta => Object.keys(meta.tags ?? {}).length > 0}
 ]
 // [DOC: codec-picker]
 export const CODECS = [
-  {key: 'hevc', label: 'HEVC', hint: 'More detail per MB than H.264'},
-  {key: 'av1', label: 'AV1', hint: 'Experimental: check that it arrives as a round'},
-  {key: 'vp9', label: 'VP9', hint: 'Experimental: check that it arrives as a round'},
-  {key: 'h266', label: 'H.266', hint: 'Experimental: slow to encode, hardly plays anywhere'}
+  {key: 'av1', label: 'AV1', hint: 'Most detail per MB'},
+  {key: 'hevc', label: 'HEVC', hint: 'Hardware playback on every iPhone'},
+  {key: 'vp9', label: 'VP9', hint: 'A little less detail per MB'}
 ]
 
 const codecOf = key => CODECS.some(codec => codec.key === key) ? key : CODECS[0].key

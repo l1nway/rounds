@@ -18,7 +18,8 @@ DEPTH = 4
 PROXY_X264 = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-g', '15', '-pix_fmt', 'yuv420p']
 BT709 = 'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv'
 TILES, TILE_H = 24, 96
-LOUDNORM = 'loudnorm=I=-16:TP=-1.5:LRA=11'
+# [DOC: loudness]
+LOUDNORM = 'loudnorm=I=-16:TP=-1:LRA=7'
 MEASURED = ('I', 'TP', 'LRA', 'thresh')
 GAPLESS = 'aresample=48000:async=1:first_pts=0'
 # [DOC: broken-sources]
@@ -192,7 +193,7 @@ def audio_filter(src, start: float, dur: float, options: dict) -> str:
     if not all(math.isfinite(float(m[k])) for k in ('target_offset', *(f'input_{k.lower()}' for k in MEASURED))):
         return GAPLESS
     measured = ':'.join(f'measured_{k}={m[f"input_{k.lower()}"]}' for k in MEASURED)
-    return f'{GAPLESS},{LOUDNORM}:{measured}:offset={m["target_offset"]}:linear=true,aresample=48000'
+    return f'{GAPLESS},{LOUDNORM}:{measured}:offset={m["target_offset"]}:linear=false,aresample=48000'
 
 
 def audio_input(src, meta: dict, start: float, dur: float) -> list[str]:
