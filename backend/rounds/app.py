@@ -4,7 +4,7 @@ from pathlib import Path
 import modal
 
 from . import pipeline
-from .config import DATA_DIR, JOBS_DIR, RIFE_WEIGHTS
+from .config import DATA_DIR, JOBS_DIR, RIFE_WEIGHTS, SEEDVR_CODE
 
 PROJECT = Path(__file__).parent.parent
 FFMPEG = (
@@ -16,6 +16,8 @@ RIFE = (
     'https://github.com/HolyWu/vs-rife/releases/download/model/flownet_v4.25.pkl',
     '6615790efd627772917205db291f51cd392528a157ecbb2ecaeec3bff8eb6de2',
 )
+# [DOC: upscale]
+SEEDVR = 'https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler', '4490bd1f482e026674543386bb2a4d176da245b9'
 MODELS_DIR = '/models'
 GPU = 'L4'
 LIFT_IDLE = 120
@@ -24,7 +26,7 @@ LIFT_IDLE = 120
 def image(*groups: str, commands: tuple[str, ...] = ()) -> modal.Image:
     return (
         modal.Image.debian_slim(python_version='3.12')
-        .apt_install('curl', 'xz-utils')
+        .apt_install('curl', 'xz-utils', 'git')
         .run_commands(
             f'curl -fsSL -o /tmp/ffmpeg.tar.xz {FFMPEG[0]}',
             f'echo "{FFMPEG[1]}  /tmp/ffmpeg.tar.xz" | sha256sum -c',
@@ -41,7 +43,9 @@ def image(*groups: str, commands: tuple[str, ...] = ()) -> modal.Image:
 app = modal.App('rounds')
 # [DOC: rife-weights]
 weights = (f'curl -fsSL --create-dirs -o {RIFE_WEIGHTS} {RIFE[0]}', f'echo "{RIFE[1]}  {RIFE_WEIGHTS}" | sha256sum -c')
-cpu_image, gpu_image = image(), image('gpu', commands=weights)
+seedvr = (f'git init -q {SEEDVR_CODE} && git -C {SEEDVR_CODE} fetch -q --depth 1 {SEEDVR[0]} {SEEDVR[1]}',
+          f'git -C {SEEDVR_CODE} checkout -q FETCH_HEAD')  # fmt: skip
+cpu_image, gpu_image = image(), image('gpu', commands=(*weights, *seedvr))
 data = modal.Volume.from_name('rounds-data', create_if_missing=True)
 models = modal.Volume.from_name('rounds-models', create_if_missing=True)
 jobs = modal.Dict.from_name('rounds-jobs', create_if_missing=True)

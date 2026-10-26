@@ -23,5 +23,5 @@ dist-ssr
 *.sln
 *.sw?
 
-# mock media from npm run mock
-public/mock/
+# local mock, dev panel and test media (miniapp/README.md, Dev plugin)
+dev/

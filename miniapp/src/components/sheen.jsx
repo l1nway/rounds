@@ -1,4 +1,5 @@
 import {useLayoutEffect, useRef} from 'react'
+import {usePresence} from '../hooks/state.js'
 import './sheen.css'
 
 const SWEEP = [{transform: 'none'}, {transform: 'translateX(-66.667%)'}]
@@ -6,19 +7,20 @@ const TIMING = {duration: 3600, iterations: Infinity, pseudoElement: '::before'}
 
 // [DOC: sheen]
 export default function Sheen({on}) {
-  const refs = useRef({el: null, run: null})
+  const [mounted, ref] = usePresence(on)
+  const run = useRef(null)
 
   useLayoutEffect(() => {
-    const run = refs.current.el.animate(SWEEP, TIMING)
-    refs.current.run = run
-    return () => run.cancel()
-  }, [])
+    if (!mounted) return
+    const animation = ref.current.animate(SWEEP, TIMING)
+    run.current = animation
+    return () => animation.cancel()
+  }, [mounted, ref])
 
   useLayoutEffect(() => {
-    const {run} = refs.current
-    if (on) run.play()
-    else run.pause()
+    if (on) run.current?.play()
+    else run.current?.pause()
   }, [on])
 
-  return <span ref={el => {refs.current.el = el}} className='sheen' data-on={on || undefined} aria-hidden='true'/>
+  return mounted && <span ref={ref} className='sheen' aria-hidden='true'/>
 }

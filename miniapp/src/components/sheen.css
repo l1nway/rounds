@@ -5,11 +5,10 @@
   z-index: -1;
   overflow: hidden;
   background: var(--surface);
-  visibility: hidden;
-  transition: visibility 0s var(--dur-long);
+  transition: opacity var(--dur-enter) var(--ease);
 }
 
-.sheen[data-on] {visibility: visible; transition: none}
+.sheen[data-leaving] {opacity: 0}
 
 .sheen::before {
   content: '';

@@ -73,7 +73,9 @@ async def fail(jobs, job: dict, error: Exception) -> None:
             print(cause.stderr[-STDERR_TAIL:], flush=True)
     reason = str(error) if isinstance(error, source.Unreadable) else UNEXPECTED
     job = await save(jobs, job, status='failed', stage=None, error=reason)
-    await bot.status(job, bot.TEXTS['failed'].format(reason), bot.editor(job['id']))
+    await save(
+        jobs, job, status_message_id=await bot.announce(job, bot.TEXTS['failed'].format(reason), bot.editor(job))
+    )
 
 
 async def ingest_job(job_id: str, jobs, state, volume) -> None:
@@ -103,7 +105,7 @@ async def ingest_job(job_id: str, jobs, state, volume) -> None:
             with timed(job_id, 'ingest.commit'):
                 await volume.commit.aio()
         job = await save(jobs, job, source=os.path.basename(src), meta=meta, status='ready', **extra)
-        await bot.status(job, bot.TEXTS['ready'], bot.editor(job_id))
+        await save(jobs, job, status_message_id=await bot.announce(job, bot.TEXTS['ready'], bot.editor(job)))
         note(job_id, 'ingest', time.monotonic() - began)
     except Exception as error:
         await fail(jobs, job, error)
@@ -115,13 +117,15 @@ def to_source(found: dict, frames: np.ndarray, meta: dict) -> dict:
 
 
 async def render_job(job_id: str, jobs, state, volume, models) -> None:
-    from . import camera, render, track
+    from . import camera, render, track, upscale
 
     began = time.monotonic()
     job = await jobs.get.aio(job_id)
     note(job_id, 'render.wait', waited(job))
     with timed(job_id, 'render.load'):
         await asyncio.to_thread(track.load)
+        if upscale.wanted(job['meta'], job['request']['options']):
+            await asyncio.to_thread(upscale.fetch)
         await models.commit.aio()
     await volume.reload.aio()
     job_dir, request, meta = f'{JOBS_DIR}/{job_id}', job['request'], job['meta']
@@ -152,17 +156,26 @@ async def render_job(job_id: str, jobs, state, volume, models) -> None:
             job = await stage(jobs, job, 'framing')
             with timed(job_id, 'render.camera'):
                 found = to_source(found, frames, meta)
-                size = source.out_size(meta, request['options'])
-                path = await asyncio.to_thread(camera.solve, found, meta['width'], meta['height'], cuts, out_size=size)
+                path = await asyncio.to_thread(camera.solve, found, meta['width'], meta['height'], cuts)
             np.savez(f'{job_dir}/track.npz', **found)
             np.save(f'{job_dir}/path.npy', path)
             job = await stage(jobs, job, 'rendering')
             report = reporter(job, 'rendering', loop)
             with timed(job_id, 'render.encode') as facts:
                 result = await asyncio.to_thread(
-                    render.render, src, meta, start, end, path, cuts, out, request['options'], report
+                    render.render,
+                    src,
+                    meta,
+                    start,
+                    end,
+                    path,
+                    cuts,
+                    out,
+                    request['options'],
+                    request.get('codec', 'hevc'),
+                    report,
                 )
-                stats = {k: v for k, v in result.items() if k in ('side', 'codec', 'rate', 'synth', 'dupes')}
+                stats = {k: v for k, v in result.items() if k in ('codec', 'fit', 'upscale', 'rate', 'synth', 'dupes')}
                 facts.update(fps=(result['frames'], ''), mb=round(result['size'] / MB, 1), **stats)
             with timed(job_id, 'render.commit'):
                 await volume.commit.aio()
@@ -172,7 +185,7 @@ async def render_job(job_id: str, jobs, state, volume, models) -> None:
                 await transfer.send_note(tg, job['chat_id'], job['source_message_id'], out, result['duration'])
             facts.update(speed=(result['size'] / MB, 'MB/s'))
         job = await save(jobs, job, status='done', stage=None, progress=1)
-        await bot.status(job, bot.TEXTS['done'], bot.editor(job_id))
+        await bot.status(job, bot.TEXTS['done'], bot.editor(job))
         note(job_id, 'render', time.monotonic() - began, clip=round(end - start, 2), **describe(meta))
     except Exception as error:
         await fail(jobs, job, error)

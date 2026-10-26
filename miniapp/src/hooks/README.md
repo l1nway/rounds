@@ -1,6 +1,6 @@
 # hooks
 
-`state.js`: the project merge reducer, `createStore` (a `useSyncExternalStore` store with per-selector reads) and `useOnline`. `player.js`: the one `<video>` the app has, as a store (`time`, `paused`, `waiting`, `loaded`, `failed`; `loaded` turns true once, on the first `loadeddata`, and drives the placeholder crossfade in `viewer`) plus imperative `seek` / `step` / `toggle` / `hold` and `useAway(time)` (true while the shown frame is not the frame of `time`; the viewer marks and the lift); the viewer attaches the element, the timeline and the selection read and move it.
+`state.js`: the project merge reducer, `createStore` (a `useSyncExternalStore` store with per-selector reads), `useOnline` and `usePresence` / `useLeave` / `leave` (unmount after the exit animation, `src/README.md`, Presence). `player.js`: the one `<video>` the app has, as a store (`time`, `paused`, `waiting`, `loaded`, `failed`; `loaded` turns true once, on the first `loadeddata`, and drives the placeholder crossfade in `viewer`) plus imperative `seek` / `step` / `toggle` / `hold` and `useAway(time)` (true while the shown frame is not the frame of `time`; the viewer marks and the lift); the viewer attaches the element, the timeline and the selection read and move it.
 
 ## Frame times
 

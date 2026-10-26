@@ -11,9 +11,9 @@ import torch
 
 from . import media, rife
 from .color import GAMMA
-from .config import FPS, RIFE_WEIGHTS
+from .config import FPS, OUT_SIZE, RIFE_WEIGHTS
 
-PAD, MULTIPLE = 32, 64
+PAD = 32
 SNAP = 0.25
 MAX_GAP = 1.0
 DUP_LEVEL, DUP_GRID, DUP_STEP = 0.5, 8, 4
@@ -29,13 +29,9 @@ class Anchor(NamedTuple):
 
 
 @cache
-def model(device):
-    return rife.load(RIFE_WEIGHTS, device)
-
-
-@cache
-def grid(side: int, device):
-    return rife.grid(side, side, device)
+def model(device, side: int):
+    net, head, dtype = rife.load(RIFE_WEIGHTS, device)
+    return net, head, dtype, rife.grid(side, side, device)
 
 
 # [DOC: timed-decode]
@@ -85,17 +81,16 @@ def pick(a: Anchor | None, b: Anchor, tau: float, bounds: np.ndarray, snap: floa
     return None, (tau - a.t) / (b.t - a.t)
 
 
-def final(img: torch.Tensor, p: int) -> torch.Tensor:
-    return img[0, :, p:-p, p:-p].float().clamp(0, 1) ** GAMMA
+def final(img: torch.Tensor) -> torch.Tensor:
+    return img[0, :, PAD:-PAD, PAD:-PAD].float().clamp(0, 1) ** GAMMA
 
 
 # [DOC: interpolation]
 @torch.inference_mode()
-def frames(src, meta: dict, start: float, n: int, rate: float, at, cuts, cut, out: int, raw, device, stats: dict,
-           slow: bool):  # fmt: skip
-    (size, dtype, pix_fmt), (w, h) = raw, (meta['width'], meta['height'])
-    side = -(-(out + 2 * PAD) // MULTIPLE) * MULTIPLE
-    (net, head, half), base, p = model(device), grid(side, device), (side - out) // 2
+def frames(src, meta: dict, start: float, n: int, rate: float, at, cuts, cut, raw, device, stats: dict, slow: bool,
+           out: int = OUT_SIZE):  # fmt: skip
+    (size, dtype, pix_fmt), (w, h), side = raw, (meta['width'], meta['height']), out + 2 * PAD
+    net, head, half, base = model(device, side)
     level = DUP_LEVEL * (4 if dtype == np.int16 else 1)
     bounds, snap = (np.asarray(cuts, float) - 0.5) / FPS, SNAP / rate
     prev, slot, last, ended = None, 0, -1 / meta['fps'], False
@@ -116,11 +111,11 @@ def frames(src, meta: dict, start: float, n: int, rate: float, at, cuts, cut, ou
                 hold, k = pick(prev, cur, slot / rate, bounds, snap)
                 stats['synth'] += hold is None
                 yield final(hold.img if hold else net(prev.img, cur.img, torch.full_like(img[:, :1], k), prev.feat,
-                                                      cur.feat, base), p)  # fmt: skip
+                                                      cur.feat, base))  # fmt: skip
                 slot += 1
             prev = cur
     finally:
         media.stop(proc)
     while prev is not None and slot < n:
-        yield final(prev.img, p)
+        yield final(prev.img)
         slot += 1

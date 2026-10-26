@@ -8,8 +8,8 @@
     "build": "vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "mock": "node scripts/mock-media.mjs",
-    "perf": "vite build && node scripts/perf.mjs"
+    "mock": "node dev/mock-media.mjs",
+    "perf": "vite build --mode mock && node scripts/perf.mjs"
   },
   "devDependencies": {
     "oxlint": "^1.88.0",

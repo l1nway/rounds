@@ -26,16 +26,17 @@ Flow: video sent to the bot → webhook → `ingest` (CPU: MTProto download to t
 
 ## Telegram limits (verified, see `backend/rounds/README.md` for sources)
 
-- Video note: square H.264 MP4, `length` ≤ 640 (TDLib rejects more with 400), "up to 1 minute". No re-encoding by the Bot API or TDLib: what we upload is what people see. A file of 13.2 MB arrived as a regular video, so the encoder caps every note at 10 MB (`backend/rounds/README.md`, Note size).
+- Video note: square MP4, `length` ≤ 640 (TDLib rejects more with 400), "up to 1 minute". H.264 and (owner's test) HEVC stay rounds; AV1 and VP9 are experimental; H.266 is a test only: no VVC decoder in Telegram iOS or Desktop, Android 17 adds a platform VVC decoder where the SoC has one (`backend/rounds/README.md`, Codecs). No re-encoding by the Bot API or TDLib: what we upload is what people see. A file of 13.2 MB arrived as a regular video; the encoder fills and never exceeds 12 000 000 B (`backend/rounds/README.md`, Note size).
 - Cloud Bot API: download 20 MB, upload 50 MB. MTProto (bots included): up to 2000 MB.
 - Mini App data goes back through our API with `initData` validated by HMAC; `sendData` is not used (keyboard-button launches only).
 
 ## Owner decisions
 
 - Free hosting only (Modal Starter + GitHub Pages). Bot restricted to `ALLOWED_USER_IDS`.
-- Output 640×640 by default. A 1080×1080 note (size not recorded) arrived as a regular video; since a 13.2 MB 640 note failed the same way, 720 / 1080 and HEVC are back as experimental switches under the 10 MB cap (2026-10-26) for the owner to test; a "smart" size pick may follow (`backend/rounds/README.md`, High resolution). The duration ceiling is settled by the Telegram experiment (`backend/rounds/README.md`, Telegram experiment).
+- Output 640×640, the ceiling: 720 and 1080 notes (H.264 and HEVC, under the size cap) arrive as regular videos (owner's tests, 2026-10-26); do not retry without a Telegram change (`backend/rounds/README.md`, High resolution). The duration ceiling is settled by the Telegram experiment (`backend/rounds/README.md`, Telegram experiment).
 - Object at the frame edge: honest pixels first, an unnoticeable fill where the circle leaves the frame; an AI outpainting model may come later.
 - Frame rate: the note keeps the source rate up to 60. "Smooth to 60 fps" (RIFE interpolation, off by default) is offered for anything below 60 (59.94 included), with dropped frames or with frozen duplicate frames, and always targets 60. It must never fail on broken phone files (`backend/rounds/README.md`, Broken sources, Output rate).
+- Codec: HEVC by default, picked in the Mini App among HEVC, AV1, VP9 and H.266 (the last three experimental); H.264 dropped (owner, 2026-10-26: old format). Every note spends its size budget in two passes (`backend/rounds/README.md`, Codecs, Note size).
 - Loudness normalization is an option, off by default. Leave room for more audio filters and for video stabilization (shaky handheld sources) as later options.
 - Tap-to-lift (2026-10-26): the owner accepts about $8 a month of the Starter credits for the warm GPU `Lift` class, as long as it looks iOS-grade; the look was approved on the iPhone (`miniapp/src/features/viewer/README.md`, Lift look).
 - Optional note metadata (date, location, camera) is a switch, off by default; when on, the note's camera name also says "Round from Telegram" (`backend/rounds/README.md`, Note metadata).
@@ -46,7 +47,7 @@ Flow: video sent to the bot → webhook → `ingest` (CPU: MTProto download to t
 ## Commands
 
 - Backend (from `backend/`): `uv sync`; `uv run ruff check`; `uv run modal serve -m rounds.app` (dev); `uv run modal deploy -m rounds.app`; secrets: `uv run --with python-dotenv modal secret create rounds --from-dotenv ../.env --force` (the Modal CLI needs `python-dotenv` for `--from-dotenv`; `--with` keeps it out of the project); webhook after a deploy: `uv run modal run -m rounds.app::setup` (it looks up the deployed `web`, so the URL is the permanent one even though `modal run` also starts a `-dev` copy).
-- Mini App (from `miniapp/`): `npm install`; `npm run mock` (test video + filmstrip into `public/mock/`, needs ffmpeg) then `npm run dev` without `VITE_API_URL` (mock API, scenarios via `?job=ready|ingest|done|failed|rendering|missing|reject`); `npm run lint`; `npm run build`; `npm run perf`.
+- Mini App (from `miniapp/`): `npm install`; `npm run lint`; `npm run build`; `npm run perf` (mock build). Local testing needs the gitignored `miniapp/dev/` folder (owner's PC only; mock API, Telegram shim, Dev panel to load a video from disk): `npm run mock` (test video, needs ffmpeg) then `npm run dev` without `VITE_API_URL`, scenarios via `?job=` (`miniapp/dev/README.md`). No mock code goes into `src/` (`miniapp/README.md`, Dev plugin).
 
 ## Env
 

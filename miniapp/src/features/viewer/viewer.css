@@ -13,32 +13,14 @@
 /* [DOC: viewer-fit] */
 @property --aspect {syntax: '<number>'; inherits: true; initial-value: 1.7778}
 
-.viewer[data-fit] {height: min(100cqw / var(--aspect), 70cqh)}
+.viewer {height: min(100cqw / var(--aspect), 70cqh)}
 
-.viewer-stage {position: relative; isolation: isolate; aspect-ratio: var(--aspect); width: min(100cqw, 100cqh * var(--aspect))}
-
-@supports not (width: 1cqw) {
-  .viewer-stage {width: auto; height: 100%; max-width: 100%}
-}
-
-.viewer-video {position: relative; z-index: -2; display: block; width: 100%; height: 100%; object-fit: contain}
-
-/* [DOC: loading-crossfade] */
-.viewer-stage[data-loaded] :is(.viewer-marks, .lift) {animation: appear var(--dur-enter) var(--ease)}
-
-.viewer-stage[data-loaded] .viewer-video {animation: focus var(--dur-enter) var(--ease)}
-
-.viewer-stage > .sheen:not([data-on]) {opacity: 0; transition: opacity var(--dur-enter) var(--ease), visibility 0s var(--dur-enter)}
-
-@keyframes focus {
-  from {filter: blur(10px); scale: 1.06}
-}
-
-.viewer-stage:not([data-loaded]) :is(.viewer-marks, .lift) {visibility: hidden}
-
-.viewer-input {
-  position: absolute;
-  inset: 0;
+/* [DOC: selection-gestures] */
+.viewer-stage {
+  position: relative;
+  isolation: isolate;
+  aspect-ratio: var(--aspect);
+  width: min(100cqw, 100cqh * var(--aspect));
   cursor: crosshair;
   touch-action: none;
   user-select: none;
@@ -46,7 +28,22 @@
   -webkit-touch-callout: none;
 }
 
-.viewer-input[data-off] {cursor: default; pointer-events: none}
+.viewer-stage[data-off] {cursor: default; pointer-events: none}
+
+@supports not (width: 1cqw) {
+  .viewer-stage {width: auto; height: 100%; max-width: 100%}
+}
+
+.viewer-video {position: relative; z-index: -2; display: block; width: 100%; height: 100%; object-fit: contain; pointer-events: none}
+
+/* [DOC: loading-crossfade] */
+.viewer-stage[data-reveal] > :is(.viewer-marks, .lift) {animation: appear var(--dur-enter) var(--ease)}
+
+.viewer-stage[data-reveal] > .viewer-video {animation: focus var(--dur-enter) var(--ease)}
+
+@keyframes focus {
+  from {filter: blur(10px); scale: 1.06}
+}
 
 .viewer-marks {position: absolute; inset: 0; pointer-events: none; transition: opacity var(--dur) var(--ease)}
 
@@ -80,20 +77,35 @@
 
 .viewer-box[data-draft] {border-style: dashed}
 
+/* [DOC: box-edit] */
+.viewer-corner {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.45);
+}
+
+.viewer-corner[data-corner^='t'] {top: -6px}
+
+.viewer-corner[data-corner^='b'] {bottom: -6px}
+
+.viewer-corner[data-corner$='l'] {left: -6px}
+
+.viewer-corner[data-corner$='r'] {right: -6px}
+
+.viewer-stage[data-editing] .viewer-marks .viewer-box {visibility: hidden}
+
+.viewer-spinner {position: absolute; opacity: 0.8; pointer-events: none; transition: opacity var(--dur) var(--ease) 300ms}
+
+.viewer-spinner[data-leaving] {opacity: 0; transition-delay: 0s}
+
 @starting-style {
   .viewer-point {scale: 0.3; opacity: 0}
   .viewer-box {opacity: 0}
+  .viewer-spinner {opacity: 0}
 }
-
-.viewer-spinner {
-  position: absolute;
-  opacity: 0;
-  pointer-events: none;
-  animation-play-state: paused;
-  transition: opacity var(--dur) var(--ease);
-}
-
-.viewer-spinner[data-on] {opacity: 0.8; animation-play-state: running; transition-delay: 300ms}
 
 .viewer-notice {
   position: absolute;
@@ -104,20 +116,23 @@
   padding: 24px;
   background: var(--stage);
   text-align: center;
-  transition: opacity var(--dur-long) var(--ease);
+  animation: appear var(--dur-long) var(--ease);
+  transition: opacity var(--dur-long) var(--ease), color var(--dur-long) var(--ease);
 }
 
-.viewer-notice-body {display: grid; justify-items: center; gap: 8px}
+.viewer-notice[data-still] {animation: none}
 
-.viewer-notice-body[data-swap] {animation: appear var(--dur) var(--ease)}
-
-.viewer-notice[data-off] {opacity: 0; visibility: hidden; transition: opacity var(--dur-long) var(--ease), visibility 0s var(--dur-long)}
+.viewer-notice[data-leaving] {opacity: 0}
 
 .viewer-notice[data-busy] {color: var(--text)}
 
-.viewer-notice h2 {margin: 0; font-size: 17px}
+.viewer-notice-body {place-items: center}
 
-.viewer-notice p {max-width: 32ch; margin: 0; color: rgb(255 255 255 / 0.72)}
+.viewer-notice-body > .swap {display: grid; justify-items: center; gap: 8px}
+
+.viewer-notice h2 {font-size: 17px}
+
+.viewer-notice p {max-width: 32ch; color: rgb(255 255 255 / 0.72); transition: color var(--dur-long) var(--ease)}
 
 .viewer-notice[data-busy] p {color: var(--hint)}
 
@@ -125,7 +140,6 @@
   min-height: var(--control);
   margin-top: 8px;
   padding: 0 20px;
-  border: 0;
   border-radius: var(--radius);
   background: var(--button);
   color: var(--button-text);

@@ -47,8 +47,12 @@ async def feed(update: dict, jobs, spawn) -> None:
     await dp.feed_webhook_update(get_bot(), update, jobs=jobs, spawn=spawn)
 
 
-def editor(job_id: str) -> InlineKeyboardMarkup:
-    button = InlineKeyboardButton(text='Open editor', web_app=WebAppInfo(url=f'{env("MINIAPP_URL")}?job={job_id}'))
+# [DOC: launch-aspect]
+def editor(job: dict) -> InlineKeyboardMarkup:
+    meta = job.get('meta')
+    aspect = f'&a={round(meta["width"] / meta["height"], 6)}' if meta else ''
+    url = f'{env("MINIAPP_URL")}?job={job["id"]}{aspect}'
+    button = InlineKeyboardButton(text='Open editor', web_app=WebAppInfo(url=url))
     return InlineKeyboardMarkup(inline_keyboard=[[button]])
 
 
@@ -57,6 +61,16 @@ async def status(job: dict, text: str, markup: InlineKeyboardMarkup | None = Non
         await get_bot().edit_message_text(
             text=text, chat_id=job['chat_id'], message_id=job['status_message_id'], reply_markup=markup
         )
+
+
+# [DOC: ready-notice]
+async def announce(job: dict, text: str, markup: InlineKeyboardMarkup | None = None) -> int:
+    sent = await get_bot().send_message(
+        job['chat_id'], text, reply_markup=markup, reply_to_message_id=job['source_message_id']
+    )
+    with suppress(TelegramBadRequest):
+        await get_bot().delete_message(job['chat_id'], job['status_message_id'])
+    return sent.message_id
 
 
 # [DOC: chat-action]

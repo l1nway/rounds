@@ -3,7 +3,6 @@ import './index.css'
 import App from './app.jsx'
 import {setupTelegram} from './services/telegram.js'
 
-if (!import.meta.env.VITE_API_URL) await import('./services/mock.js')
 setupTelegram()
 
 createRoot(document.getElementById('root')).render(<App/>)

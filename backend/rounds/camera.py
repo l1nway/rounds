@@ -130,11 +130,11 @@ def _shot(on, px, py, r, fw, fh, lo, fps):
     return _clamp(CubicSpline(t, p)(np.arange(n)), fw, fh, lo)
 
 
-def solve(track, width, height, cuts=(), fps=FPS, out_size=OUT_SIZE):
+def solve(track, width, height, cuts=(), fps=FPS):
     s = min(width, height) / 2
     px, py, r = (np.array(track[k], float) / s for k in ('cx', 'cy', 'r'))
     on = np.asarray(track['present'], bool) & np.isfinite(px + py + r)
-    n, lo, fw, fh = len(on), min(out_size / 2, s) / s, width / s, height / s
+    n, lo, fw, fh = len(on), min(OUT_SIZE / 2, s) / s, width / s, height / s
     edges = np.unique(np.r_[0, [c for c in cuts if 0 < c < n], n]).astype(int)
     shots = [_shot(on[a:b], px[a:b], py[a:b], r[a:b], fw, fh, lo, fps) for a, b in pairwise(edges)]
     return (np.concatenate(shots) if shots else np.zeros((0, 3))) * [s, s, 2 * s]

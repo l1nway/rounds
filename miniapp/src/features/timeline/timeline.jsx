@@ -1,6 +1,7 @@
 import {memo, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react'
 import Icon from '../../components/icon.jsx'
 import Sheen from '../../components/sheen.jsx'
+import Swap from '../../components/swap.jsx'
 import {MIN_RANGE, clamp, formatTime, frameOf, frameTime, getTime, ms, seek, step, toggle, usePlayer} from '../../hooks/player.js'
 import {haptic} from '../../services/telegram.js'
 import useDrag from './use-drag.js'
@@ -14,10 +15,11 @@ const seconds = t => `${+t.toFixed(3)} s`
 const stepLabel = s => s >= 0.1 ? `${seconds(s)}/px` : `${+(s * 1000).toFixed(s < 0.01 ? 2 : 1)} ms/px`
 const modeLabel = mode => mode && (mode.level ? `${MODES[mode.level]} · ${stepLabel(mode.step)}` : MODES[0])
 
-const Filmstrip = memo(function Filmstrip({url, tiles, tileWidth, tileHeight}) {
+const Filmstrip = memo(function Filmstrip({url, missing, tiles, tileWidth, tileHeight}) {
   const ref = useRef(null)
   const [width, setWidth] = useState(0)
-  const [ready, setReady] = useState(false)
+  const [ready, setReady] = useState(null)
+  const failed = usePlayer(state => state.failed)
 
   useLayoutEffect(() => {
     const observer = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width))
@@ -30,7 +32,7 @@ const Filmstrip = memo(function Filmstrip({url, tiles, tileWidth, tileHeight}) {
     let live = true
     const image = new Image()
     image.src = url
-    image.decode().catch(() => {}).then(() => live && setReady(true))
+    image.decode().then(() => live && setReady(true), () => live && setReady(false))
     return () => {live = false}
   }, [url])
 
@@ -46,21 +48,16 @@ const Filmstrip = memo(function Filmstrip({url, tiles, tileWidth, tileHeight}) {
   }, [ready, width, tiles, tileWidth, tileHeight])
 
   return (
-    <div ref={ref} className='timeline-film' data-ready={ready || undefined} style={{'--film': url ? `url(${JSON.stringify(url)})` : 'none'}} aria-hidden='true'>
-      <Sheen on={!ready}/>
+    <div ref={ref} className='timeline-film' style={url && {'--film': `url(${JSON.stringify(url)})`}} aria-hidden='true'>
+      <Sheen on={ready === null && !failed && !missing}/>
       {cells.map((style, i) => <i key={i} style={style}/>)}
     </div>
   )
 })
 
-const Clock = memo(function Clock({mode}) {
+const Clock = memo(function Clock() {
   const time = usePlayer(state => state.time)
-  return (
-    <div className='timeline-clock'>
-      <output aria-label='Current time'>{formatTime(time)}</output>
-      <span className='timeline-mode' data-on={mode ? '' : undefined} aria-live='polite'>{modeLabel(mode)}</span>
-    </div>
-  )
+  return <output aria-label='Current time'>{formatTime(time)}</output>
 })
 
 // [DOC: timeline-hit-areas]
@@ -80,13 +77,10 @@ const Controls = memo(function Controls({disabled, length}) {
   const paused = usePlayer(state => state.paused)
   return (
     <div className='timeline-controls enter'>
-      <span/>
-      <div className='timeline-buttons'>
-        <button type='button' className='icon-button' aria-label='Previous frame' disabled={disabled} onClick={() => tick(-1)}><Icon name='previous'/></button>
-        <button type='button' className='icon-button' aria-label={paused ? 'Play' : 'Pause'} disabled={disabled} onClick={toggle}><Icon key={paused} name={paused ? 'play' : 'pause'}/></button>
-        <button type='button' className='icon-button' aria-label='Next frame' disabled={disabled} onClick={() => tick(1)}><Icon name='next'/></button>
-      </div>
-      <span className='timeline-length'>{length}</span>
+      <button type='button' className='icon-button' aria-label='Previous frame' disabled={disabled} onClick={() => tick(-1)}><Icon name='previous'/></button>
+      <button type='button' className='icon-button' aria-label={paused ? 'Play' : 'Pause'} disabled={disabled} onClick={toggle}><Icon key={paused} name={paused ? 'play' : 'pause'}/></button>
+      <button type='button' className='icon-button' aria-label='Next frame' disabled={disabled} onClick={() => tick(1)}><Icon name='next'/></button>
+      {length && <span className='timeline-length'>{length}</span>}
     </div>
   )
 })
@@ -123,28 +117,36 @@ export default memo(function Timeline({job, start, end, time, dispatch, readOnly
 
   const film = job?.filmstrip ?? {}
   return (
-    <section className='timeline' aria-label='Trim' data-empty={!job || undefined} style={{'--strip': `${STRIP}px`}}>
-      <div className='timeline-head enter'>
-        <span>{formatTime(start)}</span>
-        <Clock mode={mode}/>
-        <span>{formatTime(end)}</span>
-      </div>
+    <section className='timeline' aria-label='Trim' style={{'--strip': `${STRIP}px`}}>
+      {/* [DOC: timeline-loading] */}
+      {job && (
+        <div className='timeline-head enter'>
+          <span>{formatTime(start)}</span>
+          <div className='timeline-clock'>
+            <Clock/>
+            <Swap className='timeline-mode' text={modeLabel(mode)} aria-live='polite'/>
+          </div>
+          <span>{formatTime(end)}</span>
+        </div>
+      )}
       <div className='timeline-track enter' onKeyDown={key} {...(job ? drag : {})}>
-        <Filmstrip url={job?.filmstrip_url} tiles={film.tiles} tileWidth={film.tile_width} tileHeight={film.tile_height}/>
+        <Filmstrip url={job?.filmstrip_url} missing={Boolean(job) && !job.filmstrip_url} tiles={film.tiles} tileWidth={film.tile_width} tileHeight={film.tile_height}/>
         {job && <>
           <i className='timeline-shade' data-side='start' style={{left: 0, width: pct(start)}}/>
           <i className='timeline-shade' data-side='end' style={{right: 0, width: pct(duration - end)}}/>
           {time !== null && <i className='timeline-mark' style={{left: pct(time)}}/>}
           <Scrub duration={duration} start={start} end={end}/>
-          <div className='timeline-trim' data-off={readOnly || undefined} style={{left: pct(start), width: pct(end - start)}}>
-            {!readOnly && HANDLES.map(([kind, label]) => (
-              <div key={kind} className='timeline-handle' data-kind={kind} role='slider' tabIndex={0} aria-label={label} aria-valuemin={0}
-                aria-valuemax={ms(duration)} aria-valuenow={kind === 'start' ? start : end} aria-valuetext={formatTime(kind === 'start' ? start : end)}/>
-            ))}
-          </div>
+          {!readOnly && (
+            <div className='timeline-trim' style={{left: pct(start), width: pct(end - start)}}>
+              {HANDLES.map(([kind, label]) => (
+                <div key={kind} className='timeline-handle' data-kind={kind} role='slider' tabIndex={0} aria-label={label} aria-valuemin={0}
+                  aria-valuemax={ms(duration)} aria-valuenow={kind === 'start' ? start : end} aria-valuetext={formatTime(kind === 'start' ? start : end)}/>
+              ))}
+            </div>
+          )}
         </>}
       </div>
-      <Controls disabled={!job} length={job ? `${seconds(end - start)} of ${seconds(max)}` : ''}/>
+      <Controls disabled={!job} length={job && `${seconds(end - start)} of ${seconds(max)}`}/>
     </section>
   )
 })

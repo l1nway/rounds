@@ -6,9 +6,10 @@
   --bar: 66px;
 }
 
+/* [DOC: editor-scroll] */
 .editor {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto auto auto;
+  grid-template-rows: auto auto auto 1fr;
   box-sizing: border-box;
   height: 100%;
   max-width: 720px;
@@ -19,88 +20,38 @@
     calc(var(--safe-bottom) + var(--bar))
     var(--safe-left);
   overflow: hidden auto;
+  scrollbar-gutter: stable;
   container-type: size;
 }
 
-/* [DOC: editor-scroll] */
-.editor:has(> .viewer[data-fit]) {grid-template-rows: auto auto auto 1fr}
-
-/* [DOC: switch] */
-.options {
-  --spring: linear(0, 0.039, 0.137, 0.269, 0.414, 0.558, 0.691, 0.805, 0.899, 0.972, 1.024, 1.058, 1.078, 1.086, 1.085, 1.078, 1.067, 1.055, 1.043, 1.031, 1.02, 1.011, 1.005, 0.999, 1);
-  margin: 0;
-  padding: 0 16px;
-  border: 0;
-  min-width: 0;
+/* [DOC: editor-draft] */
+.editor-status {
+  grid-area: 4 / 1;
+  align-self: start;
+  grid-template-rows: 1fr;
+  padding: 4px 16px 8px;
+  font-size: 13px;
+  color: var(--hint);
 }
 
-.options-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: var(--control);
-  padding: 6px 0;
-  transition: opacity var(--dur) var(--ease);
+.editor-status > * {min-height: 0}
+
+.editor-status[role='alert'] {color: var(--danger)}
+
+/* [DOC: late-rows] */
+@media (prefers-reduced-motion: no-preference) {
+  :root[data-enter] .enter:is(.options-row, .editor-status) {
+    animation-name: enter, grow;
+    animation-duration: var(--dur-enter), 600ms;
+    animation-timing-function: var(--ease), cubic-bezier(0.4, 0, 0.2, 1);
+    animation-delay: calc(var(--i, 0) * var(--stagger)), 0s;
+  }
 }
 
-.options:disabled .options-row, .options-row:has(:disabled) {opacity: 0.5}
-
-.options-text {display: grid}
-
-.options-text small {color: var(--hint); font-size: 13px}
-
-.options-text small[data-swap] {animation: appear var(--dur) var(--ease)}
-
-.options-row input {
-  appearance: none;
-  flex: none;
-  position: relative;
-  width: 51px;
-  height: 31px;
-  margin: 0;
-  border-radius: 16px;
-  background: var(--surface);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hint) 40%, transparent);
-  touch-action: none;
+@keyframes grow {
+  from {grid-template-rows: 0fr; min-height: 0; padding-block: 0; clip-path: inset(0 -16px)}
+  to {clip-path: inset(0 -16px)}
 }
-
-.options-row input::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: var(--button);
-  opacity: 0;
-  transition: opacity var(--dur) var(--ease);
-}
-
-.options-row input:checked::before {opacity: 1}
-
-.options-row input::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 27px;
-  height: 27px;
-  border-radius: 13.5px;
-  background: #fff;
-  box-shadow: 0 2px 4px rgb(0 0 0 / 0.25);
-  transition: translate var(--dur-long) var(--spring), width var(--dur-long) var(--spring);
-}
-
-.options-row input:checked::after {translate: 20px}
-
-.options-row input[data-press]::after {width: 34px}
-
-.options-row input:checked[data-press]::after {translate: 13px}
-
-.options-row input[data-drag]::after {translate: var(--x); transition: width var(--dur-long) var(--spring)}
-
-.editor-status {min-height: 1.35em; padding: 4px 16px 8px; font-size: 13px; color: var(--hint)}
-
-.editor-status p {margin: 0}
 
 /* [DOC: submit-bar] */
 .editor-bar {
@@ -118,7 +69,6 @@
   max-width: 688px;
   height: calc(var(--bar) - 16px);
   margin-inline: auto;
-  border: 0;
   border-radius: var(--radius);
   background: var(--button);
   color: var(--button-text);
@@ -132,8 +82,4 @@
 
 .editor-submit[aria-busy] > :first-child {visibility: hidden}
 
-.editor-submit .spinner {width: 20px; height: 20px; border-width: 2px}
-
-.editor-status span {animation: appear var(--dur) var(--ease)}
-
-.editor-status [role='alert'] {color: var(--danger)}
+.editor-submit .spinner {width: 24px; height: 24px; border-width: 2px}

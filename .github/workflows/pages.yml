@@ -30,7 +30,7 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: miniapp/package-lock.json
-      - name: Require the API URL (an empty one would ship the mock)
+      - name: Require the API URL (an empty one would ship a build calling a relative /api)
         run: test -n "$VITE_API_URL" || { echo 'Set the repository variable API_URL'; exit 1; }
       - run: npm ci
       - run: npm run lint

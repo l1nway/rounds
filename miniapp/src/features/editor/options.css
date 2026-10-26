@@ -1,0 +1,111 @@
+/* [DOC: switch] */
+.options {
+  --spring: linear(0, 0.039, 0.137, 0.269, 0.414, 0.558, 0.691, 0.805, 0.899, 0.972, 1.024, 1.058, 1.078, 1.086, 1.085, 1.078, 1.067, 1.055, 1.043, 1.031, 1.02, 1.011, 1.005, 0.999, 1);
+  padding: 0 16px;
+}
+
+/* [DOC: late-rows] */
+.options[data-early] {--early: 1}
+
+.options-row {
+  display: grid;
+  grid-template: 1fr / 1fr auto;
+  align-items: center;
+  gap: 12px;
+  min-height: calc(var(--control) + 12px);
+  padding: 6px 0;
+  transition: opacity var(--dur) var(--ease);
+}
+
+.options-row > * {min-height: 0}
+
+.options-row:has(:disabled), .options-codec:has(:disabled) {opacity: 0.5}
+
+.options-text {display: grid}
+
+.options-text small {color: var(--hint); font-size: 13px}
+
+.options-row input {
+  appearance: none;
+  position: relative;
+  width: 51px;
+  aspect-ratio: 51 / 31;
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hint) 40%, transparent);
+  touch-action: none;
+}
+
+.options-row input::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--button);
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease);
+}
+
+.options-row input:checked::before {opacity: 1}
+
+.options-row input::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 27px;
+  height: 27px;
+  border-radius: 13.5px;
+  background: #fff;
+  box-shadow: 0 2px 4px rgb(0 0 0 / 0.25);
+  transition: translate var(--dur-long) var(--spring), width var(--dur-long) var(--spring);
+}
+
+.options-row input:checked::after {translate: 20px}
+
+.options-row input[data-press]::after {width: 34px}
+
+.options-row input:checked[data-press]::after {translate: 13px}
+
+.options-row input[data-drag]::after {translate: var(--x); transition: width var(--dur-long) var(--spring)}
+
+/* [DOC: codec-picker] */
+.options-codec {display: grid; gap: 8px; padding: 6px 0 10px; transition: opacity var(--dur) var(--ease)}
+
+.options-segments {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  padding: 2px;
+  border-radius: 9px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hint) 40%, transparent);
+}
+
+.options-segments::before {
+  content: '';
+  position: absolute;
+  grid-area: 1 / 1 / 2 / 2;
+  inset: 0;
+  border-radius: 7px;
+  background: var(--button);
+  translate: calc(var(--n) * 100%);
+  transition: translate var(--dur-long) var(--ease);
+}
+
+.options-segments label {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 32px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  transition: color var(--dur) var(--ease);
+}
+
+.options-segments label:has(:checked) {color: var(--button-text)}
+
+.options-segments label:has(:focus-visible) {outline: 2px solid var(--button); outline-offset: 2px}
+
+.options-segments input {position: absolute; inset: 0; opacity: 0; cursor: pointer}

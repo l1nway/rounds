@@ -5,6 +5,7 @@ import hmac
 import json
 import os
 import time
+from typing import Literal
 from urllib.parse import parse_qsl, urlsplit
 
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -44,6 +45,7 @@ class RenderRequest(BaseModel):
     end: float
     prompt: Prompt
     options: dict[str, bool] = {}
+    codec: Literal['hevc', 'av1', 'vp9', 'h266'] = 'hevc'  # [DOC: codecs]
 
     @model_validator(mode='after')
     def check(self):
