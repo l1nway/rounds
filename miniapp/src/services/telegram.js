@@ -1,6 +1,7 @@
 import {useLayoutEffect, useRef} from 'react'
 
 const MOBILE = ['ios', 'android']
+const SETTLE = 1000
 
 export const tg = () => window.Telegram?.WebApp
 export const inTelegram = () => Boolean(tg()?.initData)
@@ -14,16 +15,31 @@ export const haptic = {
 
 export const close = () => tg()?.close()
 
+const enter = () => {document.documentElement.dataset.enter = ''}
+
+// [DOC: entrance]
+const settle = (app, fullscreen) => {
+  const final = () => app.isExpanded && (!fullscreen || app.isFullscreen)
+  if (final()) return enter()
+  const events = {viewportChanged: ({isStateStable}) => isStateStable && final() && done(), fullscreenChanged: () => final() && done(), fullscreenFailed: () => done()}
+  const each = method => Object.entries(events).forEach(([name, handler]) => app[method](name, handler))
+  const done = () => {clearTimeout(timer); each('offEvent'); enter()}
+  const timer = setTimeout(done, SETTLE)
+  each('onEvent')
+}
+
 // [DOC: telegram-setup]
 export const setupTelegram = () => {
-  if (!inTelegram()) return
+  if (!inTelegram()) return enter()
   const app = tg()
+  const fullscreen = since('8.0') && MOBILE.includes(app.platform)
   app.ready()
   app.expand()
   if (since('6.1')) {app.setHeaderColor('bg_color'); app.setBackgroundColor('bg_color')}
   if (since('7.10')) app.setBottomBarColor('bottom_bar_bg_color')
   if (since('7.7')) app.disableVerticalSwipes()
-  if (since('8.0') && MOBILE.includes(app.platform)) app.requestFullscreen()
+  if (fullscreen) app.requestFullscreen()
+  settle(app, fullscreen)
 }
 
 // [DOC: main-button]

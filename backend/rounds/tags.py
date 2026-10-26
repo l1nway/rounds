@@ -11,6 +11,7 @@ MOVIE = ('com.apple.quicktime.creationdate', 'com.apple.quicktime.location.ISO67
          'com.apple.quicktime.software')  # fmt: skip
 CAMERA = ('com.apple.quicktime.camera.lens_model', 'com.apple.quicktime.camera.focal_length.35mm_equivalent',
           'com.apple.quicktime.camera.lens_irisfnumber')  # fmt: skip
+MARK, MARKED = 'Round from Telegram', ('com.apple.quicktime.model', 'com.apple.quicktime.software')
 ALIASES = {'location': 'com.apple.quicktime.location.ISO6709'}
 CONTAINERS = {b'moov', b'trak', b'mdia', b'minf', b'stbl'}
 OFFSETS = {b'stco': '>u4', b'co64': '>u8'}
@@ -80,7 +81,12 @@ def read(path, found: dict) -> dict[str, str]:
 
 
 def kept(meta: dict, options: dict) -> dict[str, str]:
-    return (meta.get('tags') or {}) if options.get('metadata') else {}
+    if not options.get('metadata'):
+        return {}
+    tags = dict(meta.get('tags') or {})
+    key = next((k for k in MARKED if k in tags), MARKED[-1])  # made-here mark
+    tags[key] = f'{tags[key]} ({MARK})' if key in tags else MARK
+    return tags
 
 
 def created(tags: dict) -> list[str]:

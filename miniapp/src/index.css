@@ -16,6 +16,8 @@
   --control: 44px;
   --dur: 200ms;
   --dur-long: 400ms;
+  --dur-enter: 700ms;
+  --stagger: 110ms;
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
@@ -32,7 +34,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :root {--dur: 0ms; --dur-long: 0ms}
+  :root {--dur: 0ms; --dur-long: 0ms; --dur-enter: 0ms}
 }
 
 html {
@@ -92,4 +94,15 @@ button {font: inherit; color: inherit}
 /* [DOC: motion-tokens] */
 @keyframes appear {
   from {opacity: 0}
+}
+
+/* [DOC: entrance] */
+@media (prefers-reduced-motion: no-preference) {
+  :root:not([data-enter]) .enter {opacity: 0}
+
+  :root[data-enter] .enter {animation: enter var(--dur-enter) var(--ease) calc(var(--i, 0) * var(--stagger)) backwards}
+}
+
+@keyframes enter {
+  from {opacity: 0; filter: blur(10px); scale: 1.06}
 }

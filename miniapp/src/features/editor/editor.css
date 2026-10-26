@@ -11,8 +11,15 @@
     max(env(safe-area-inset-right), var(--tg-safe-area-inset-right, 0px))
     calc(max(env(safe-area-inset-bottom), var(--tg-safe-area-inset-bottom, 0px)) + var(--tg-content-safe-area-inset-bottom, 0px))
     max(env(safe-area-inset-left), var(--tg-safe-area-inset-left, 0px));
-  overflow: hidden;
+  overflow: hidden auto;
+  container-type: size;
 }
+
+/* [DOC: editor-scroll] */
+.editor:has(> .viewer[data-fit]) {grid-template-rows: auto auto auto 1fr}
+
+/* entrance order */
+.options, .editor-status {--i: 3}
 
 /* [DOC: switch] */
 .options {

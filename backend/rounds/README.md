@@ -42,15 +42,14 @@ status: 'ingesting' | 'ready' | 'rendering' | 'done' | 'failed'
 stage: None | 'queued' | 'decoding' | 'tracking' | 'cuts' | 'framing' | 'rendering' | 'sending',  progress: 0..1,  error: str | None
 meta: source.probe() result (tags included) + dupes, has_audio (re-checked on the proxy), interpolable (set by ingest after the proxy)
 proxy: {width, height, fps},  filmstrip: {tiles, tile_width, tile_height}
-request: None | {start, end, prompt: {time, points: [[x, y, label]], box: [x0, y0, x1, y1] | None, mask: str | None}, options: {loudnorm: bool, interpolate: bool, metadata: bool, hires: bool}}
+request: None | {start, end, prompt: {time, points: [[x, y, label]], box: [x0, y0, x1, y1] | None, mask: str | None}, options: {loudnorm: bool, interpolate: bool, metadata: bool}}
 ```
 
-`label` is 1 for "this object", 0 for "not this". `prompt.time` lies inside `[start, end]`; `end - start ≤ MAX_DURATION`. `prompt.mask` is the outline the owner picked in the Mini App (Lift mask), a `data:image/png;base64,` URL of at most `MASK_CHARS` (90 000) characters; jobs and clients without it send `None`.
+`options` is a free `dict[str, bool]` read with `.get`, so an unknown or retired key (the `hires` of older Mini App builds, High resolution) is ignored. `label` is 1 for "this object", 0 for "not this". `prompt.time` lies inside `[start, end]`; `end - start ≤ MAX_DURATION`. `prompt.mask` is the outline the owner picked in the Mini App (Lift mask), a `data:image/png;base64,` URL of at most `MASK_CHARS` (90 000) characters; jobs and clients without it send `None`.
 
 **Module functions** (pure of Modal, so they run and test locally):
 
 - `source.probe(path) -> dict`: `duration`, `fps` (nominal, Source cadence), `gaps` (share of missing frames), `stream` (index of the video stream), `width`, `height` (display-oriented), `rotation`, `transfer` (`'sdr' | 'hlg' | 'pq'`), `matrix` (`'bt709' | 'bt2020' | 'bt601' | ''`), `full_range` (bool; full-range Android H.264 passes through `-pix_fmt yuv420p` untouched, so the renderer must know), `bit_depth`, `has_audio`, `codec`, `tags` (source tags the note can carry, Note metadata). Without `matrix` the renderer assumes 709 for SDR and 2020 for HDR.
-- `source.out_size(meta, options) -> int`: the note side, 640 or more with `hires` (High resolution).
 - `media.make_proxy(src, job_dir, meta) -> ({'proxy': {...}, 'filmstrip': {...}}, {'dupes', 'has_audio'})`. `probe`, `make_proxy`, `track_frames` and `render` raise `source.Unreadable` with a readable reason for a source they cannot use (Broken sources).
 - `media.track_frames(src, meta, start, end, long_side=1024) -> np.ndarray` `(N, H, W, 3)` uint8 RGB SDR, a memmap in a local temp dir.
 - `media.scene_cuts(frames) -> list[int]`: indices of frames that start a new shot.
@@ -58,9 +57,9 @@ request: None | {start, end, prompt: {time, points: [[x, y, label]], box: [x0, y
 - `track.track(frames, index, points, box, mask='') -> dict` of `(N,)` arrays in `frames` pixels: `present` (bool), `cx`, `cy`, `r` (minimum enclosing circle of the mask), `area`. `points` / `box` are in `frames` pixels; `index` is the prompt frame; a decodable `mask` replaces both as the prompt (Lift mask).
 - `camera.solve(track, width, height, cuts=(), fps=FPS, out_size=OUT_SIZE) -> np.ndarray` `(N, 3)`: `cx, cy, side` of the square window per frame, source pixels (`track` scaled to source pixels by the caller).
 - `camera.sampler(path, cuts) -> at(frames)`: path rows at fractional tracking frames (Path sampler).
-- `render.render(src, meta, start, end, path, cuts, out, options, progress=None) -> dict` (`size` in bytes, `side`, `duration`, `rate`, `frames`, plus `synth`, `dupes` when interpolating): `path` from `camera.solve` on the tracking timeline; `progress(fraction)` optional.
+- `render.render(src, meta, start, end, path, cuts, out, options, progress=None) -> dict` (`size` in bytes, `duration`, `rate`, `frames`, plus `synth`, `dupes` when interpolating): `path` from `camera.solve` on the tracking timeline; `progress(fraction)` optional.
 
-**Output** (`config`): `OUT_SIZE` 640 (more with `hires`, High resolution), `MAX_DURATION` 60, rate by Output rate (≤ `MAX_FPS` 60). H.264 High, yuv420p, BT.709 limited range tagged, AAC-LC 48 kHz, `+faststart`; always sent with `length=OUT_SIZE`.
+**Output** (`config`): `OUT_SIZE` 640 (the ceiling, High resolution), `MAX_DURATION` 60, rate by Output rate (≤ `MAX_FPS` 60). H.264 High, yuv420p, BT.709 limited range tagged, AAC-LC 48 kHz, `+faststart`; always sent with `length=OUT_SIZE`.
 
 ## Camera path
 
@@ -157,7 +156,7 @@ Two detectors for one thing: a repeated (frozen) frame, as written by apps that 
 
 1. Source frames as they are, each with its own pts (Timed decode); no `fps` filter.
 2. Duplicates dropped (Duplicate frames).
-3. Each kept frame cropped by the camera path at its own time to the output size plus a margin (`smooth.pad`: at least size / 20 per side, the total rounded up to a multiple of 64, RIFE's input step; 640 → 704², 720 → 832², 1080 → 1216²; same centre, side scaled by the same ratio), in gamma (BT.1886 2.4: plain video pixels, what RIFE was trained on), half precision on the GPU; `Head` features once per frame.
+3. Each kept frame cropped by the camera path at its own time to `smooth.SIDE` 704² (640 + `PAD` 32 px each side; 704 is a multiple of 64, RIFE's input step; same centre, side × 704 / 640), in gamma (BT.1886 2.4: plain video pixels, what RIFE was trained on), half precision on the GPU; `Head` features once per frame.
 4. Output slot j at j / 60: a real frame within a quarter of a slot (`SNAP`) is used as is (30 fps: every even slot; 60 fps with gaps: all but the gaps); otherwise RIFE between the neighbouring kept frames at `(t − t_a) / (t_b − t_a)`, so VFR timing is honoured. A pair more than 1 s apart (`MAX_GAP`) or across a scene cut (the tracking cuts) is not morphed: the nearer frame is held. Slots before the first or after the last frame hold it.
 5. The result is cropped back to the output size, brought back to linear light, then the usual `color.encode` and x264.
 
@@ -171,7 +170,7 @@ Why crop first: RIFE at 704² costs the same for every source, 4K included, and 
 
 ## Rife
 
-`rife.py`: RIFE 4.25 (hzwer/Practical-RIFE: "4.25 by default for most scenes" in its README) IFNet + Head, adapted from HolyWu/vs-rife (`IFNet_HDv3_v4_25.py`, `warplayer.py`), both MIT; notices in `RIFE-LICENSE`. Same parameter names as the checkpoint, loaded strictly with only the `block*` and `encode.*` keys (the checkpoint also carries the training-only `teacher.*` and `caltime.*`). Input sides must be multiples of 64 (`smooth.pad` guarantees it: 704, 832, 1216). Checked on CPU (torch 2.14, 2026-10-25): strict load, 5.66 M + 6 k parameters; a disc moved 40 px: the middle frame differs from the true one by 0.0006 (mean, 0..1), a plain blend by 0.011; t = 0.25 by 0.0007.
+`rife.py`: RIFE 4.25 (hzwer/Practical-RIFE: "4.25 by default for most scenes" in its README) IFNet + Head, adapted from HolyWu/vs-rife (`IFNet_HDv3_v4_25.py`, `warplayer.py`), both MIT; notices in `RIFE-LICENSE`. Same parameter names as the checkpoint, loaded strictly with only the `block*` and `encode.*` keys (the checkpoint also carries the training-only `teacher.*` and `caltime.*`). Input sides must be multiples of 64 (704 is). Checked on CPU (torch 2.14, 2026-10-25): strict load, 5.66 M + 6 k parameters; a disc moved 40 px: the middle frame differs from the true one by 0.0006 (mean, 0..1), a plain blend by 0.011; t = 0.25 by 0.0007.
 
 ## Rife weights
 
@@ -187,7 +186,7 @@ Why crop first: RIFE at 704² costs the same for every source, 4K included, and 
 
 ## Render options
 
-`render.encoder` is the seam: audio options go through `media.audio_filter(options)`. `options.metadata` adds `creation_time` to the encoder and `tags.write` after it (Note metadata); `options.hires` sets the size for the camera, the crop, RIFE and x264 through `source.out_size` (High resolution). `options.interpolate` picks the frame source in `render.render` (`render.cfr` or `smooth.frames`) and the rate (`source.out_rate`). Stabilization belongs in the camera path (`# [DOC: stabilization]` in `camera`), not in the renderer: render only follows `path`.
+`render.encoder` is the seam: audio options go through `media.audio_filter(options)`. `options.metadata` adds `creation_time` to the encoder and `tags.write` after it (Note metadata). `options.interpolate` picks the frame source in `render.render` (`render.cfr` or `smooth.frames`) and the rate (`source.out_rate`). Stabilization belongs in the camera path (`# [DOC: stabilization]` in `camera`), not in the renderer: render only follows `path`.
 
 ## Note metadata
 
@@ -199,19 +198,14 @@ Why crop first: RIFE at 704² costs the same for every source, 4K included, and 
 - Not copied: `full-frame-rate-playback-intent` (how Photos plays the source), `apple-maker-note` (Apple-private ints), the `mebx` tracks (face boxes and orientation are in source-frame coordinates, wrong after the crop; ffmpeg's mp4 muxer cannot write `mebx`), anything that identifies the original asset (`live-photo-info`, `segment-identifier`, `uuid`, `content.identifier`): reasoned, Photos could pair the note with the original or a Live Photo.
 - How it is written: `tags.write` appends a `meta` box in Apple's form (its 34-byte `hdlr`, UTF-8 data type 1, locale 0) to `moov` and the camera keys to the first video `trak`, the same places as the source. `+faststart` puts `moov` before `mdat`, so every `stco` / `co64` offset behind the `moov` grows by the added bytes (the `moov` is built twice: once to measure the growth, once with the shifted offsets), then the file is replaced through `note.mp4.tmp`.
 - Rejected: `-movflags use_metadata_tags`. ffmpeg's `movenc.c` (release/8.0, `mov_write_udta_tag`) writes the `mdta` `meta` inside `moov/udta` for mp4 and mov, while iPhones write `moov/meta`; ffmpeg trac #4209 (open since 2015) reports that Apple apps do not show tags written that way. It also writes every global key, `creation_time` and `encoder` included.
-- Checked locally (2026-10-26, ffmpeg 9.0.2): a 1080p MOV with the Apple keys set through `use_metadata_tags`, rendered with `metadata` at 640 and 1080: ffprobe reads every key back, `creation_time` lands in `mvhd` and both tracks, the file grows by exactly the `meta` box (545 B), the `framemd5` of both streams equals the render without the option, a `-c copy` remux works; without the option the note has no source tags (as before). On the real `IMG_0402.MOV`: the nine keys plus `creation_time` are read, and the note carries them (`moov/meta` and video `trak/meta`, box dump).
-- Open, owner-testable only: whether iOS Photos reads `moov/meta` in an MP4 (`isom` brand) the way it does in a MOV (if not, try the ISO form of `meta` with a version field first), and whether Telegram keeps container metadata (TDLib uploads the file untouched, Telegram limits; the server and the "Save" path are not known).
+- Checked locally (2026-10-26, ffmpeg 9.0.2): a 1080p MOV with the Apple keys set through `use_metadata_tags`, rendered with `metadata` at 640 (and 1080, the retired High resolution): ffprobe reads every key back, `creation_time` lands in `mvhd` and both tracks, the file grows by exactly the `meta` box (545 B), the `framemd5` of both streams equals the render without the option, a `-c copy` remux works; without the option the note has no source tags (as before). On the real `IMG_0402.MOV`: the nine keys plus `creation_time` are read, and the note carries them (`moov/meta` and video `trak/meta`, box dump).
+- Owner-confirmed on the iPhone (2026-10-26): the option works, the saved note shows the source's metadata, so iOS Photos reads `moov/meta` in our MP4 (`isom` brand) and Telegram delivers the container metadata.
+- Made-here mark (`tags.MARK`, `tags.kept`): with the option on, the note also says it came from this bot. ` (Round from Telegram)` is appended to `com.apple.quicktime.model` (`iPhone SE (2nd generation) (Round from Telegram)`), the device name Photos shows as the camera; a source without a model gets `com.apple.quicktime.software` instead (appended if present, else set to `Round from Telegram`), so even a tagless source carries one tag. Every other tag is copied unchanged. Added in `kept` at render time, so `meta.tags` (what the Mini App sees) stays the source's and jobs ingested earlier get the mark too. Not `camera.lens_model` (the owner's "Back Camera (Round from Telegram)" idea): Photos turns `iPhone SE (2nd generation) back camera 3.99mm f/1.8` into "Back Camera" and the focal length / aperture line, apparently by parsing it, so a suffix there risks losing that line (reasoned); `model` is plain text. Not ffmpeg's `encoder` / `comment`: they land in `udta` (the form Apple apps ignore, see Rejected below). Checked locally (2026-10-26, ffmpeg 9.0.2, CPU render): the note's `moov/meta` carries the marked model, every other key and the `trak/meta` lens key unchanged, video `framemd5` identical to the render without the option; without a model only `software` = `Round from Telegram`; option off: no source tags. Open, owner-testable only: how Photos displays the marked model (whole string, or the lens line suffers).
 - Privacy: the location goes to everyone who receives the note. The Mini App hint says so, and the option is off by default.
 
 ## High resolution
 
-`options.hires` ("High resolution (experimental)", off by default) renders the note above 640 and still sends it with `length=640` (`transfer.send_note` uses `OUT_SIZE`): TDLib rejects a `length` over 640, and the circle size comes from `length` only (Telegram limits), so this is the Telegram experiment's "1080×1080 file sent with `length=640`". `# [DOC: high-resolution]` in `source.out_size`.
-
-- Size: 1080 when the display-oriented short side is at least 1080, otherwise the short side rounded down to a multiple of 16, never under 640 (720p → 720). Never upscaled: the camera window is at least the output size (`camera.solve(out_size=…)`) and at most the short side. 1080 is not a multiple of 16; x264 codes 1088 rows and crops, as every 1080p stream does; 1072 would downscale 1080p sources and 1088 would upscale them.
-- Follows the size: `camera.solve` (`out_size`), `render.crop` / `weights`, `color.dither`, the encoder's `-s` and `render.sized` (Output encode), and the RIFE crop `smooth.pad` (Interpolation). `pipeline.render_job` reads it once per job; `render.encode` logs it as `side`.
-- Cost, by pixels: the Lanczos matmul, colour pipeline and x264 about 2.85× at 1080², RIFE about 3.0× per synthesized frame (1216² instead of 704²). Not blocked (owner); the L4 speed is not measured yet.
-- File size: see Output encode. The 12 MiB `max_size` recommendation is exceeded after about 8 s of hard 1080 footage at the cap; it is a recommendation, not enforced (Telegram limits). The upload goes over MTProto (2000 MB), so the Bot API's 50 MB never applies.
-- Open, owner-testable only: whether iOS and Desktop accept, show and play a 1080 note smoothly (60 fps at level 4.2), and whether the circle looks sharper on a phone than 640.
+Tried and removed (2026-10-26): an experimental `hires` switch rendered the note at up to 1080×1080 and sent it through `sendVideoNote` (MTProto, `round_message=True`, `length=640`, since TDLib rejects more). In the owner's test it arrived as a regular video, not a round. So 640×640 is the ceiling (`OUT_SIZE`), and the note stays at the best 640 settings (Output encode). Do not retry a larger file unless Telegram changes how it treats video notes. An old request that still carries `options.hires` renders normally at 640 (unknown option keys are ignored, Job).
 
 ## Lanczos matrix
 
@@ -234,9 +228,9 @@ On the output frame only: BT.2390 EETF in the PQ domain, source peak `HDR_PEAK` 
 
 ## Output encode
 
-`color.encode`: BT.1886 inverse, BT.709 Y'CbCr limited, 4:2:0 as above, then a static dither (uniform ±0.5 LSB, fixed seed, the same pattern every frame: temporal noise would cost bitrate). Raw yuv420p frames go through a writer thread into x264 (`render.X264`: slower, CRF 16, tune film, High, g 60; `render.sized(size)`: maxrate 6000k × (size / 640)^1.5, that is pixels^0.75, bufsize 2 × maxrate). 640: 6000k / 12000k, the same numbers as the old 6M / 12M (ffmpeg's k and M are 10³ and 10⁶), level left to x264 (3.1). Above 640 `-level:v 4.2`: at 1080² x264 picked 5.0 because preset slower's 8 reference frames × 4624 macroblocks exceed 4.2's DPB (32,768); with the level set it clamps to 7 refs (observed), and 4.2 is the class of 1080p60, the widest-decoded 60 fps HD level. 1080: 13148k / 26296k.
+`color.encode`: BT.1886 inverse, BT.709 Y'CbCr limited, 4:2:0 as above, then a static dither (uniform ±0.5 LSB, fixed seed, the same pattern every frame: temporal noise would cost bitrate). Raw yuv420p 640² goes through a writer thread into x264 (`render.X264`: slower, CRF 16, tune film, High, g 60, maxrate 6M / bufsize 12M; level left to x264, 3.1).
 Tags come from `setparams` + `setsar=1`. Decode, GPU work and encode overlap: a reader thread with `DEPTH` reusable buffers and a bounded writer queue; on any exception both ffmpeg processes are killed.
-Size per minute: CRF decides, maxrate bounds the worst case, so a minute is at most maxrate × 60 s plus one buffer: ≈ 46 MB at 640 (the owner's real 60 fps note averaged 5.4 Mbit/s, ≈ 40 MB/min) and ≈ 102 MB at 1080. Measured (CPU, 2026-10-26; short clips, so the initial VBV buffer lets them run over maxrate): testsrc2 1080p60, 2 s: 640 → 1.53 MB (6.0 Mbit/s), 1080 → 4.15 MB (16.4 Mbit/s); the owner's `IMG_0402.MOV` (4K HEVC 60 fps), 1.5 s: 640 → 0.82 MB (4.2 Mbit/s), 1080 → 3.13 MB (16.6 Mbit/s). Both go over the recommended 12 MiB long before 60 s (640 at the cap after about 17 s), which the Telegram experiment still has to settle. The 640 path is byte-identical to the code before `sized` (same file size and `framemd5`, CFR and RIFE cases, 2026-10-26).
+Size per minute: CRF decides, maxrate bounds the worst case, so a minute is at most maxrate × 60 s plus one buffer: ≈ 46 MB (the owner's real 60 fps note averaged 5.4 Mbit/s, ≈ 40 MB/min). Measured (CPU, 2026-10-26; short clips, so the initial VBV buffer lets them run over maxrate): testsrc2 1080p60, 2 s → 1.53 MB (6.0 Mbit/s); the owner's `IMG_0402.MOV` (4K HEVC 60 fps), 1.5 s → 0.82 MB (4.2 Mbit/s). That goes over the recommended 12 MiB long before 60 s (at the cap after about 17 s), which the Telegram experiment still has to settle.
 Trap: libx265 converted untagged `rawvideo` input to full range. Tag the frames (`setparams ... range=tv`) whenever raw frames go into an encoder.
 
 ## Ffmpeg build
@@ -296,7 +290,7 @@ Every step of a job prints one line to the Modal log: `[<job id>] <function>.<st
 
 - `ingest.wait`, `render.wait`: from `queued_at` (the webhook or `POST /render`) to the function body. Covers Modal scheduling and the container cold start (image, imports). Jobs created before the field existed print 0.
 - `ingest.download` (`mb`, `speed`): the MTProto download alone, without the login. `ingest.probe` (the source: size, fps, gaps, codec, transfer, bit depth, duration, audio, `tags` = number of kept tags), `ingest.proxy` (`speed` in × realtime of the whole source, `dupes`, `has_audio` after the proxy, `interpolable`), `ingest.commit`, `ingest` (the whole function).
-- `render.load`: the SAM weights to the GPU; near 0 in a warm container (`@cache`), so it tells a cold start from a warm one. `render.decode` (`frames`, `size` of the tracking frames, `fps`), `render.track` (`fps`), `render.cuts`, `render.camera`, `render.encode` (`fps` of the whole frame loop, `mb` of the note, `rate` and `side` of the note, and with interpolation `synth` = RIFE frames, `dupes` = dropped source frames), `render.commit`, `render.send` (login + upload, `speed`), `render` (the whole function, with `clip` length and the source facts).
+- `render.load`: the SAM weights to the GPU; near 0 in a warm container (`@cache`), so it tells a cold start from a warm one. `render.decode` (`frames`, `size` of the tracking frames, `fps`), `render.track` (`fps`), `render.cuts`, `render.camera`, `render.encode` (`fps` of the whole frame loop, `mb` of the note, `rate` of the note, and with interpolation `synth` = RIFE frames, `dupes` = dropped source frames), `render.commit`, `render.send` (login + upload, `speed`), `render` (the whole function, with `clip` length and the source facts).
 
 Keep it to one line per step and only numbers that point to a lever (bandwidth, fps, cold or warm); progress percentages stay in the chat, not in the log.
 
@@ -328,4 +322,6 @@ Verified in sources (2026-10-25): TDLib rejects a video note `length` over 640 (
 
 ## Telegram experiment
 
-Open until run (needs the bot token): a note over 12 MiB, a 1080×1080 file sent with `length=640` (the `hires` switch, High resolution), whether the note keeps its metadata (the `metadata` switch, Note metadata), a note longer than 60 s, HEVC; each checked on iOS, Android and Desktop, and the downloaded file hashed against the uploaded one (server re-encoding).
+Done (2026-10-26, owner's test): a 1080×1080 file sent with `length=640` arrives as a regular video, not a round (High resolution); the note keeps its metadata (Note metadata).
+
+Open until run (needs the bot token): a note over 12 MiB, a note longer than 60 s, HEVC; each checked on iOS, Android and Desktop, and the downloaded file hashed against the uploaded one (server re-encoding).

@@ -33,12 +33,12 @@ Flow: video sent to the bot → webhook → `ingest` (CPU: MTProto download to t
 ## Owner decisions
 
 - Free hosting only (Modal Starter + GitHub Pages). Bot restricted to `ALLOWED_USER_IDS`.
-- Output 640×640 by default; size and duration ceilings are settled by the Telegram experiment (`backend/rounds/README.md`, Telegram experiment).
+- Output 640×640, the ceiling: a 1080×1080 note was tried (2026-10-26) and Telegram delivered it as a regular video, not a round; do not retry without a Telegram change (`backend/rounds/README.md`, High resolution). The duration ceiling is settled by the Telegram experiment (`backend/rounds/README.md`, Telegram experiment).
 - Object at the frame edge: honest pixels first, an unnoticeable fill where the circle leaves the frame; an AI outpainting model may come later.
 - Frame rate: the note keeps the source rate up to 60. "Smooth to 60 fps" (RIFE interpolation, off by default) is offered for anything below 60 (59.94 included), with dropped frames or with frozen duplicate frames, and always targets 60. It must never fail on broken phone files (`backend/rounds/README.md`, Broken sources, Output rate).
 - Loudness normalization is an option, off by default. Leave room for more audio filters and for video stabilization (shaky handheld sources) as later options.
 - Tap-to-lift (2026-10-26): the owner accepts about $8 a month of the Starter credits for the warm GPU `Lift` class, as long as it looks iOS-grade; the look was approved on the iPhone (`miniapp/src/features/viewer/README.md`, Lift look).
-- Optional note metadata (date, location, camera) and high resolution (up to 1080, experimental) are switches, off by default (`backend/rounds/README.md`, Note metadata, High resolution).
+- Optional note metadata (date, location, camera) is a switch, off by default; when on, the note's camera name also says "Round from Telegram" (`backend/rounds/README.md`, Note metadata).
 - UI copy (bot messages and Mini App) is English.
 - The Mini App targets only Telegram for iOS 18+ and Telegram Desktop on Windows (WebView2): no legacy support (`miniapp/README.md`, Build target).
 - Overrides react.md (Target React 19.2+): the Mini App runs on Preact 10 through `preact/compat` for a 5× smaller bundle (`miniapp/README.md`, Preact). `useEffectEvent` does not exist there: a handler read by an effect is a ref updated in a layout effect.

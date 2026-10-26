@@ -13,8 +13,7 @@ from . import camera, color, media, smooth, source, tags
 from .config import FPS, OUT_SIZE
 
 X264 = ['-c:v', 'libx264', '-preset', 'slower', '-crf', '16', '-tune', 'film', '-profile:v', 'high',
-        '-pix_fmt', 'yuv420p', '-g', '60']  # fmt: skip
-MAXRATE, LEVEL = 6000, '4.2'
+        '-pix_fmt', 'yuv420p', '-g', '60', '-maxrate', '6M', '-bufsize', '12M']  # fmt: skip
 AAC = ['-c:a', 'aac', '-b:a', '128k', '-ar', '48000', '-ac', '2']
 TAPS = 3
 DEPTH = 4
@@ -63,12 +62,6 @@ def cfr(src, meta: dict, start: float, n: int, rate: float, at, cut, raw, slow: 
         media.stop(dec)
 
 
-# [DOC: output-encode]
-def sized(size: int) -> list[str]:
-    rate, level = round(MAXRATE * (size / OUT_SIZE) ** 1.5), ['-level:v', LEVEL] if size > OUT_SIZE else []
-    return ['-maxrate', f'{rate}k', '-bufsize', f'{2 * rate}k', *level]
-
-
 def writer(proc) -> tuple[queue.Queue, threading.Thread]:
     q = queue.Queue(DEPTH)
 
@@ -88,13 +81,13 @@ def writer(proc) -> tuple[queue.Queue, threading.Thread]:
     return q, t
 
 
-def encoder(src, meta: dict, start: float, dur: float, rate: float, out, options: dict, size: int) -> subprocess.Popen:
+def encoder(src, meta: dict, start: float, dur: float, rate: float, out, options: dict) -> subprocess.Popen:
     # [DOC: render-options]
     audio = ['-map', '1:a:0', '-af', media.audio_filter(src, start, dur, options), *AAC] if meta['has_audio'] else []
     cmd = ['ffmpeg', '-v', 'error', '-y', '-nostdin', '-f', 'rawvideo', '-pix_fmt', 'yuv420p',
-           '-s', f'{size}x{size}', '-framerate', str(rate), '-i', 'pipe:0',
+           '-s', f'{OUT_SIZE}x{OUT_SIZE}', '-framerate', str(rate), '-i', 'pipe:0',
            *media.audio_input(src, meta, start, dur),
-           '-map', '0:v', '-vf', f'{media.BT709},setsar=1', *X264, *sized(size), *audio,
+           '-map', '0:v', '-vf', f'{media.BT709},setsar=1', *X264, *audio,
            *tags.created(tags.kept(meta, options)), '-t', f'{dur:.3f}', '-movflags', '+faststart',
            str(out)]  # fmt: skip
     return subprocess.Popen(cmd, stdin=subprocess.PIPE)
@@ -103,25 +96,24 @@ def encoder(src, meta: dict, start: float, dur: float, rate: float, out, options
 # [DOC: output-rate]
 def render(src, meta: dict, start: float, end: float, path, cuts, out, options: dict, progress=None) -> dict:
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    rate, size = source.out_rate(meta, options), source.out_size(meta, options)
+    rate = source.out_rate(meta, options)
     n, (w, h), bits = media.frame_count(start, end, rate), (meta['width'], meta['height']), max(meta['bit_depth'], 8)
     cw, ch = (w + 1) // 2, (h + 1) // 2
     deep = bits > 8
     matrix = meta.get('matrix') or ('bt709' if meta['transfer'] == 'sdr' else 'bt2020')
     geo = (w, h, cw, ch), (10 if deep else 8, meta.get('full_range', False), matrix, meta['transfer'])
     raw = w * h + 2 * cw * ch, np.int16 if deep else np.uint8, 'yuv420p10le' if deep else 'yuv420p'
-    at, stats = camera.sampler(np.asarray(path, np.float64), cuts), {}
-    cut = partial(crop, geo=geo, device=device, size=size)
+    at, cut, stats = camera.sampler(np.asarray(path, np.float64), cuts), partial(crop, geo=geo, device=device), {}
     if source.interpolating(meta, options):
         stats = {'synth': 0, 'dupes': 0}
         frames = media.retrying(
-            lambda slow: smooth.frames(src, meta, start, n, rate, at, cuts, cut, size, raw, device, stats, slow)
+            lambda slow: smooth.frames(src, meta, start, n, rate, at, cuts, cut, raw, device, stats, slow)
         )
     else:
         frames = media.retrying(lambda slow: cfr(src, meta, start, n, rate, at, cut, raw, slow))
-    enc = encoder(src, meta, start, n / rate, rate, out, options, size)
+    enc = encoder(src, meta, start, n / rate, rate, out, options)
     q, t = writer(enc)
-    noise, k, last = color.dither(size, device), 0, None
+    noise, k, last = color.dither(OUT_SIZE, device), 0, None
     try:
         with torch.inference_mode(), contextlib.closing(frames):
             for rgb in frames:
@@ -145,4 +137,4 @@ def render(src, meta: dict, start: float, end: float, path, cuts, out, options: 
     tags.write(out, tags.kept(meta, options))
     if progress:
         progress(1.0)
-    return {'size': Path(out).stat().st_size, 'side': size, 'duration': n / rate, 'rate': rate, 'frames': n, **stats}
+    return {'size': Path(out).stat().st_size, 'duration': n / rate, 'rate': rate, 'frames': n, **stats}

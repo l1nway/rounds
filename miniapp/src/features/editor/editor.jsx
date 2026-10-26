@@ -17,8 +17,7 @@ const OFFLINE = 'Offline: editing works, sending waits.'
 const OPTIONS = [
   {key: 'loudnorm', label: 'Normalize loudness', hint: 'Evens out quiet and loud parts', needs: meta => meta.has_audio, missing: 'This video has no sound'},
   {key: 'interpolate', label: 'Smooth to 60 fps', hint: 'AI draws in-between frames, fixes stutter', needs: meta => meta.interpolable, missing: 'Already a steady 60 fps'},
-  {key: 'metadata', label: 'Keep original metadata', hint: 'Date, camera, GPS: recipients see where it was filmed', needs: meta => Object.keys(meta.tags ?? {}).length > 0, missing: 'This video has no metadata'},
-  {key: 'hires', label: 'High resolution (experimental)', hint: 'Up to 1080 px instead of 640, bigger file', needs: meta => Math.min(meta.width, meta.height) > 640, missing: 'This video is 640 px or smaller'}
+  {key: 'metadata', label: 'Keep original metadata', hint: 'Date, camera, GPS: recipients see where it was filmed', needs: meta => Object.keys(meta.tags ?? {}).length > 0, missing: 'This video has no metadata'}
 ]
 const DEFAULT_OPTIONS = Object.fromEntries(OPTIONS.map(({key}) => [key, false]))
 const TRAVEL = 13
@@ -94,7 +93,7 @@ function Switch({name, label, text, checked, disabled, onSet}) {
 const Options = memo(function Options({meta, options, dispatch, disabled}) {
   const set = (name, value) => dispatch(prev => ({options: {...prev.options, [name]: value}}))
   return (
-    <fieldset className='options' disabled={disabled}>
+    <fieldset className='options enter' disabled={disabled}>
       <legend className='visually-hidden'>Options</legend>
       {OPTIONS.map(({key, label, hint, needs, missing}) => {
         const off = Boolean(meta) && !needs(meta)
@@ -143,7 +142,7 @@ export default memo(function Editor({job, notice}) {
       <Viewer job={job} notice={notice} selection={selection} dispatch={dispatch} readOnly={readOnly}/>
       <Timeline job={job} start={start} end={end} time={time} dispatch={dispatch} readOnly={readOnly}/>
       <Options meta={job?.meta} options={options} dispatch={dispatch} disabled={!job || readOnly}/>
-      <div className='editor-status'>
+      <div className='editor-status enter'>
         <p role='alert'><span key={error}>{error}</span></p>
         <p role='status'><span key={note}>{note}</span></p>
       </div>

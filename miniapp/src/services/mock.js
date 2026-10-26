@@ -86,7 +86,7 @@ window.mockHaptics = []
 window.mockRequests = []
 window.Telegram = {
   WebApp: {
-    initData: 'mock', version: '9.0', platform: 'mock', themeParams: {}, isVersionAtLeast: () => true,
+    initData: 'mock', version: '9.0', platform: 'mock', themeParams: {}, isExpanded: true, isVersionAtLeast: () => true,
     ready: noop, expand: noop, setHeaderColor: noop, setBackgroundColor: noop, setBottomBarColor: noop,
     disableVerticalSwipes: noop, requestFullscreen: noop, close: closeApp, MainButton,
     HapticFeedback: {selectionChanged: log('selection'), impactOccurred: log('impact'), notificationOccurred: log('notify')}

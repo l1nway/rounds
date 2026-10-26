@@ -1,4 +1,4 @@
-import {memo, useEffect, useRef, useState} from 'react'
+import {memo, useEffect, useLayoutEffect, useRef, useState} from 'react'
 import Sheen from '../../components/sheen.jsx'
 import {attach, clamp, frameOf, frameTime, getTime, hold, useAway, usePlayer} from '../../hooks/player.js'
 import {useOnline} from '../../hooks/state.js'
@@ -11,6 +11,7 @@ const TAP = 8
 const HIT = 24
 const MIN_BOX = 12
 const FALLBACK_ASPECT = 16 / 9
+const FIT = {duration: 600, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)'}
 const BROKEN = {title: 'The video did not load', text: 'Check the connection and open the editor again.'}
 
 const round = value => Math.round(value * 1e4) / 1e4
@@ -23,6 +24,18 @@ const prefilled = job => {
 }
 const asks = ({points, box}) => Boolean(box) || points.some(p => p[2] === 1)
 const originOf = (points, box) => box ? [(box[0] + box[2]) / 2, (box[1] + box[3]) / 2] : points[0]
+
+// [DOC: viewer-fit]
+function useFit(ref, aspect) {
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!aspect || matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    delete el.dataset.fit
+    const from = el.offsetHeight
+    el.dataset.fit = ''
+    el.animate({height: [`${from}px`, `${el.offsetHeight}px`], '--aspect': [FALLBACK_ASPECT, aspect]}, FIT)
+  }, [ref, aspect])
+}
 
 // [DOC: lift]
 function useLift(job, dispatch, readOnly) {
@@ -98,11 +111,14 @@ function Notice({notice}) {
 // [DOC: selection-gestures]
 export default memo(function Viewer({job, notice, selection, dispatch, readOnly}) {
   const refs = useRef({video: null, draw: null, drag: null})
+  const viewer = useRef(null)
   const waiting = usePlayer(state => state.waiting)
   const loaded = usePlayer(state => state.loaded)
   const failed = usePlayer(state => state.failed)
   const {time, points, box} = selection
   const {lift, ask, cycle} = useLift(job, dispatch, readOnly)
+  const aspect = job ? job.meta.width / job.meta.height : null
+  useFit(viewer, aspect)
 
   useEffect(() => job ? attach(refs.current.video) : undefined, [job])
 
@@ -157,8 +173,8 @@ export default memo(function Viewer({job, notice, selection, dispatch, readOnly}
   }
 
   return (
-    <section className='viewer' aria-label='Video'>
-      <div className='viewer-stage' data-loaded={loaded || undefined} style={{'--aspect': job ? job.meta.width / job.meta.height : FALLBACK_ASPECT}}>
+    <section ref={viewer} className='viewer enter' aria-label='Video' data-fit={aspect ? '' : undefined} style={{'--aspect': aspect ?? FALLBACK_ASPECT}}>
+      <div className='viewer-stage' data-loaded={loaded || undefined}>
         <Sheen on={Boolean(job) && !loaded && !failed}/>
         {/* [DOC: video-source] */}
         {job && <video ref={el => {refs.current.video = el}} className='viewer-video' src={`${job.proxy_url}#t=0.001`} playsInline preload='auto' disablePictureInPicture/>}

@@ -41,7 +41,7 @@ const Filmstrip = memo(function Filmstrip({url, tiles, tileWidth, tileHeight}) {
     const [w, h] = [tileWidth * scale, tileHeight * scale]
     return Array.from({length: Math.ceil(width / STRIP)}, (_, i) => {
       const tile = Math.min(tiles - 1, Math.floor((i + 0.5) * STRIP / width * tiles))
-      return {backgroundSize: `${tiles * w}px ${h}px`, backgroundPosition: `${-(tile * w + (w - STRIP) / 2)}px ${-(h - STRIP) / 2}px`}
+      return {'--c': i, backgroundSize: `${tiles * w}px ${h}px`, backgroundPosition: `${-(tile * w + (w - STRIP) / 2)}px ${-(h - STRIP) / 2}px`}
     })
   }, [ready, width, tiles, tileWidth, tileHeight])
 
@@ -79,7 +79,7 @@ const tick = dir => {step(dir); haptic.tick()}
 const Controls = memo(function Controls({disabled, length}) {
   const paused = usePlayer(state => state.paused)
   return (
-    <div className='timeline-controls'>
+    <div className='timeline-controls enter'>
       <span/>
       <div className='timeline-buttons'>
         <button type='button' className='icon-button' aria-label='Previous frame' disabled={disabled} onClick={() => tick(-1)}><Icon name='previous'/></button>
@@ -124,12 +124,12 @@ export default memo(function Timeline({job, start, end, time, dispatch, readOnly
   const film = job?.filmstrip ?? {}
   return (
     <section className='timeline' aria-label='Trim' data-empty={!job || undefined} style={{'--strip': `${STRIP}px`}}>
-      <div className='timeline-head'>
+      <div className='timeline-head enter'>
         <span>{formatTime(start)}</span>
         <Clock mode={mode}/>
         <span>{formatTime(end)}</span>
       </div>
-      <div className='timeline-track' onKeyDown={key} {...(job ? drag : {})}>
+      <div className='timeline-track enter' onKeyDown={key} {...(job ? drag : {})}>
         <Filmstrip url={job?.filmstrip_url} tiles={film.tiles} tileWidth={film.tile_width} tileHeight={film.tile_height}/>
         {job && <>
           <i className='timeline-shade' data-side='start' style={{left: 0, width: pct(start)}}/>

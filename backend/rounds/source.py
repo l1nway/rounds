@@ -7,7 +7,7 @@ import numpy as np
 from scipy.ndimage import maximum_filter1d
 
 from . import tags
-from .config import FPS, MAX_FPS, OUT_SIZE
+from .config import FPS, MAX_FPS
 
 TRANSFERS = {'arib-std-b67': 'hlg', 'smpte2084': 'pq'}
 MATRICES = {'bt2020nc': 'bt2020', 'bt2020c': 'bt2020', 'bt470bg': 'bt601', 'smpte170m': 'bt601', 'bt709': 'bt709'}
@@ -16,7 +16,6 @@ PACKETS = ['ffprobe', '-v', 'error', '-show_entries', 'packet=pts_time', '-of', 
 RATES = (24000 / 1001, 24, 25, 30000 / 1001, 30, 48, 50, 60000 / 1001, 60, 100, 120, 240)
 SNAP, FPS_RANGE = 0.015, (1, 480)
 JITTER = 0.25
-HIRES, BLOCK = 1080, 16
 THUMB, DUP_LEVEL, MOTION, SHARE = 32, 1, 1.0, 0.005
 
 
@@ -102,14 +101,6 @@ def interpolating(meta: dict, options: dict) -> bool:
 
 def out_rate(meta: dict, options: dict) -> float:
     return MAX_FPS if interpolating(meta, options) else min(meta['fps'], MAX_FPS)
-
-
-# [DOC: high-resolution]
-def out_size(meta: dict, options: dict) -> int:
-    short = min(meta['width'], meta['height'])
-    if not options.get('hires'):
-        return OUT_SIZE
-    return HIRES if short >= HIRES else max(OUT_SIZE, short // BLOCK * BLOCK)
 
 
 # [DOC: duplicate-frames]

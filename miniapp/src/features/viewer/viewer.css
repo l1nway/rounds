@@ -10,6 +10,11 @@
   overflow: hidden;
 }
 
+/* [DOC: viewer-fit] */
+@property --aspect {syntax: '<number>'; inherits: true; initial-value: 1.7778}
+
+.viewer[data-fit] {height: min(100cqw / var(--aspect), 70cqh)}
+
 .viewer-stage {position: relative; isolation: isolate; aspect-ratio: var(--aspect); width: min(100cqw, 100cqh * var(--aspect))}
 
 @supports not (width: 1cqw) {

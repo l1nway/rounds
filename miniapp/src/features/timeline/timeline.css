@@ -15,7 +15,12 @@
 
 .timeline-clock output {color: var(--text); font-size: 17px; font-weight: 600}
 
-.timeline-head, .timeline-length {transition: opacity var(--dur) var(--ease)}
+.timeline-head, .timeline-length {transition: opacity var(--dur-long) var(--ease)}
+
+/* entrance order */
+.timeline-head, .timeline-track {--i: 1}
+
+.timeline-controls {--i: 2}
 
 /* [DOC: timeline-loading] */
 .timeline[data-empty] :is(.timeline-head, .timeline-length) {opacity: 0}
@@ -39,7 +44,14 @@
 
 .timeline-film i {flex: none; width: var(--strip); height: 100%; background-image: var(--film); background-repeat: no-repeat}
 
-.timeline-film[data-ready] i {animation: appear var(--dur-long) var(--ease)}
+/* [DOC: filmstrip-cells] */
+@media (prefers-reduced-motion: no-preference) {
+  .timeline-film[data-ready] i {animation: enter var(--dur-enter) var(--ease) calc(var(--c) * var(--wave)) backwards}
+}
+
+.timeline-film {--wave: 35ms}
+
+.timeline-film > .sheen:not([data-on]) {opacity: 0; transition: opacity var(--dur-enter) var(--ease), visibility 0s var(--dur-enter)}
 
 .timeline-shade, .timeline-trim, .timeline-playhead {transition: opacity var(--dur-long) var(--ease)}
 
