@@ -2,6 +2,10 @@
 
 `state.js`: the project merge reducer, `createStore` (a `useSyncExternalStore` store with per-selector reads), `useOnline` and `usePresence` / `useLeave` / `leave` (unmount after the exit animation, `src/README.md`, Presence). `player.js`: the one `<video>` the app has, as a store (`time`, `paused`, `waiting`, `loaded`, `failed`; `loaded` turns true once, on the first `loadeddata`, and drives the placeholder crossfade in `viewer`) plus imperative `seek` / `step` / `toggle` / `hold` and `useAway(time)` (true while the shown frame is not the frame of `time`; the viewer marks and the lift); the viewer attaches the element, the timeline and the selection read and move it.
 
+## Watch player
+
+`watchPlayer(fn)` subscribes to the player store and calls `fn(state)` on every change; it returns the unsubscribe. For per-frame work that must not render (the following marks, `features/viewer/README.md`, Follow). `createStore` exposes `subscribe` for it.
+
 ## Frame times
 
 The proxy is CFR 30 (`FPS`, backend contract), times are seconds rounded to ms. A browser shows the frame whose timestamp is at or before `currentTime`, so frame `k` starts at `k / 30` and a time rounded *down* to ms (frame 1 → 0.033 < 0.0333) shows frame `k - 1`. Hence `frameTime(k)` rounds **up** to ms (0, 0.034, 0.067, 0.1 …) and `frameOf(t)` floors with a 0.001-frame epsilon for float noise; display and logic then agree on which frame a time means. The backend maps `prompt.time` to a working frame with `round((time - start) * FPS)`, which stays within one frame of what the owner saw (reasoned, not measured on the GPU side). Do not switch either helper to `Math.round` without re-checking the frame burned into the mock video (testsrc2 prints the frame number) against `formatTime`.

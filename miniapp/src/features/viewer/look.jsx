@@ -5,7 +5,8 @@ import {useOnline, usePresence} from '../../hooks/state.js'
 import {lookFrame} from '../../services/api.js'
 import {createLook} from './look-gl.js'
 
-const DEBOUNCE = 250
+// [DOC: single-flight]
+const DEBOUNCE = 350
 const HDR = ['hlg', 'pq']
 // [DOC: look-context]
 const gpu = {canvas: null, draw: null, broken: false, shot: null, notify: null}
@@ -38,8 +39,8 @@ const paint = ({host, params}, {video, stage}, alpha) => {
 }
 
 // [DOC: look-preview]
-export default memo(function Look({job, look, exposure, refs}) {
-  const own = useRef({host: null, params: null, latest: 0})
+export default memo(function Look({job, look, exposure, adjusting, refs, dispatch}) {
+  const own = useRef({host: null, params: null, want: null, flying: false, queued: false, alive: false})
   const [, setTick] = useState(0)
   useState(setup)
   const [frame, setFrame] = useState(null)
@@ -50,7 +51,7 @@ export default memo(function Look({job, look, exposure, refs}) {
   const hdr = Number(HDR.includes(job.meta.transfer))
   const ok = Boolean(gpu.draw) && !gpu.broken
   // [DOC: exact-frame]
-  const key = r > 0 && still !== null ? `${still}:${look}:${exposure}` : null
+  const key = r > 0 && still !== null && !adjusting ? `${still}:${look}:${exposure}` : null
   const shown = frame?.key === key ? frame : null
   const [mounted, shot] = usePresence(Boolean(shown))
   const [last, setLast] = useState(shown)
@@ -88,17 +89,39 @@ export default memo(function Look({job, look, exposure, refs}) {
     return () => {video.cancelVideoFrameCallback(id); video.removeEventListener('seeked', seeked)}
   }, [refs, ok])
 
-  useEffect(() => {
-    if (!key || !online) return
-    const n = ++own.current.latest
-    const timer = setTimeout(async () => {
-      const {image} = await lookFrame(job.id, {time: still, look, exposure}).catch(() => ({}))
+  // [DOC: single-flight]
+  const [fly] = useState(() => function fly() {
+    const o = own.current, want = o.want
+    if (!want || !o.alive) return
+    if (o.flying) {o.queued = true; return}
+    o.flying = true
+    o.queued = false
+    dispatch({previewing: true})
+    lookFrame(want.id, want.body).catch(() => ({})).then(async ({image}) => {
       const img = image && Object.assign(new Image(), {src: image})
-      if (img && await img.decode().then(() => true, () => false) && n === own.current.latest) setFrame({key, img})
-      setSettled(key)
-    }, DEBOUNCE)
+      const ok = img && await img.decode().then(() => true, () => false)
+      o.flying = false
+      if (!o.alive) return
+      if (ok && want === o.want) setFrame({key: want.key, img})
+      setSettled(want.key)
+      if (o.queued && o.want && o.want !== want) fly()
+      else dispatch({previewing: false})
+    })
+  })
+
+  useLayoutEffect(() => {
+    const o = own.current
+    o.alive = true
+    return () => {o.alive = false; o.want = null; dispatch({previewing: false})}
+  }, [dispatch])
+
+  useEffect(() => {
+    const o = own.current
+    o.want = key && online ? {key, id: job.id, body: {time: still, look, exposure}} : null
+    if (!o.want) return
+    const timer = setTimeout(fly, DEBOUNCE)
     return () => clearTimeout(timer)
-  }, [key, online, job.id, still, look, exposure])
+  }, [fly, key, online, job.id, still, look, exposure])
 
   useLayoutEffect(() => {
     gpu.shot = shown?.img ?? null

@@ -16,8 +16,7 @@ from pydantic import BaseModel, Field, model_validator
 from . import bot
 from .config import JOBS_DIR, MAX_DURATION, allowed_users, env
 
-INIT_DATA_TTL = 24 * 3600
-URL_TTL = 6 * 3600
+INIT_DATA_TTL, URL_TTL = 24 * 3600, 6 * 3600
 RELOADS, RELOAD_WAIT = 4, 0.3
 FILES = {'proxy.mp4': 'video/mp4', 'filmstrip.jpg': 'image/jpeg'}
 # [DOC: look-cors]
@@ -44,15 +43,11 @@ class Prompt(BaseModel):
         return self
 
 
-class RenderRequest(BaseModel):
+# [DOC: track-preview]
+class Span(BaseModel):
     start: float = Field(ge=0)
     end: float
     prompt: Prompt
-    options: dict[str, bool] = {}
-    codec: Literal['av1', 'hevc', 'vp9'] = 'av1'  # [DOC: codecs]
-    denoise: float = Field(0, ge=0, le=1)  # [DOC: denoise]
-    look: float = Field(0, ge=0, le=1)  # [DOC: look]
-    exposure: float = Field(0, ge=-2, le=2)
 
     @model_validator(mode='after')
     def check(self):
@@ -61,6 +56,14 @@ class RenderRequest(BaseModel):
         if self.prompt.time is not None and not self.start <= self.prompt.time <= self.end:
             raise ValueError('The selection must be inside the range')
         return self
+
+
+class RenderRequest(Span):
+    options: dict[str, bool] = {}
+    codec: Literal['av1', 'hevc', 'vp9'] = 'av1'  # [DOC: codecs]
+    denoise: float = Field(0, ge=0, le=1)  # [DOC: denoise]
+    look: float = Field(0, ge=0, le=1)  # [DOC: look]
+    exposure: float = Field(0, ge=-2, le=2)
 
 
 # [DOC: look-preview]
@@ -158,7 +161,7 @@ def create(jobs, volume, spawn) -> FastAPI:
     @api.post('/api/jobs/{job_id}/warm', status_code=202)
     async def warm(job_id: str, authorization: str = Header('')):
         await own_job(job_id, authorization)
-        await spawn['warm']()
+        await asyncio.gather(spawn['warm'](), spawn['warm_render']())  # [DOC: render-warm]
         return {}
 
     # [DOC: lift]
@@ -169,6 +172,18 @@ def create(jobs, volume, spawn) -> FastAPI:
             raise HTTPException(422, 'Select the object')
         failure = 'The outline is not available, the point still works'
         return await lift('segment', job_id, job, body.time, body.points, body.box, failure=failure)
+
+    # [DOC: track-preview]
+    @api.post('/api/jobs/{job_id}/track')
+    async def follow(job_id: str, body: Span, authorization: str = Header('')):
+        job = await own_job(job_id, authorization)
+        if body.prompt.time is None:
+            raise HTTPException(422, 'Select the object')
+        if body.end > job['meta']['duration'] + 1e-3:
+            raise HTTPException(422, 'The range is outside the video')
+        await spawn['prepare'](job_id, body.model_dump())  # [DOC: track-cache]
+        args = body.prompt.model_dump(), body.start, body.end
+        return await lift('follow', job_id, job, body.prompt.time, *args, failure='The object cannot be followed here')
 
     # [DOC: look-preview]
     @api.post('/api/jobs/{job_id}/look')

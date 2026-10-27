@@ -6,12 +6,13 @@ One Modal app (`app.py`) that receives the source video, serves the Mini App and
 
 | File | Concern | Runs in |
 |---|---|---|
-| `app.py` | Modal app: images, Volume, Dict, secret, functions (`web`, `ingest`, `render`, `setup`) and the `Lift` class | — |
+| `app.py` | Modal app: images, Volume, Dict, secret, functions (`web`, `ingest`, `setup`), the `Render` class (`warm`, `prepare`, `run`) and the `Lift` class | — |
 | `config.py` | env (from the `rounds` secret) and shared constants | everywhere |
 | `api.py` | FastAPI: Telegram webhook, Mini App API, `initData` auth, signed file URLs | `web` |
 | `bot.py` | aiogram handlers: accept videos, Mini App button, progress messages | `web`, `ingest`, `render` |
-| `transfer.py` | MTProto (Telethon) download of the source and upload of the note | `ingest`, `render` |
-| `pipeline.py` | job orchestration: `ingest_job`, `render_job`, progress | `ingest`, `render` |
+| `transfer.py` | MTProto (Telethon) download of the source | `ingest` |
+| `pipeline.py` | job orchestration: `ingest_job`, `render_job`, progress, stage timings | `ingest`, `Render` |
+| `locate.py` | where the object is: decode → track → scene changes, the track cache, `prepare_job`, the camera path of a job (Track cache) | `Render` |
 | `source.py` | the source: ffprobe, frame cadence (gaps), duplicate frames, output rate | `ingest`, `render` |
 | `media.py` | proxy + filmstrip, frame decode, tracking frames, scene cuts | `ingest`, `render` |
 | `audio.py` | the note's audio chain: noise reduction (DeepFilterNet3), loudness | `render` |
@@ -27,6 +28,7 @@ One Modal app (`app.py`) that receives the source video, serves the Mini App and
 | `color.py` | torch colour pipeline: YUV↔RGB, transfer functions, HDR→SDR, chroma resampling | `render` |
 | `look.py` | HDR look: local tone mapping, clipped-channel rebuild, smart exposure (Look) | `render`, `Lift` |
 | `track.py` | object tracking (SAM 2.1 video, HF transformers) | `render` |
+| `follow.py` | track preview: the selected object's box over the trim range on the proxy (SAM 2.1 video) | `Lift` |
 | `segment.py` | tap-to-lift: candidate outlines of the tapped object on one proxy frame (SAM 2.1 image) | `Lift` |
 | `camera.py` | virtual camera path (L1 optimal path, HiGHS LP) | `render` |
 | `tags.py` | source metadata for the note: read at ingest, MP4 box rewrite after the encode | `ingest`, `render` |
@@ -45,7 +47,7 @@ One Modal app (`app.py`) that receives the source video, serves the Mini App and
 **Job** (`modal.Dict` `rounds-jobs`, key = job id, 10 url-safe chars):
 
 ```
-id, user_id, chat_id, source_message_id, status_message_id, queued_at (unix s, set when ingest / render is spawned)
+id, user_id, chat_id, source_message_id, status_message_id, queued_at (unix s, set when ingest / render is spawned), name (the source's file name or None, Note send)
 status: 'ingesting' | 'ready' | 'rendering' | 'done' | 'failed'
 stage: None | 'queued' | 'decoding' | 'tracking' | 'cuts' | 'framing' | 'rendering' | 'sending',  progress: 0..1,  error: str | None
 meta: source.probe() result (tags included) + dupes, has_audio (re-checked on the proxy), interpolable (set by ingest after the proxy)
@@ -60,8 +62,9 @@ request: None | {start, end, prompt: {time | None, points: [[x, y, label]], box:
 - `source.probe(path) -> dict`: `duration`, `fps` (nominal, Source cadence), `gaps` (share of missing frames), `stream` (index of the video stream), `width`, `height` (display-oriented), `rotation`, `transfer` (`'sdr' | 'hlg' | 'pq'`), `matrix` (`'bt709' | 'bt2020' | 'bt601' | ''`), `full_range` (bool; full-range Android H.264 passes through `-pix_fmt yuv420p` untouched, so the renderer must know), `bit_depth`, `has_audio`, `codec`, `tags` (source tags the note can carry, Note metadata). Without `matrix` the renderer assumes 709 for SDR and 2020 for HDR.
 - `media.make_proxy(src, job_dir, meta) -> ({'proxy': {...}, 'filmstrip': {...}}, {'dupes', 'has_audio'})`. `probe`, `make_proxy`, `track_frames` and `render` raise `source.Unreadable` with a readable reason for a source they cannot use (Broken sources).
 - `media.track_frames(src, meta, start, end, long_side=1024) -> np.ndarray` `(N, H, W, 3)` uint8 RGB SDR, a memmap in a local temp dir.
-- `media.scene_cuts(frames) -> list[int]`: indices of frames that start a new shot.
+- `media.changes(frames) -> np.ndarray` `(N,)`: the histogram change of every frame from the one before (`d[0]` = 0); `media.scene_cuts(d) -> list[int]`: indices of frames that start a new shot. Split in two so the track cache can keep `d` and cut any sub-range (Track cache).
 - `segment.Segmenter().segment(job_id, at, points, box, (w, h)) -> {candidates: [{mask, area}], best}` (Lift).
+- `follow.follow(net, proxy, (w, h), prompt, start, end, stop) -> {fps, start, boxes} | None` (Track preview).
 - `track.track(frames, index, points, box, mask='') -> dict` of `(N,)` arrays in `frames` pixels: `present` (bool), `cx`, `cy`, `r` (minimum enclosing circle of the mask), `area`. `points` / `box` are in `frames` pixels; `index` is the prompt frame; a decodable `mask` replaces both as the prompt (Lift mask).
 - `camera.solve(track, width, height, cuts=(), fps=FPS, zoom=False) -> np.ndarray` `(N, 3)`: `cx, cy, side` of the square window per frame, source pixels (`track` scaled to source pixels by the caller).
 - `camera.still(n, width, height) -> np.ndarray` `(n, 3)`: the centred full-frame window, for an untracked square source (Square source).
@@ -162,10 +165,24 @@ Checked locally (2026-10-25, ffmpeg 9.0.2, torch 2.14 CPU) on MPEG-TS files with
 
 Two detectors for one thing: a repeated (frozen) frame, as written by apps that turn VFR into CFR, or by a phone that lagged.
 
-- Ingest (`source.dupes`, decides the offer): the proxy's ffmpeg also scales every native frame (before `fps`) to 32×32 grey (`flags=area`) into a temp raw file (1 KB per frame). A frame is a duplicate when no thumb pixel moved by more than 1 level (`DUP_LEVEL`) while the mean motion within ±0.5 s reaches 1 level (`MOTION`), so a still tripod shot is not a freeze. `dupes` = share of such frames. Measured: 60 fps testsrc2 with 16 frames frozen → 0.067; the clean test files 0.
+- Ingest (`source.dupes`, decides the offer): the proxy's ffmpeg also scales every native frame (before `fps`) to 32×32 `yuv444p` (`flags=area`) into a temp raw file (3 KB per frame); `dupes` reads the Y plane, which is the old grey thumb (same `dupes` on 17, 45, round2, IMG_4042; Segment cuts reads all three planes). A frame is a duplicate when no thumb pixel moved by more than 1 level (`DUP_LEVEL`) while the mean motion within ±0.5 s reaches 1 level (`MOTION`), so a still tripod shot is not a freeze. `dupes` = share of such frames. Measured: 60 fps testsrc2 with 16 frames frozen → 0.067; the clean test files 0.
 - Render (`smooth.still`, decides what to drop): luma averaged over 4×4 pixels (`DUP_STEP`), compared only inside the circle the viewer sees: the camera window of the current frame (`at(t · FPS)`), its inscribed disc, 16×16 cells (`DUP_GRID`) over the window, cells at least a quarter inside the disc. A frame is dropped when the largest cell mean |diff| to the last kept frame is ≤ 2 levels (`DUP_LEVEL`, ×4 for 10-bit). Cells, not one global mean: a small moving part of a still frame (a hand, leaves) keeps the frame. Dropped frames are re-created by RIFE from their real neighbours. A run longer than `MAX_GAP` (1 s) is kept as a real still. Known limit: a perfectly static stretch (denoised and compressed to skip blocks) shorter than 1 s is dropped too; RIFE between two near-identical frames returns the same picture, so it only costs the grain. A false drop is cheap (RIFE redraws it), a missed duplicate is a visible stutter: tune toward dropping.
 - Why the disc and the averaging (owner's IMG_4042, 2026-10-26: an Android round re-sent through Telegram, 384², VFR about 25 fps, 1 Mbps; the 60 fps note stuttered around a camera switch): the first version (every 4th pixel, 8×8 blocks over the whole frame, ≤ 0.5 level) dropped 0 of 469 frames although about 60 are frozen copies. Two reasons, measured on its frames: the Telegram send icon in the corner, outside the circle, changes every frame by up to 31 levels in a 12 px cell; and the copies carry codec noise, so per-pixel |diff| never falls near 0.5. Inside the disc, 4×4 averaged, 16×16 cells: the frozen copies score ≤ 1.46, the first real motion 3.47; the current settings drop 61 frames there, a moving testsrc2 0 of 59. The ingest detector (`source.dupes`, 32² thumbs of the whole frame) has the same blind spot for corner overlays; it only decides the offer, and a source under 60 fps is offered anyway.
 - A stretch with no frames at all (IMG_4042: 494 ms after the camera switch) is not interpolated: it gets a seam (Seams).
+
+## Segment cuts
+
+Owner request 2026-10-27: a note is split into pieces at camera switches, each piece gets its own settings (mirror, denoise, zoom, object) in a segmented control. `source.switches` finds them at ingest (called by `media.make_proxy`, logged in `ingest.proxy`); `meta.switches` is the sorted list of cut times in seconds of the proxy timeline (the start of the new piece; 0 and the end are implied). Nothing reads it yet. Named `switches`, not `cuts`: `cuts` already means the tracking scene cuts in frame indices (`media.scene_cuts`, `camera.solve`, `smooth.frames`).
+
+- Signature (measured on the owner's corpus: 100 iOS rounds `video (n).mp4`, round1/2, IMG_4042): Telegram on iOS (`Core Media Video`, time base 1/600) and Android restarts the camera on a front↔back switch, leaving 0.2–0.5 s with no frame, then black frames or an exposure ramp. Video 17: front camera on the ceiling until 1.033, nothing until 1.358, 4 black frames, the back camera fades in on the floor.
+- Timestamps: the thumbs output of `make_proxy` writes one pts per frame with `-stats_enc_pre` and `-stats_enc_pre_fmt {t}` (`media.STAMPS`, checked with the image's ffmpeg 9.0.2), with `-fps_mode passthrough`: 191 stamps for 191 frames on video 17. No second ffprobe pass.
+- Rule: a hole is a gap of at least `HOLE` 0.12 s and `HOLE_STEPS` 4 median frame steps. It is a cut when the frame `BEFORE` 0.1 s before the hole and the frame `AFTER` 0.3 s after it (past the black frames and the ramp) differ: `change` = structure (1 − correlation of the luma normalised inside the inscribed disc) + 2 × colour (L1 of a Y16 U8 V8 histogram, / 6) ≥ `CHANGE` 1.0. Labelled switches score 1.03–2.5, recording hiccups with the same scene (IMG_4042 @11.5, videos 34, 45, 66, 67, 75, 80) up to 0.88.
+- Placement: Android shows one frame of the new camera before the hole (IMG_4042: 1.043, Seams), so the cut moves to the frame before the hole when that frame is closer to the after-frame than to the before-frame.
+- Pieces shorter than `MIN_SEGMENT` 0.5 s (from either end or the previous cut) are merged into their neighbour by dropping the later cut.
+- Not `seam.HOLE` (0.25 s): that one decides seams and misses round2's 0.217 and 0.250 s holes; the two thresholds serve different questions and are separate on purpose.
+- Corpus result (2026-10-27): cuts in videos 2, 3, 4, 15, 16, 17, 24, 85, 99 (two), round1, round2 (three), IMG_4042; no hiccup hole cut. Dark scenes (24, 99, round1) cut on holes whose scene does change in the dark; they look like real switches but are not confirmed.
+- Known limit: a seamless switch (no hole) is missed. Newer iPhones switch without restarting the camera, with a hard cut or a ~6-frame dissolve (video 90 @4.2, 60 @2.3, 87 @1.7, 95 @2.05, 16.6, 42.6, 59 @1.4).
+- Rejected for the seamless case (2026-10-27, measured): low-level cut metrics (histogram jump, disc structure, residual of a linear mix of the end frames for dissolves, side stability) overlap fully between those switches and pans, RGB lights and exposure jumps. A face flip (YuNet 2023mar through `cv2.FaceDetectorYN`, a large face of at least 0.3 of the short side on one side of a structural jump and none on the other) found 7 of them among about 95 accepted jumps on the corpus. Its false ones: the back camera panning to or from a friend's face (59, 60, 89), the author's own face leaving the frame by motion (18, 89, round2 @37.75), faces seen in a shoe pattern (93), darkness (14, 26, 51). Face size, position and luma checks did not separate them. Not shipped as cuts. Owner decision (2026-10-27): face flips come back as hints in the manual cut editing (later; YuNet is approved as a dependency then), never as automatic cuts. A learned front/back classifier is the idea left.
 
 ## Output rate
 
@@ -270,7 +287,7 @@ Owner request 2026-10-26: a hole in the source (the phone recorded nothing for a
 
 ## Scene cuts
 
-`media.scene_cuts`: 512-bin RGB histogram (3 bits per channel, every 4th pixel); d = half L1 distance between consecutive frames. Cut at k when d > 0.3, d > 3 × median(d over ±15 frames, excluding k) + 0.05, and at least 6 frames since the last cut (flashes). Histograms miss cuts between shots of near-identical colour; motion-based scores were rejected because fast pans trigger them.
+`media.changes` + `media.scene_cuts`: 512-bin RGB histogram (3 bits per channel, every 4th pixel); d = half L1 distance between consecutive frames. Cut at k when d > 0.3, d > 3 × median(d over ±15 frames, excluding k) + 0.05, and at least 6 frames since the last cut (flashes). Histograms miss cuts between shots of near-identical colour; motion-based scores were rejected because fast pans trigger them.
 
 ## Audio chain
 
@@ -386,6 +403,10 @@ Owner choice 2026-10-26: the honest part of the slider (`t`) and `exposure` are 
 - Checked locally (2026-10-26, CPU, 3 threads): IMG_7045 and IMG_1037 at 0 s, 7 s and the last frame, look 0.3 / 0.8 / 1.0, 540×960: images decode, 39–74 KB of data URL, 10–15 s with repair and 3–4 s without. The endpoint through FastAPI's `TestClient` with a stub GPU call: 200 with the arguments `(job, time, source, meta, look, exposure, (540, 960))`, 409 without a proxy and past the duration, 422 for look 1.2, 502 with the log line when the call raises.
 - Not verified: the call on Modal and its latency (estimate: well under a second warm on L4; decode from the previous keyframe dominates for 4K HEVC on the class's 2 CPUs).
 
+## Preview tail
+
+`render.preview` clamps `at` to `duration − TAIL / fps` (`TAIL` 1.5 frames). The Mini App stops playback on `end`, which defaults to the duration, so the paused `time` is often exactly `meta.duration`. On a low-rate source (device log 2026-10-27, job `pZoYthWy7y`: 384², 8.29 fps, 6.4 s) the decode then starts `k / fps` before the end, past the last real frame, `-ss` drops everything and `cfr` yields nothing: `Unreadable(NO_RANGE)`, 502, no exact frame. The cause is reasoned from the log and the code (the `-ss` start after the last frame's pts); the clamp is not verified on that file. A source whose video stream ends well before `meta.duration` (audio longer) can still miss.
+
 ## Repair
 
 The AI part of the HDR slider (`r` of `look.split`, Look zones), for old, cheap, dark and noisy phone videos; owner approved both models 2026-10-26. `repair.py`; `render.render` wraps the frame source (`cfr`, or `smooth.frames` after RIFE) in `repair.frames` when `r > 0`, before `upscale.frames`, so SeedVR2 gets the cleaned frames. Frames in and out are linear SDR [0, 1] `(3, S, S)` on the device, same count and order; both networks run in gamma (`v = lin^(1/2.4)`, plain video pixels, what they were trained on) and the result goes back to linear.
@@ -474,12 +495,38 @@ Streaming mode keeps every frame and every per-frame output in the session forev
 
 The 256² mask logits are upsampled bilinearly to the frame size and thresholded at 0. Connected components smaller than `KEEP_BLOB` (0.2) of the largest are dropped: a far spurious blob would double `r` and pull the camera, while dropping a small true fragment only shrinks the circle slightly. `cv2.minEnclosingCircle` on the kept contours; `+0.5` converts pixel indices to pixel-centre coordinates. The circle centre is returned, not the mask centroid: `(cx, cy, r)` must be a circle that contains the object, which is exactly the camera's constraint; jitter is the camera solver's job.
 
+## Track preview
+
+Owner request 2026-10-27: in the Mini App the selection dot and box move with the object while the playhead moves (`miniapp/src/features/viewer/README.md`, Follow). `POST /api/jobs/{id}/track`, body `api.Span` `{start, end, prompt}` (the range and prompt rules of `RenderRequest`, which now extends `Span`; 422 without `prompt.time` or past the duration) → `Lift.follow` → `follow.follow` → `{fps, start, boxes}`. Sample `k` is at `start + k / fps`. `boxes[k]` is `[x0, y0, x1, y1]`, normalized to the display frame, or `None` where the object is hidden or gone. A JSON `null` answer means a newer follow superseded this one. Errors go through `api.lift`: 409 before the proxy exists, 502 'The object cannot be followed here' with the log line `follow <id> failed`.
+
+- Same tracker as the render (SAM 2.1 large video, `SAM_MODEL`), so the preview shows what the note will follow. `follow.load()` builds a second copy of the weights next to the `Segmenter` in `Lift.load` (snapshot, CPU, bf16, about 0.45 GB; Lift has `memory=8192`, not measured). `to_gpu` moves it to CUDA.
+- `follow` imports `track` inside the call, never at module level: `track` decides `DEVICE` at import, and the snapshot phase has no GPU (Lift).
+- It reuses `track._pass` (Tracking memory), `_prompt`, `_mask`, `KEEP_BLOB` and `MIN_AREA`, so a change there changes the preview too.
+- Grid: anchored on the proxy frame `floor(time × FPS)` that `segment` showed, so a mask prompt lands on its own frame. The rate is the highest of `RATES` (10, 6, 5) with `(end − start) × rate ≤ STEPS` (360): up to 36 s at 10 fps, up to 60 s at 6 fps.
+  - The rates divide 30, so every sample is a real proxy frame.
+  - 10 Hz, interpolated linearly in the Mini App, reads as smooth motion.
+  - SAM 2's training data (SA-V) is annotated at 6 fps, so its memory copes with that spacing (reasoned from the paper, not measured).
+- Frames: `media.decode` at the sample rate into a memmap over a `TemporaryFile`. That needs up to about 560 MB of temp disk and keeps RAM bounded. A `TemporaryDirectory` failed on Windows with the memmap still open.
+- Boxes come straight from the 256² low-res logits, about 1/256 of the frame (3.75 px on the 960 side). Components below `KEEP_BLOB` are dropped, as in Tracking circle.
+- Concurrency: `Lift` has `@modal.concurrent(max_inputs=3)`, so sync inputs run in a thread pool (Modal's `_container_entrypoint.py`, `DaemonizedThreadPool`, read by the backend agent).
+  - `segment` and `look` share the `quick` lock: they run one at a time as before, and the Segmenter's LRU is not thread-safe. `follow` takes `slow`, so a tap never queues behind a 40 s follow.
+  - The GPU is shared, so a tap during a follow is somewhat slower (reasoned).
+  - Each follow bumps `latest`. An older follow sees the change within one step and returns `None`, so re-selecting never stacks calls. Do not drop this generation check: without it, three quick re-selections queue about 2 minutes of GPU.
+- Cost (reasoned from the spike's 9.5 steps/s on L4, bf16): n + 1 steps per pass, so a 10 s range is about 11 s and the worst case (361 steps) is about 38 s, plus 1–3 s of decode. On L4 that is roughly $0.01 per call (price from memory). `timeout=120` covers it.
+- The same request also spawns `Render.prepare` with its span before the follow is awaited, so the render's full 30 fps track starts with the preview (Track cache). The preview itself stays on `Lift` at 6–10 Hz.
+- Not cached on the Volume: the result is about 15 KB and cheap to redo, and a cache key would have to hash the mask. The Mini App keeps the last path and asks again only for a new selection or a wider trim.
+- Rejected:
+  - The image model per sample with the previous box as prompt: about 13 fps, no memory, drifts to look-alikes.
+  - SAM 2.1 tiny: about 2.3× faster on paper, but the preview would disagree with the render.
+  - A separate GPU class: a second cold start and double the idle cost.
+- Checked: `follow.follow` end to end on the CPU (tiny model, fp32, the mock proxy, 2 s range: 21 boxes for a point and for a box prompt, `None` where the object is gone, `stop()` → `None`; the mask-prompt path not exercised). The route through FastAPI's `TestClient` with a stub GPU call: 200 with `(job, time, prompt, start, end, (w, h))`, 422 without `time`, past the duration, and with `time` outside the range, 502 with the log line. Not verified: anything on Modal (snapshot memory, the thread pool with the GPU, latency).
+
 ## Lift
 
 Tap-to-lift: the owner taps the object and sees its outline lifted from the frame (iOS "lift subject" look), cycles through SAM's candidates, and the chosen outline becomes the tracking prompt. Owner decision 2026-10-26: about $8 a month of the Starter credits is fine if it looks good; approved after a demo on the iPhone.
 
-- `Lift` (`app.py`): a Modal class on L4, `max_containers=1`, `scaledown_window=LIFT_IDLE` (120 s), `enable_memory_snapshot=True`. `load` (snapshot phase, no GPU) builds `segment.Segmenter` on the CPU, `to_gpu` moves it to CUDA after every restore. `warm()` does nothing: calling it starts the container. `segment` reloads the data Volume when the proxy is not visible yet.
-- `POST /api/jobs/{id}/warm` → 202: spawns `Lift.warm`. The Mini App calls it when the editor opens, so the cold start overlaps with choosing the frame.
+- `Lift` (`app.py`): a Modal class on `LIFT_GPUS` (L4 first, Render gpus), `max_containers=1`, `scaledown_window=LIFT_IDLE` (120 s), `enable_memory_snapshot=True`. `load` (snapshot phase, no GPU) builds `segment.Segmenter` on the CPU, `to_gpu` moves it to CUDA after every restore. `warm()` does nothing: calling it starts the container. `segment` reloads the data Volume when the proxy is not visible yet. Since 2026-10-27 it also holds the follow tracker and runs up to 3 inputs at once (`@modal.concurrent`, two locks: Track preview).
+- `POST /api/jobs/{id}/warm` → 202: spawns `Lift.warm`. The Mini App calls it when the editor opens, so the cold start overlaps with choosing the frame. `bot.video` also spawns it as soon as a video up to `WARM_FILE` arrives (Warm start).
 - `POST /api/jobs/{id}/segment` with a `Prompt` body (`time`, `points`, `box`; `mask` ignored) → `{candidates: [{mask, area}], best}`. 409 until the proxy exists, 502 with a readable detail when the GPU call fails (the Mini App then keeps the plain point).
 - `segment.Segmenter`: SAM 2.1 large image model (`Sam2Model`, the same checkpoint as the tracker, `SAM_MODEL`), bf16. The frame is the proxy frame `floor(time × FPS)`, the one the `<video>` shows at that time; the image embedding is cached per (job, frame), `EMBEDDINGS` (8) frames LRU, so more taps on the same frame run only the prompt decoder. One point without a box asks for 3 candidates (`multimask_output`); two points or a box give one. Candidates are cleaned (Lift mask), sorted by area (part → whole → surroundings), near-duplicates dropped (IoU ≥ `SAME` 0.9). `best` is the middle one: SAM's own `iou_scores` did not match what looked right (the clean whole sheet scored 0.06, a part of the face 0.51), the middle candidate was the whole object in 2 of 3 spike taps.
 - `POST /api/jobs/{id}/look` → `Lift.look` (Look preview). `api.lift` is the one helper both endpoints call: the 409 (no proxy yet, or `time` past the duration), the GPU call with the proxy size as the last argument, the log line `<call> <job> failed: …` and the 502 with the endpoint's own detail.
@@ -502,19 +549,102 @@ Rejected: SAM in the browser (20–45 MB download, no WebGPU in iOS 18 WKWebView
 
 `SAM_MODEL` (`config.py`, shared with `segment.py`) and `load()` are the seam. SAM 2.1 sizes: `facebook/sam2.1-hiera-{tiny,small,base-plus,large}`. SAM 3 tracker (`Sam3TrackerVideoModel` in `transformers.models.sam3_tracker_video`) has the same session/forward API family: swapping means changing the imports, `SAM_MODEL` (gated: `HF_TOKEN`; `segment.py` then needs the SAM 3 image model too), and checking that its config still has `image_size` and `max_object_pointers_in_encoder`, the session constructor arguments and the output fields `pred_masks` / `object_score_logits`. DAM4SAM is a different code base: it would replace `_pass` and keep `_measure` and `track`.
 
+## Warm start
+
+Cold starts cost the owner most of the waiting that is not the GPU work itself, so they are hidden or shortened where it is free.
+
+- Memory snapshots: `web`, `ingest` and `Render` have `enable_memory_snapshot=True` (as `Lift`). A plain function snapshots what its module imports at global scope, so `app.py` imports `api` at the top (it was inside `web`), and the block under `gpu_image.imports()` imports `SNAPSHOT_IMPORTS` (`render`, `upscale`, the SAM 2.1 video model of transformers) only in GPU containers; in the CPU image the first one fails with `ImportError`, which `Image.imports` swallows (read in the Modal 1.6.2 source). The loop is empty under `modal.is_local()`: locally torch is installed too, and importing `render` there added 25 s to every `modal deploy` / `serve` / `run` (measured).
+- `track` must stay out of `SNAPSHOT_IMPORTS`: it decides `DEVICE` at import, and the snapshot phase has no GPU (as Lift). Nothing else in the import tree touches CUDA at import (grep for `cuda` at module level).
+- Snapshots exist only for deployed apps, Modal takes several during the first invocations after a deploy (about 6 for a CPU function, 2–3 per GPU type, Modal docs, Memory Snapshot), so the first runs after a deploy are not faster. State made at import is frozen: nothing random is created at import (`bot` uses `secrets` at call time, `os.urandom`).
+- Early GPU warm-up: `bot.video` spawns `Lift.warm` right after `ingest` when the file is at most `WARM_FILE` (100 MB, reasoned: download, proxy and opening the Mini App fit into `LIFT_IDLE`); a bigger or unsized file waits for the editor's own warm-up, so a long download does not keep an idle L4 running.
+- Measured before the snapshots (2026-10-27, `fn.remote('cold-probe')` from the owner's PC, the call fails at once on the missing job): `ingest` cold 14.4 s, warm 0.9 s. From the stage logs (2026-10-26): `ingest.wait` 11–42 s, `render.wait` 23–30 s cold (83–325 s when it queued behind another render, `max_containers=1`). 2026-10-27: `render.wait` 1720 s with `waiting to be scheduled on a GPU_L4 worker` in the log (Render gpus).
+
+## Render gpus
+
+`app.RENDER_GPUS` = L40S, A100-40GB, L4, H100 and `app.LIFT_GPUS` = L4, L40S, A100-40GB: Modal GPU fallback lists, tried in order (Modal docs, GPU guide). Owner's speed plan 2026-10-27.
+
+- Why a list: L4 capacity runs out. 2026-10-27 `render.wait` was 1720 s with `waiting to be scheduled on a GPU_L4 worker` in the log, `Lift` waited too, and a benchmark container on L4 waited over 20 min while L40S, A100 and H100 started at once.
+- Measured (2026-10-27, scratch app with this `gpu_image`, `cpu=8`, 32 GB; job `FU92F7nT5Q`, 4K60 HEVC, 13.8 s, AV1; job `qbtO81fF8Z`, 1080p30 with RIFE, 304 synthesized frames):
+
+| GPU | $/s (GPU) | SAM track fps | render 4K60 (frame loop + 2 passes) | render with RIFE |
+|---|---|---|---|---|
+| L4 (production log) | 0.000222 | 8.5 | 41.7 s | 22.8 s (HEVC) |
+| L40S | 0.000542 | 19.6–22.7 | 16.2 s (loop 77 fps) | 11.4 s |
+| A100-40GB | 0.000583 | 20.3–21.9 | 14.6 s | 11.0 s |
+| H100 | 0.001097 | 19.0–28.6 | 10.6 s (loop 112 fps) | 7.7 s |
+
+- SAM tracking stops scaling at L40S (one frame at a time, launch-bound): H100 tracks no faster. The container's 8 CPUs and 32 GB cost $0.000176/s whatever the GPU, so a job on L40S costs less than on L4 (4K60 render: about $0.012 vs $0.017; track 21 s vs 48.5 s: about $0.015 vs $0.019, Modal price list). Hence L40S first for `Render`; H100 is last, only so a render never waits.
+- `Lift` keeps L4 first: its taps are network-bound (Lift) and it idles warm for `LIFT_IDLE` after every editor session, where the cheapest GPU matters most.
+- Not verified: how long Modal tries a type before it falls back, and the render speed on L4 of the same build (taken from production logs of the same jobs, other code version). Each GPU type takes its own memory snapshots (Warm start), so the first runs on a new type start cold.
+- `render.load` prints `gpu=` so the type a job got is in the log.
+
+## Render warm
+
+The render is the `Render` class, not a function, so the GPU container the note is made in is the one warmed while the owner edits (2026-10-27, owner's speed plan).
+
+- `POST /warm` (the editor opened) spawns `Render.warm` next to `Lift.warm`; `POST /track` (a selection) spawns `Render.prepare` (Track cache). `Render.run` is the render (`POST /render`). `bot.video` warms only `Lift`: a render container idling through a long download would be paid for nothing.
+- `RENDER_IDLE` (240 s) keeps the container after its last input. The owner spent about 3 min in the editor in the 2026-10-27 log; each warm-up that no render follows costs up to `RENDER_IDLE` of the container (about $0.10 on L4 with 8 CPUs and 32 GB, by the Modal price list).
+- `@modal.concurrent(max_inputs=2, target_inputs=1)`: a prepare and a run share one container (the run waits for the prepare's track instead of tracking again), while the autoscaler still gives a second run its own container up to `RENDERS` (2). Two runs that do end up in one container (bursting at `max_containers`) take turns on `self.running`: two renders on one GPU could run out of VRAM with upscale, and their encoders would fight for the 8 CPUs.
+- Async methods in a concurrent class share one event loop; all heavy work in `render_job` and `locate` goes through `asyncio.to_thread`, so a prepare and a run interleave.
+- `render_job` and `prepare_job` reload the data Volume inside `contextlib.suppress(RuntimeError)`: with two inputs in one container, the other one may hold the source open, and `reload` then raises `there are open files preventing the operation` (seen in `web`, Signed urls). The file is visible already in that case.
+
+## Track cache
+
+`locate.located` + `locate.prepare_job`: the track of the selected object is computed while the owner is still in the editor and reused by every render of that selection (owner's speed plan 2026-10-27; before, every render, even a codec-only re-render, decoded and tracked again: 50 s for 14 s and about 3.5 min for 60 s of 4K on L4).
+
+- Key: `track:<job>:<sha256 of the prompt JSON, sorted keys>` in the `rounds-state` Dict. The prompt is `time`, `points`, `box`, `mask`, exactly as the Mini App sends it to both `/track` and `/render` (`viewer/follow.js`, `editor.jsx`); pydantic tuples and stored lists dump to the same JSON. Value: `{start, n, found (source pixels), d (media.changes)}` on the grid `start + k / FPS`, about 90 KB for 60 s.
+- The range is not in the key: the Mini App does not ask `/track` again when the trim narrows (`follow.js`, `covered`), so the render slices the cached range. `sliced` takes frames `j … j + N` with `j = round((start − cached start) · FPS)` and recomputes the cuts from the sliced `d` (`d[0] = 0`), which equals a fresh run on those same frames (`changes` only compares neighbours; the cut rule's window then sees exactly the frames a fresh run would). A range not covered is computed afresh and replaces the entry.
+- The slice's frames sit up to half a tracking frame (1/60 s) off the requested range's own grid. The path is then that much early or late; the tracking timeline already quantizes a 60 fps source to 30 fps, so this is the same order (reasoned, not measured).
+- One computation per key: `transfer.held` (Dict lease) around the compute. A run that finds a prepare of its key running waits for its lease and then reads the cache. The run shows "Following the object… 0%" meanwhile: the prepare's progress is not relayed.
+- Cancel: every `located` writes `latest:<job>` = its key. A prepare (`cancellable=True`) watches it every `WATCH` (3) s and raises `Superseded` from the tracker's progress callback (every 30 frames) once a newer selection or a run of another selection took over. A run is never cancelled.
+- A prepare that fails is logged and swallowed; the run then tracks itself and fails with the readable error if the source is broken.
+- Not verified on Modal yet: the whole flow end to end. Checked locally (2026-10-27, scratch test with a fake Dict): slice and cuts, the waiter served from the cache without a second compute, a superseded prepare releasing its lease, a run not superseded, the `rounds.app` import graph.
+
+## Dict lease
+
+`transfer.held(state, name)`: an exclusive lease `lease:<name>` in the `rounds-state` Dict, for work that must not run twice at once across containers (an MTProto session, Mtproto sessions; a track computation, Track cache). `put(skip_if_exists=True)` is the atomic claim, the holder refreshes it every `LEASE / 4` s, a lease older than `LEASE` (60 s) is a container killed while holding it and is taken over; waiters poll every `WAIT` (1) s. Known gap: two waiters that both see the same stale lease can both take it (only after a hard kill, accepted). It lives in `transfer` because `locate` imports `transfer` and `pipeline`, and `pipeline` imports `transfer`: anywhere else would be an import cycle.
+
 ## Stage timings
 
 Every step of a job prints one line to the Modal log: `[<job id>] <function>.<step> <seconds>s key=value …`, read with `uv run modal app logs rounds --timestamps` (grep the job id). `pipeline.timed` wraps a step and prints when it ends; a tuple fact `(amount, unit)` is printed as a rate, `amount / seconds` (`speed=(mb, 'MB/s')`, `fps=(frames, '')`, `speed=(duration, 'x')` = times realtime). A step that raises prints nothing (`fail` prints the traceback).
 
 - `ingest.wait`, `render.wait`: from `queued_at` (the webhook or `POST /render`) to the function body. Covers Modal scheduling and the container cold start (image, imports). Jobs created before the field existed print 0.
 - `ingest.download` (`mb`, `speed`): the MTProto download alone, without the login. `ingest.probe` (the source: size, fps, gaps, codec, transfer, bit depth, duration, audio, `tags` = number of kept tags), `ingest.proxy` (`speed` in × realtime of the whole source, `dupes`, `has_audio` after the proxy, `interpolable`), `ingest.commit`, `ingest` (the whole function).
-- `render.load`: the SAM weights to the GPU; near 0 in a warm container (`@cache`), so it tells a cold start from a warm one. `render.decode` (`frames`, `size` of the tracking frames, `fps`), `render.track` (`fps`), `render.cuts`, `render.camera`, `render.encode` (`fps` of the frame loop plus both passes, `mb` of the note, `codec`, `fit` (below 1 when the fit loop had to retry), `rate` of the note, `upscale`, and with interpolation `synth` = RIFE frames, `dupes` = dropped source frames, `seams` = holes covered by a seam), `render.commit`, `render.send` (login + upload, `speed`), `render` (the whole function, with `clip` length and the source facts).
+- `render.load`: the SAM weights to the GPU; near 0 in a warm container (`@cache`), so it tells a cold start from a warm one. `render.locate` (`cached=True` when the track came from the cache, a prepare included, `cuts`), around `render.decode` (`frames`, `size` of the tracking frames, `fps`), `render.track` (`fps`), `render.cuts` (the histogram changes) when the render tracks itself; `render.camera`, `render.encode` (`fps` of the frame loop plus both passes, `mb` of the note, `codec`, `fit` (below 1 when the fit loop had to retry), `rate` of the note, `upscale`, and with interpolation `synth` = RIFE frames, `dupes` = dropped source frames, `seams` = holes covered by a seam), `render.commit`, `render.send` (Bot API `sendVideoNote`, `speed`), `render` (the whole function, with `clip` length and the source facts).
+- `prepare` (`cached`), `prepare.decode`, `prepare.track`, `prepare.cuts` (the same facts as the render's), `prepare.superseded` (a newer selection stopped it), and `prepare failed: …` (swallowed: the render then tracks itself).
+- `render.load` also prints `gpu=` (the CUDA device name), so the GPU fallback list (Render gpus) can be read from the log.
 
 Keep it to one line per step and only numbers that point to a lever (bandwidth, fps, cold or warm); progress percentages stay in the chat, not in the log.
 
 ## Mtproto sessions
 
-`transfer.client(state, name)` logs in with the bot token over MTProto (Telethon, `receive_updates=False`: updates still come through the Bot API webhook) and keeps the session string in the `rounds-state` Dict under `session:<name>`. One session per function (`ingest`, `render`), and each of those functions runs at most one container (`max_containers=1`): the same auth key used from two places at once risks `AUTH_KEY_DUPLICATED`, and a fresh login per job risks `FLOOD_WAIT` on `auth.importBotAuthorization`. Messages are fetched with `get_messages(None, ids=...)`, which calls `messages.getMessages` without a peer (private chats need no access hash); the same call before `send_file` caches the user's access hash so the note can be sent.
+`transfer.client(state, name)` logs in with the bot token over MTProto (Telethon, `receive_updates=False`: updates still come through the Bot API webhook) and keeps the session string in the `rounds-state` Dict under `session:<name>`. One session per name (only `ingest` since the note goes through the Bot API, Note send): the same auth key used from two places at once risks `AUTH_KEY_DUPLICATED` (Telegram then kills the key), and a fresh login per job risks `FLOOD_WAIT` on `auth.importBotAuthorization`. `client` holds the lease `lease:<name>` (Dict lease) for as long as the session is open, so a function with more than one container (it was made for `render`, `RENDERS` 2) never shares the key. `ingest` has `max_containers=1`, so today the lease only guards against a killed container. Messages are fetched with `get_messages(None, ids=...)`, which calls `messages.getMessages` without a peer (private chats need no access hash).
+
+## Mtproto lanes
+
+`transfer.download` moves the source in `PART` (512 KB, the MTProto maximum) pieces over `LANES` (4) concurrent requests on the one connection, in contiguous ranges through `iter_download(offset, limit, request_size)`, each lane writing at its offset. The note upload had the same lanes (`upload.saveFilePart` / `saveBigFilePart`) until it moved to the Bot API (Note send); the upload columns below are kept as the record. Telethon's own `download_media` / `upload_file` send one request at a time with 128 KB parts up to 100 MB and 256 KB up to 750 MB (`utils.get_appropriated_part_size`), so every part waits a full round trip; Modal's default region was `us-west` / `us-east`, 130 ms from Telegram's Amsterdam DC 2 (where the bot and the owner's files live), 5 ms from `eu-west`.
+
+Measured 2026-10-27 (probe on Modal, a 256 MB source, a 9.9 MB upload), MB/s:
+
+| | download, 1 lane | download, 4 lanes | download, 4–8 connections | upload, Telethon | upload, 4 lanes |
+|---|---|---|---|---|---|
+| `us-east` | 3.0 | 5.6 | — | 3.5 | 7.3 |
+| `eu-west` | 5.2 | 5.0 | 4.9–5.3 | 9.6 | 27.2 |
+| `uk` (real `transfer`) | 5.5 | 5.0, same SHA-256 | — | — | 10.7 (9.5 MB), 27.4 (30 MB, big parts) |
+
+Unpinned containers land in any region (seen: `us-west`, `us-east`, `eu-west`, `uk`, and `af` on Azure for a probe on 2026-10-27), and production downloads of large files ran at 1.5–1.8 MB/s against about 5 MB/s in `eu-west`. So `ingest` is pinned to `region='eu'` (Mtproto keys); it costs 1.15× on what that CPU function spends (Modal docs, Region selection; about $0.002 per job), and works on the Starter plan (checked 2026-10-27). `ingest.download` logs `region=` (`MODAL_REGION`, set by Modal in every container).
+
+In production before the lanes: downloads 1.2–5.2 MB/s, uploads 0.4–1 MB/s (8–17 s per note). Downloads stop at about 5 MB/s whatever the region, the lanes or the number of connections with the same auth key: that is Telegram's limit per auth key, not the network. It is worked around with more keys (Mtproto keys). More than 4 lanes made uploads slower (8 lanes: 2.2 MB/s from `us-east`).
+
+## Mtproto keys
+
+`transfer.clients(state, 'ingest')` opens `KEYS` (3) sessions, `ingest`, `ingest1`, `ingest2`: separate bot logins, so separate auth keys, each with its own lease (Dict lease). `transfer.download` splits the file into `LANES × KEYS` contiguous ranges and deals them round robin, every session fetching the message itself (its own `file_reference`).
+
+Measured 2026-10-27 (scratch probe, `region='eu'` → `eu-west`, the 146 MB source of `FU92F7nT5Q`), MB/s: 1 key 5.1 (and 4.9, 5.1), 2 keys 10.5, 3 keys 18.5 and 14.8, 4 keys 16.3, 6 keys 18.1. The speed grows with keys up to 3 and stops near 15–18 MB/s (the container's network or the 4 CPUs, not checked). A 450 MB minute of iPhone 4K60 then downloads in about half a minute instead of 4–5 min at the 1.7 MB/s seen in production.
+
+- The first ingest after the deploy logs in `ingest1` and `ingest2` once (`auth.importBotAuthorization`); the sessions are kept in the Dict as `session:ingest1` / `session:ingest2`, like `session:ingest`.
+- Do not raise `KEYS` without measuring: 4 and 6 keys were not faster, and every key is one more bot authorization.
+- The probe also created `session:probe2` … `session:probe6` in `rounds-state`; nothing uses them.
 
 ## Init data
 
@@ -536,11 +666,18 @@ Editing a message never notifies (owner's observation: the editor became availab
 
 Every stage has its own status text (`bot.TEXTS`), edited into one message per phase (ingest: reply to the video; render: a new reply made by the API at the moment of "Render", so the GPU cold start and the model load are not silent). A long step with no progress callback (probe, proxy, decoding, scene cuts, the camera solver) still gets a text of its own, because "silent" was the owner's complaint.
 
-The chat header shows the matching action: `typing` during ingest, `record_video_note` from decoding to the end of the render, `upload_video_note` (Telethon `round`) while the file is sent. A Bot API chat action lasts about 5 s and is dropped as soon as the bot sends a message, so `bot.acting` repeats it every `ACTION_EVERY` = 4 s until the block ends. Failures of `sendChatAction` are swallowed: it is decoration. The `queued` stage has no action: the GPU container is not up yet, so nothing runs the pulse.
-
-The note's file name is the source's with the extension swapped for `.mp4` (`IMG_4359.MOV` → `IMG_4359.mp4`, `round.mp4` if the source has no name), set through `DocumentAttributeFilename` in `transfer.send_note`. Telegram clients do not show it on a round, it surfaces when the note is saved.
+The chat header shows the matching action: `typing` during ingest, `record_video_note` from decoding to the end of the render, `upload_video_note` while the file is sent (Note send). A Bot API chat action lasts about 5 s and is dropped as soon as the bot sends a message, so `bot.acting` repeats it every `ACTION_EVERY` = 4 s until the block ends. Failures of `sendChatAction` are swallowed: it is decoration. The `queued` stage has no action: the GPU container is not up yet, so nothing runs the pulse.
 
 Ideas for later modes (owner): "no subject" (a plain centre or a slow auto-crop with nothing to track, so the prompt becomes optional), and more audio and video options next to `loudnorm`. The seams are `Prompt` (its validator `check` accepts an empty selection, Square source; `render` allows it only for square sources today), `pipeline.render_job` (the tracking and camera stages are skippable: `camera.solve` only needs a found track) and `options`.
+
+## Note send
+
+`bot.send_note`: the finished note goes out through the cloud Bot API `sendVideoNote` (multipart upload, `length` 640, `duration` in whole seconds, as a reply to the source), not MTProto. The note is at most `encode.NOTE_BYTES` (10 MB, Note size), well under the Bot API's 50 MB upload limit, so the render needs no MTProto login and no session lease. Before (2026-10-26/27 logs) `render.send` took 8–34 s for about 9 MB, mostly login and lease; the 4-lane MTProto upload was faster on paper but never verified end to end.
+
+- The Bot API, like TDLib, uploads the file untouched (Telegram limits); `length` over 640 is rejected.
+- `duration` is an integer in the Bot API (MTProto took a float): 13.76 s is sent as 14. The clients play the file's own length; only the label can differ by under half a second.
+- The file name is the source's with the extension swapped for `.mp4` (`IMG_4359.MOV` → `IMG_4359.mp4`, `round.mp4` if the source has no name): `job.name` is stored by `bot.video` from the Bot API message (`video.file_name` / `document.file_name`; a video note has none), and goes in as the multipart file name. Jobs from before the field get `round.mp4`. Telegram clients do not show it on a round, it surfaces when the note is saved.
+- Not verified yet (owner's phone): that a note sent this way arrives as a round on iOS and Desktop, as the MTProto one did.
 
 ## Telegram limits
 

@@ -1,4 +1,5 @@
 import {memo, useRef} from 'react'
+import Slider from '../../components/slider.jsx'
 import Swap from '../../components/swap.jsx'
 import {haptic} from '../../services/telegram.js'
 import {CODECS, LEVELS, OPTIONS, shows} from './draft.js'
@@ -7,6 +8,8 @@ import './options.css'
 const FIRST_OPTION = 3
 const HOLD = 200
 const REACH = 0.4
+// [DOC: slider-lock]
+const PREVIEWED = new Set(['look', 'exposure'])
 
 // [DOC: switch-gesture]
 const flipAt = ({start, on, flipped, box: {width: w, height: h}}) =>
@@ -74,23 +77,21 @@ const zone = (zones, value) => zones.findIndex(({to}) => value <= to)
 const signed = (value, unit) => `${value > 0 ? '+' : '−'}${Math.abs(value).toFixed(1)} ${unit}`
 
 // [DOC: level-rows]
-function Level({name, level: {label, min, max, steps, unit, zones}, value, disabled, order, onSet}) {
+function Level({name, level: {label, min, max, steps, unit, zones}, value, disabled, locked, order, onSet, onDrag}) {
   const {hint} = zones[zone(zones, value)]
-  const span = max - min
   const shown = unit && value ? signed(value, unit) : ''
   const set = next => {
     if (zone(zones, next) !== zone(zones, value)) haptic.tick()
     onSet(name, next)
   }
   return (
-    <label className='options-row options-level enter' style={{'--i': order}}>
+    <div className='options-row options-level enter' style={{'--i': order}}>
       <span>
         <span className='options-text'><span>{label}{shown && <output>{shown}</output>}</span><Swap as='small' text={hint}/></span>
-        <input type='range' name={name} min='0' max={steps} step='1' value={Math.round((value - min) / span * steps)} aria-valuetext={shown ? `${shown}, ${hint}` : hint}
-          disabled={disabled} style={{'--p': (value - min) / span, '--from': `${-min / span * 100}%`}}
-          onInput={event => set(Math.round((min + span * event.target.valueAsNumber / steps) * 1000) / 1000)} onDblClick={min < 0 ? () => set(0) : undefined}/>
+        <Slider value={value} min={min} max={max} step={(max - min) / steps} origin={Math.max(min, 0)} reset={min < 0} disabled={disabled} locked={locked}
+          aria-label={label} aria-valuetext={shown ? `${shown}, ${hint}` : hint} aria-busy={locked || undefined} onChange={set} onDrag={onDrag}/>
       </span>
-    </label>
+    </div>
   )
 }
 
@@ -107,7 +108,7 @@ function Codec({codec, disabled, order, onSet}) {
 }
 
 // [DOC: late-rows]
-export default memo(function Options({meta, options, codec, denoise, look, exposure, readOnly, dispatch}) {
+export default memo(function Options({meta, options, codec, denoise, look, exposure, locked, readOnly, dispatch}) {
   const rows = meta ? OPTIONS.filter(({needs}) => needs(meta)) : []
   const levels = meta ? LEVELS.filter(level => shows(meta, level)) : []
   const values = {denoise, look, exposure}
@@ -115,10 +116,12 @@ export default memo(function Options({meta, options, codec, denoise, look, expos
   const order = i => `calc(${i} + ${FIRST_OPTION} * var(--early, 0))`
   const set = (name, value) => dispatch(prev => ({options: {...prev.options, [name]: value}}))
   const setLevel = (name, value) => dispatch({[name]: value})
+  const drag = active => dispatch({adjusting: active})
   return (
     <>
       {rows.map(({key, label, hint}, i) => <Switch key={key} name={key} label={label} hint={hint} checked={Boolean(options[key])} disabled={readOnly} order={order(i)} onSet={set}/>)}
-      {levels.map((level, i) => <Level key={level.key} name={level.key} level={level} value={values[level.key]} disabled={readOnly} order={order(rows.length + i)} onSet={setLevel}/>)}
+      {levels.map((level, i) => <Level key={level.key} name={level.key} level={level} value={values[level.key]} disabled={readOnly}
+        locked={locked && PREVIEWED.has(level.key)} order={order(rows.length + i)} onSet={setLevel} onDrag={drag}/>)}
       <Codec codec={codec} disabled={!meta || readOnly} order={`calc(${FIRST_OPTION} + ${late} * var(--early, 0))`} onSet={value => dispatch({codec: value})}/>
     </>
   )

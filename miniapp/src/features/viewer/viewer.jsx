@@ -4,6 +4,7 @@ import Swap from '../../components/swap.jsx'
 import {attach, useAway, usePlayer} from '../../hooks/player.js'
 import {useOnline, usePresence} from '../../hooks/state.js'
 import {segment, warmLift} from '../../services/api.js'
+import {useFollow} from './follow.js'
 import {boxStyle, pct, useGestures} from './gestures.js'
 import Lift from './lift.jsx'
 import './viewer.css'
@@ -40,7 +41,7 @@ function useFit(ref, aspect) {
 function useLift(job, dispatch, readOnly) {
   const [lift, setLift] = useState(null)
   const [seen, setSeen] = useState(job)
-  const latest = useRef(0)
+  const flight = useRef({want: null, busy: false})
   const id = job?.id
   if (job !== seen) {setSeen(job); setLift(prefilled(job))}
 
@@ -52,17 +53,29 @@ function useLift(job, dispatch, readOnly) {
     return () => document.removeEventListener('visibilitychange', wake)
   }, [id, readOnly])
 
+  // [DOC: single-flight]
+  const send = () => {
+    const f = flight.current, want = f.want
+    if (f.busy || !want) return
+    f.busy = true
+    segment(id, want).then(answer => answer, () => null).then(answer => {
+      f.busy = false
+      if (f.want !== want) return send()
+      f.want = null
+      const {candidates = [], best = 0} = answer ?? {}
+      setLift(candidates.length ? {time: want.time, candidates, index: best, best} : null)
+      dispatch({mask: candidates[best]?.mask ?? null})
+    })
+  }
+
   const ask = selection => {
-    const n = ++latest.current
     dispatch({mask: null})
+    flight.current.want = null
     if (!asks(selection)) return setLift(null)
     const {time, points, box} = selection
     setLift(prev => prev?.time === time ? {...prev, pending: true} : {time, candidates: [], index: 0, best: 0, pending: true})
-    segment(id, {time, points, box}).then(({candidates, best}) => {
-      if (n !== latest.current) return
-      setLift(candidates.length ? {time, candidates, index: best, best} : null)
-      dispatch({mask: candidates[best]?.mask ?? null})
-    }, () => {if (n === latest.current) setLift(null)})
+    flight.current.want = {time, points, box}
+    send()
   }
 
   const cycle = () => {
@@ -86,10 +99,10 @@ function useLook(loaded, on) {
 }
 
 // [DOC: selection-frame]
-const Marks = memo(function Marks({time, points, box, pending}) {
+const Marks = memo(function Marks({time, points, box, pending, follow}) {
   const away = useAway(time)
   return (
-    <div className='viewer-marks' data-away={away || undefined} data-pending={pending || undefined} aria-hidden='true'>
+    <div ref={follow} className='viewer-marks' data-away={away || undefined} data-pending={pending || undefined} aria-hidden='true'>
       {box && <div className='viewer-box' style={boxStyle(box)}>{CORNERS.map(c => <i key={c} className='viewer-corner' data-corner={c}/>)}</div>}
       {points.map(([x, y, label]) => <i key={`${x}:${y}`} className='viewer-point' data-negative={!label || undefined} style={{left: pct(x), top: pct(y)}}/>)}
     </div>
@@ -118,7 +131,7 @@ function Notice({notice}) {
   )
 }
 
-export default memo(function Viewer({job, notice, aspect, selection, look, exposure, dispatch, readOnly}) {
+export default memo(function Viewer({job, notice, aspect, selection, start, end, look, exposure, adjusting, dispatch, readOnly}) {
   const refs = useRef({video: null, stage: null, draw: null, drag: null})
   const viewer = useRef(null)
   const waiting = usePlayer(state => state.waiting)
@@ -129,6 +142,7 @@ export default memo(function Viewer({job, notice, aspect, selection, look, expos
   const [spinning, spinner] = usePresence(waiting && loaded)
   const {time, points, box} = selection
   const {lift, ask, cycle} = useLift(job, dispatch, readOnly)
+  const follow = useFollow(job?.id, selection, lift?.candidates[lift.index]?.mask ?? null, Boolean(lift?.pending), start, end)
   const graded = look > 0 || exposure !== 0
   const lookReady = useLook(loaded, graded)
   const {down, move, up, hide} = useGestures({job, selection, dispatch, readOnly, refs, ask, cycle})
@@ -152,9 +166,9 @@ export default memo(function Viewer({job, notice, aspect, selection, look, expos
         {/* [DOC: video-source] */}
         {job && <video ref={el => {refs.current.video = el}} className='viewer-video' src={`${job.proxy_url}#t=0.001`} crossOrigin='anonymous' playsInline preload='auto'
           disablePictureInPicture onAnimationEnd={() => setRevealed(true)}/>}
-        {loaded && graded && lookReady && <Look job={job} look={look} exposure={exposure} refs={refs}/>}
+        {loaded && graded && lookReady && <Look job={job} look={look} exposure={exposure} adjusting={adjusting} refs={refs} dispatch={dispatch}/>}
         {loaded && <Lift lift={lift} refs={refs} origin={originOf(points, box)}/>}
-        {loaded && (points.length > 0 || box) && <Marks time={time} points={points} box={box} pending={lift?.pending}/>}
+        {loaded && (points.length > 0 || box) && <Marks time={time} points={points} box={box} pending={lift?.pending} follow={follow}/>}
         {pressed && <div ref={el => {refs.current.draw = el}} className='viewer-box' data-draft hidden/>}
       </div>
       {spinning && <span ref={spinner} className='spinner viewer-spinner' aria-hidden='true'/>}

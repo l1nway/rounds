@@ -1,0 +1,53 @@
+/* [DOC: slider] */
+.slider {
+  --boing: cubic-bezier(0.34, 1.56, 0.64, 1);
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 14px;
+  touch-action: none;
+  cursor: pointer;
+  transition: opacity var(--dur) var(--ease);
+}
+
+.slider-track {position: relative; flex: 1; height: 4px; border-radius: 2px; background: var(--track)}
+
+.slider-fill {
+  position: absolute;
+  inset: 0 calc(100% - var(--hi)) 0 var(--lo);
+  border-radius: inherit;
+  background: var(--button);
+  transition: inset var(--dur-long) var(--boing), opacity var(--dur) var(--ease);
+}
+
+.slider-thumb {
+  position: absolute;
+  top: 50%;
+  left: var(--progress);
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--on-stage);
+  box-shadow: var(--knob), 0 0 0 0.5px rgb(0 0 0 / 0.06);
+  transform: translate(-50%, -50%);
+  transition: left var(--dur-long) var(--boing), transform 300ms var(--boing), scale var(--dur) var(--ease);
+  cursor: grab;
+}
+
+.slider-thumb:focus-visible {outline: 2px solid var(--button); outline-offset: 3px}
+
+.slider[data-mode] :is(.slider-fill, .slider-thumb) {transition: none}
+
+.slider[data-mode] .slider-thumb {will-change: transform}
+
+.slider[data-mode='drag'] .slider-thumb {cursor: grabbing}
+
+.slider[aria-disabled] {cursor: default}
+
+.slider[data-locked] .slider-thumb {scale: 0.86}
+
+.slider[data-locked] .slider-fill {opacity: 0.55}
+
+@media (prefers-reduced-motion: reduce) {
+  .slider-fill, .slider-thumb {transition: none}
+}

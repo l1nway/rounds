@@ -20,6 +20,8 @@ const live = {video: null, target: null, busy: false, loop: 0, frame: 0, start: 
 export const usePlayer = store.use
 export const useAway = time => usePlayer(state => time !== null && frameOf(state.time) !== frameOf(time))
 export const getTime = () => store.get().time
+// [DOC: watch-player]
+export const watchPlayer = fn => store.subscribe(() => fn(store.get()))
 export const setRange = (start, end) => {live.start = start; live.end = end}
 
 // [DOC: seek-coalescing]

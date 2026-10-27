@@ -17,6 +17,9 @@ RATES = (24000 / 1001, 24, 25, 30000 / 1001, 30, 48, 50, 60000 / 1001, 60, 100, 
 SNAP, FPS_RANGE = 0.015, (1, 480)
 JITTER = 0.25
 THUMB, DUP_LEVEL, MOTION, SHARE = 32, 1, 1.0, 0.005
+HOLE, HOLE_STEPS, BEFORE, AFTER, CHANGE, MIN_SEGMENT = 0.12, 4, 0.1, 0.3, 1.0, 0.5
+_r = np.arange(THUMB) + 0.5 - THUMB / 2
+DISC = np.hypot(*np.meshgrid(_r, _r)) <= THUMB / 2
 
 
 # [DOC: broken-sources]
@@ -110,3 +113,37 @@ def dupes(thumbs: np.ndarray, fps: float) -> float:
     d = np.abs(np.diff(thumbs.astype(np.int16), axis=0)).reshape(len(thumbs) - 1, -1)
     near = maximum_filter1d(d.mean(1), 2 * max(1, round(fps / 2)) + 1)
     return round(float(np.mean((d.max(1) <= DUP_LEVEL) & (near >= MOTION))), 4)
+
+
+def counts(p: np.ndarray, bins: int) -> np.ndarray:
+    flat = (p.reshape(len(p), -1).astype(np.int64) + np.arange(len(p))[:, None] * bins).ravel()
+    return np.bincount(flat, minlength=len(p) * bins).reshape(len(p), bins)
+
+
+def looks(f: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    v = f[:, 0][:, DISC].astype(np.float32)
+    shape = (v - v.mean(1, keepdims=True)) / (v.std(1, keepdims=True) + 4)
+    return shape, np.concatenate([counts(f[:, 0] >> 4, 16), counts(f[:, 1] >> 5, 8), counts(f[:, 2] >> 5, 8)], 1)
+
+
+def change(f: np.ndarray, a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    (ya, ha), (yb, hb) = looks(f[a]), looks(f[b])
+    return 1 - np.mean(ya * yb, 1) + np.abs(ha - hb).sum(1) / (3 * THUMB**2)
+
+
+# [DOC: segment-cuts]
+def switches(frames: np.ndarray, stamps: np.ndarray, duration: float) -> list[float]:
+    n = min(len(frames), len(stamps))
+    f, t = frames[:n], stamps[:n]
+    if n < 3:
+        return []
+    k = np.nonzero(np.diff(t) >= max(HOLE, HOLE_STEPS * float(np.median(np.diff(t)))))[0] + 1
+    if not len(k):
+        return []
+    a, b = np.searchsorted(t, t[k - 1] - BEFORE), np.minimum(n - 1, np.searchsorted(t, t[k] + AFTER))
+    at = np.where(change(f, k - 1, b) < change(f, k - 1, a), t[k - 1], t[k])[change(f, a, b) >= CHANGE]
+    kept = []
+    for c in at:
+        if c - (kept[-1] if kept else 0) >= MIN_SEGMENT and duration - c >= MIN_SEGMENT:
+            kept.append(round(float(c), 3))
+    return kept

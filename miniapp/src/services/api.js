@@ -31,5 +31,8 @@ export const warmLift = id => post(`${jobPath(id)}/warm`)
 
 export const segment = (id, prompt) => post(`${jobPath(id)}/segment`, prompt)
 
+// [DOC: follow]
+export const track = (id, body) => post(`${jobPath(id)}/track`, body)
+
 // [DOC: exact-frame]
 export const lookFrame = (id, body) => post(`${jobPath(id)}/look`, body)

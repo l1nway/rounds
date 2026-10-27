@@ -14,7 +14,7 @@ export const createStore = initial => {
     const next = merge(state, patch)
     if (next !== state) {state = next; subs.forEach(fn => fn())}
   }
-  return {get: () => state, set, use: select => useSyncExternalStore(subscribe, () => select(state))}
+  return {get: () => state, set, subscribe, use: select => useSyncExternalStore(subscribe, () => select(state))}
 }
 
 const onNetwork = fn => {

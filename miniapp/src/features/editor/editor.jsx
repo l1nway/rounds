@@ -30,7 +30,7 @@ export default memo(function Editor({job, notice}) {
   const loaded = usePlayer(state => state.loaded)
   const [draft, dispatch] = useReducer(merge, job, init)
   const form = useRef(null)
-  const {start, end, time, points, box, mask, options, codec, denoise, look, exposure, posting, error} = draft
+  const {start, end, time, points, box, mask, options, codec, denoise, look, exposure, adjusting, previewing, posting, error} = draft
   // [DOC: render-boundaries]
   const selection = useMemo(() => ({time, points, box}), [time, points, box])
   const readOnly = job?.status === 'rendering'
@@ -64,10 +64,12 @@ export default memo(function Editor({job, notice}) {
   return (
     <>
       <main className='editor' aria-busy={!job || undefined} data-split={aspect < SPLIT_BELOW || undefined}>
-        <Viewer job={job} notice={notice} aspect={aspect} selection={selection} look={look} exposure={exposure} dispatch={dispatch} readOnly={readOnly}/>
+        <Viewer job={job} notice={notice} aspect={aspect} selection={selection} start={start} end={end}
+          look={look} exposure={exposure} adjusting={adjusting} dispatch={dispatch} readOnly={readOnly}/>
         <Timeline job={job} start={start} end={end} time={time} dispatch={dispatch} readOnly={readOnly}/>
         <form ref={form} id={FORM} className='options' onSubmit={submit} onKeyDown={noEnter}>
-          <Options meta={job?.meta} options={options} codec={codec} denoise={denoise} look={look} exposure={exposure} readOnly={readOnly} dispatch={dispatch}/>
+          <Options meta={job?.meta} options={options} codec={codec} denoise={denoise} look={look} exposure={exposure} locked={previewing}
+            readOnly={readOnly} dispatch={dispatch}/>
         </form>
         <Swap as='p' className='editor-status enter' role='alert' text={error}/>
         <Swap as='p' className='editor-status enter' role='status' text={note}/>

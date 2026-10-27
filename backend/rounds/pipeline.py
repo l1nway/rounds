@@ -7,7 +7,7 @@ import traceback
 import numpy as np
 
 from . import bot, media, source, transfer
-from .config import FPS, JOBS_DIR
+from .config import JOBS_DIR
 
 PROGRESS_INTERVAL = 3
 MB = 1 << 20
@@ -88,11 +88,11 @@ async def ingest_job(job_id: str, jobs, state, volume) -> None:
     try:
         report = reporter(job, 'downloading', asyncio.get_running_loop())
         async with bot.acting(job['chat_id'], 'typing'):
-            async with transfer.client(state, 'ingest') as tg:
+            async with transfer.clients(state, 'ingest') as tg:
                 with timed(job_id, 'ingest.download') as facts:
                     src = await transfer.download(tg, job['source_message_id'], f'{job_dir}/source', report)
                     size = os.path.getsize(src) / MB
-                    facts.update(mb=round(size), speed=(size, 'MB/s'))
+                    facts.update(mb=round(size), speed=(size, 'MB/s'), region=os.environ.get('MODAL_REGION'))
             await bot.status(job, bot.TEXTS['probing'])
             with timed(job_id, 'ingest.probe') as facts:
                 meta = await asyncio.to_thread(source.probe, src)
@@ -112,75 +112,29 @@ async def ingest_job(job_id: str, jobs, state, volume) -> None:
         await fail(jobs, job, error)
 
 
-def to_source(found: dict, frames: np.ndarray, meta: dict) -> dict:
-    sx, sy = meta['width'] / frames.shape[2], meta['height'] / frames.shape[1]
-    return {**found, 'cx': found['cx'] * sx, 'cy': found['cy'] * sy, 'r': found['r'] * max(sx, sy)}
-
-
-# [DOC: square-source]
-def follows(meta: dict, request: dict) -> bool:
-    square = meta['width'] == meta['height']
-    return request['prompt']['time'] is not None and (not square or request['options'].get('zoom', False))
-
-
-async def frame_path(job_id: str, jobs, job: dict, src: str) -> tuple[dict, np.ndarray, list]:
-    from . import camera, track
-
-    request, meta, loop = job['request'], job['meta'], asyncio.get_running_loop()
-    start, end, prompt = request['start'], request['end'], request['prompt']
-    if not follows(meta, request):
-        return job, camera.still(media.frame_count(start, end), meta['width'], meta['height']), []
-    frames = None
-    try:
-        job = await stage(jobs, job, 'decoding')
-        with timed(job_id, 'render.decode') as facts:
-            frames = await asyncio.to_thread(media.track_frames, src, meta, start, end)
-            h, w = frames.shape[1:3]
-            facts.update(frames=len(frames), size=f'{w}x{h}', fps=(len(frames), ''))
-        index = min(len(frames) - 1, round((prompt['time'] - start) * FPS))
-        points = [[x * w, y * h, label] for x, y, label in prompt['points']]
-        box = [v * s for v, s in zip(prompt['box'], (w, h, w, h), strict=True)] if prompt['box'] else None
-        job = await stage(jobs, job, 'tracking')
-        with timed(job_id, 'render.track') as facts:
-            found = await asyncio.to_thread(
-                track.track, frames, index, points, box, prompt.get('mask') or '', reporter(job, 'tracking', loop)
-            )
-            facts.update(fps=(len(frames), ''))
-        job = await stage(jobs, job, 'cuts')
-        with timed(job_id, 'render.cuts') as facts:
-            cuts = await asyncio.to_thread(media.scene_cuts, frames)
-            facts.update(cuts=len(cuts))
-        job = await stage(jobs, job, 'framing')
-        with timed(job_id, 'render.camera'):
-            found = to_source(found, frames, meta)
-            zoom = request['options'].get('zoom', False)
-            path = await asyncio.to_thread(camera.solve, found, meta['width'], meta['height'], cuts, zoom=zoom)
-        np.savez(f'{JOBS_DIR}/{job_id}/track.npz', **found)
-        return job, path, cuts
-    finally:
-        if getattr(frames, 'filename', None):
-            os.remove(frames.filename)
-
-
 async def render_job(job_id: str, jobs, state, volume, models) -> None:
-    from . import render, track, upscale
+    import torch
+
+    from . import locate, render, track, upscale
 
     began = time.monotonic()
     job = await jobs.get.aio(job_id)
     note(job_id, 'render.wait', waited(job))
-    with timed(job_id, 'render.load'):
-        if follows(job['meta'], job['request']):
+    with timed(job_id, 'render.load') as facts:
+        facts['gpu'] = torch.cuda.get_device_name().replace(' ', '_') if torch.cuda.is_available() else 'cpu'
+        if locate.follows(job['meta'], job['request']):
             await asyncio.to_thread(track.load)
         if upscale.wanted(job['meta'], job['request']['options']):
             await asyncio.to_thread(upscale.fetch)
         await models.commit.aio()
-    await volume.reload.aio()
+    with contextlib.suppress(RuntimeError):  # open files of a prepare
+        await volume.reload.aio()
     job_dir, request, meta = f'{JOBS_DIR}/{job_id}', job['request'], job['meta']
     start, end, loop = request['start'], request['end'], asyncio.get_running_loop()
     try:
         src, out = f'{job_dir}/{job["source"]}', f'{job_dir}/note.mp4'
         async with bot.acting(job['chat_id'], 'record_video_note'):
-            job, path, cuts = await frame_path(job_id, jobs, job, src)
+            job, path, cuts = await locate.frame_path(job_id, jobs, state, job, src)
             np.save(f'{job_dir}/path.npy', path)
             job = await stage(jobs, job, 'rendering')
             report = reporter(job, 'rendering', loop)
@@ -194,8 +148,7 @@ async def render_job(job_id: str, jobs, state, volume, models) -> None:
                 await volume.commit.aio()
         job = await stage(jobs, job, 'sending')
         with timed(job_id, 'render.send') as facts:
-            async with transfer.client(state, 'render') as tg:
-                await transfer.send_note(tg, job['chat_id'], job['source_message_id'], out, result['duration'])
+            await bot.send_note(job, out, result['duration'])
             facts.update(speed=(result['size'] / MB, 'MB/s'))
         job = await save(jobs, job, status='done', stage=None, progress=1)
         await bot.status(job, bot.TEXTS['done'], bot.editor(job))

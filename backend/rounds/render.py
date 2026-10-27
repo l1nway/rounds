@@ -17,6 +17,7 @@ PROGRESS_EVERY = 15
 FRAMES_SHARE = 0.6
 # [DOC: look-preview]
 WINDOW = 5
+TAIL = 1.5
 JPEG = [cv2.IMWRITE_JPEG_QUALITY, 85]
 
 
@@ -139,6 +140,7 @@ def render(
 # [DOC: look-preview]
 def preview(src, meta: dict, at: float, value: float, ev: float, size: tuple[int, int], nets: tuple) -> dict:
     device, (geo, raw), fps = torch.device('cuda' if torch.cuda.is_available() else 'cpu'), layout(meta), meta['fps']
+    at = min(at, max(0.0, meta['duration'] - TAIL / fps))  # [DOC: preview-tail]
     tone, k = look.Look(value, ev, meta['transfer'], fps), min(WINDOW // 2, round(at * fps))
 
     def cut(buf, _):

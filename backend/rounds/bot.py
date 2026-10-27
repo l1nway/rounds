@@ -3,15 +3,17 @@ import secrets
 import time
 from contextlib import asynccontextmanager, suppress
 from functools import cache
+from pathlib import Path
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.filters import CommandStart
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, WebAppInfo
+from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, Message, WebAppInfo
 
-from .config import allowed_users, env
+from .config import OUT_SIZE, allowed_users, env
 
 MAX_FILE = 2000 * 1024 * 1024
+WARM_FILE = 100 * 1024 * 1024
 TEXTS = {
     'start': 'Send me a video, ideally as a file (attach → File) so Telegram does not compress it. '
     'An old round or a forwarded video works too. '
@@ -34,6 +36,7 @@ TEXTS = {
     'failed': 'Something went wrong. {}.',
 }
 ACTION_EVERY = 4
+NOTE_NAME = 'round'
 VIDEO = F.video | F.video_note | F.document.mime_type.startswith('video/')
 
 dp = Dispatcher()
@@ -90,6 +93,14 @@ async def acting(chat_id: int, action: str):
         task.cancel()
 
 
+# [DOC: note-send]
+async def send_note(job: dict, path: str, duration: float) -> None:
+    note = FSInputFile(path, filename=Path(job.get('name') or NOTE_NAME).with_suffix('.mp4').name)
+    sent = {'duration': round(duration), 'length': OUT_SIZE, 'reply_to_message_id': job['source_message_id']}
+    async with acting(job['chat_id'], 'upload_video_note'):
+        await get_bot().send_video_note(job['chat_id'], note, **sent)
+
+
 @dp.message(~F.from_user.id.func(lambda user_id: user_id in allowed_users()))
 async def private(message: Message) -> None:
     await message.answer(TEXTS['private'])
@@ -111,10 +122,14 @@ async def video(message: Message, jobs, spawn) -> None:
     job = {
         'id': job_id, 'user_id': message.from_user.id, 'chat_id': message.chat.id,
         'source_message_id': message.message_id, 'status_message_id': reply.message_id,
+        'name': getattr(media, 'file_name', None),
         'status': 'ingesting', 'stage': None, 'progress': 0, 'error': None, 'request': None, 'queued_at': time.time(),
     }  # fmt: skip
     await jobs.put.aio(job_id, job)
     await spawn['ingest'](job_id)
+    # [DOC: warm-start]
+    if (media.file_size or MAX_FILE) <= WARM_FILE:
+        await spawn['warm']()
 
 
 @dp.message()

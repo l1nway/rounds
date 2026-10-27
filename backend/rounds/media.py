@@ -18,6 +18,8 @@ DEPTH = 4
 PROXY_X264 = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-g', '15', '-pix_fmt', 'yuv420p']
 BT709 = 'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv'
 TILES, TILE_H = 24, 96
+# [DOC: segment-cuts]
+STAMPS = ['-fps_mode', 'passthrough', '-stats_enc_pre_fmt', '{t}', '-stats_enc_pre']
 # [DOC: broken-sources]
 LENIENT = ['-max_error_rate', '1', '-fflags', '+genpts+discardcorrupt']
 AUDIO_TRACK = ['ffprobe', '-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=index', '-of', 'csv=p=0']
@@ -73,26 +75,29 @@ def make_proxy(src, job_dir, meta: dict) -> tuple[dict, dict]:
     w, h = fit(meta, min(PROXY_LONG, max(meta['width'], meta['height'])))
     tw, step = even(TILE_H * meta['width'] / meta['height']), meta['duration'] / TILES
     graph = (
-        f'[{video(meta)}]split[v][d];[d]scale={source.THUMB}:{source.THUMB}:flags=area,format=gray[g];'
+        f'[{video(meta)}]split[v][d];[d]scale={source.THUMB}:{source.THUMB}:flags=area,format=yuv444p[g];'
         f'[v]fps={FPS},{sdr_chain(meta, w, h)},split[p][s];'
         f"[s]select='gte(t,{step}*(selected_n+0.5))',scale={tw}:{TILE_H},tile={TILES}x1[f]"
     )
     audio = ['-map', '0:a:0', '-c:a', 'aac', '-b:a', '96k'] if meta['has_audio'] else []
     with tempfile.TemporaryDirectory() as tmp:
-        thumbs = Path(tmp) / 'thumbs.u8'
+        thumbs, stamps = Path(tmp) / 'thumbs.u8', Path(tmp) / 'stamps.txt'
         try:
             run(['ffmpeg', '-v', 'error', '-y', '-nostdin', *LENIENT, '-i', str(src), '-filter_complex', graph,
                  '-map', '[p]', *PROXY_X264, *audio, '-movflags', '+faststart', str(job_dir / 'proxy.mp4'),
                  '-map', '[f]', '-frames:v', '1', '-q:v', '3', str(job_dir / 'filmstrip.jpg'),
-                 '-map', '[g]', '-fps_mode', 'passthrough', '-f', 'rawvideo', str(thumbs)])  # fmt: skip
+                 '-map', '[g]', *STAMPS, str(stamps), '-f', 'rawvideo', str(thumbs)])  # fmt: skip
         except subprocess.CalledProcessError as error:
             if thumbs.exists() and thumbs.stat().st_size:
                 raise
             raise source.Unreadable(NO_FRAMES) from error
-        share = source.dupes(np.fromfile(thumbs, np.uint8).reshape(-1, source.THUMB, source.THUMB), meta['fps'])
+        frames = np.fromfile(thumbs, np.uint8).reshape(-1, 3, source.THUMB, source.THUMB)
+        times = np.array(stamps.read_text().split(), float)
+        share, switches = source.dupes(frames[:, 0], meta['fps']), source.switches(frames, times, meta['duration'])
     strip = {'tiles': TILES, 'tile_width': tw, 'tile_height': TILE_H}
     heard = meta['has_audio'] and bool(run([*AUDIO_TRACK, str(job_dir / 'proxy.mp4')]).strip())
-    return {'proxy': {'width': w, 'height': h, 'fps': FPS}, 'filmstrip': strip}, {'dupes': share, 'has_audio': heard}
+    checked = {'dupes': share, 'has_audio': heard, 'switches': switches}
+    return {'proxy': {'width': w, 'height': h, 'fps': FPS}, 'filmstrip': strip}, checked
 
 
 def frame_count(start: float, end: float, rate: float = FPS) -> int:
@@ -166,10 +171,13 @@ def histogram(frame: np.ndarray) -> np.ndarray:
     return np.bincount(idx.ravel(), minlength=512) / idx.size
 
 
-# [DOC: scene-cuts]
-def scene_cuts(frames, window: int = 15, floor: float = 0.3, ratio: float = 3.0, min_shot: int = 6) -> list[int]:
+def changes(frames) -> np.ndarray:
     hists = np.stack([histogram(f) for f in frames])
-    d = np.r_[0, np.abs(np.diff(hists, axis=0)).sum(1) / 2]
+    return np.r_[0, np.abs(np.diff(hists, axis=0)).sum(1) / 2]
+
+
+# [DOC: scene-cuts]
+def scene_cuts(d: np.ndarray, window: int = 15, floor: float = 0.3, ratio: float = 3.0, min_shot: int = 6) -> list[int]:
     cuts = []
     for k in range(1, len(d)):
         local = np.median(np.r_[d[max(1, k - window) : k], d[k + 1 : k + window + 1]]) if len(d) > 2 else 0

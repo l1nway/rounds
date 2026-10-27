@@ -18,6 +18,10 @@ APIs used, all checked in core.telegram.org/bots/webapps (2026-10-25): `initData
 
 `warmLift(id)` and `segment(id, {time, points, box})` back tap-to-lift (`features/viewer/README.md`, Lift).
 
+## Follow
+
+`track(id, {start, end, prompt: {time, points, box, mask}})` posts to `/api/jobs/{id}/track` and returns `{fps, start, boxes}` (the object's box per sample, `null` where it is lost) or `null` when a newer call superseded it on the server (`backend/rounds/README.md`, Track preview; consumer `features/viewer/README.md`, Follow).
+
 ## Exact frame
 
 `lookFrame(id, {time, look, exposure})` posts to `/api/jobs/{id}/look` and returns `{image, width, height}` (a JPEG data URL of the whole display-oriented frame at proxy size with the complete HDR look, AI repair included; 409 while the proxy is not ready, 502 with a readable `detail` when the GPU call fails). Caller and timing: `features/viewer/README.md`, Exact frame.

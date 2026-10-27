@@ -80,6 +80,11 @@
 
 .viewer-marks[data-away] {opacity: 0.3}
 
+/* [DOC: follow] */
+.viewer-marks[data-away][data-follow] {opacity: 0.85}
+
+.viewer-marks[data-glide] {transition: opacity var(--dur) var(--ease), translate var(--dur-long) var(--ease)}
+
 .viewer-point {
   position: absolute;
   width: 22px;
