@@ -4,9 +4,9 @@
 
   html {-webkit-text-size-adjust: 100%; -webkit-tap-highlight-color: transparent}
 
-  body, h2, p {margin: 0}
+  body, h1, h2, p {margin: 0}
 
-  h2, small {font-size: inherit}
+  h1, h2, small {font-size: inherit}
 
   button, input {margin: 0; font: inherit; color: inherit; letter-spacing: inherit}
 

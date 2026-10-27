@@ -16,10 +16,10 @@ The document is the page's only scroller; `#root` has no height rule. `html` has
 
 ## Reset
 
-`@layer reset` at the top of `index.css`, written for the elements the app renders (`main`, `form`, `section`, `div`, `span`, `i`, `p`, `small`, `h2`, `label`, `input` checkbox / radio, `button`, `output`, `video`, `canvas`, `img`, `svg`; checked with a grep of `src/` on 2026-10-26; `img` added with the exact look frame the same day), so UA styles change nothing:
+`@layer reset` at the top of `index.css`, written for the elements the app renders (`main`, `form`, `section`, `div`, `span`, `i`, `p`, `small`, `h1` (the browser sign-in, 2026-10-27), `h2`, `label`, `input` checkbox / radio, `button`, `output`, `video`, `canvas`, `img`, `svg`; checked with a grep of `src/` on 2026-10-26; `img` added with the exact look frame the same day), so UA styles change nothing:
 
 - `box-sizing: border-box` on every element and pseudo-element: a `width` / `height` / `min-height` is the outer size, padding and border included.
-- No UA margins (`body`, `h2`, `p`, `input`, `button`; `form` has none in standards mode), no `button` padding / border / background; `h2` and `small` inherit the font size (headings keep the UA bold); `button` and `input` inherit font, colour and letter spacing; `video`, `canvas`, `svg`, `img` are blocks capped at `max-width: 100%`; `-webkit-text-size-adjust: 100%` and no tap highlight.
+- No UA margins (`body`, `h1`, `h2`, `p`, `input`, `button`; `form` has none in standards mode), no `button` padding / border / background; `h1`, `h2` and `small` inherit the font size (headings keep the UA bold); `button` and `input` inherit font, colour and letter spacing; `video`, `canvas`, `svg`, `img` are blocks capped at `max-width: 100%`; `-webkit-text-size-adjust: 100%` and no tap highlight.
 - Why a layer: unlayered rules always beat layered ones whatever the specificity or order, so any component rule wins over the reset, and the reset cannot win over a component rule by accident.
 - Do not re-add these resets in component CSS (`margin: 0` on `p` / `h2` / `input`, `border: 0` / `padding: 0` / `background` on a `button`, `font: inherit` / `color: inherit` on controls). A component sets only what it changes. `appearance: none` on the switch is the switch's own design, not a reset.
 - Under border-box a component that sets a size together with padding or border sets the outer size: `.spinner` is 34 px (28 + 2 × 3 px border before the reset), and a `min-height` that must clear padding adds it (`calc(var(--control) + 12px)`).

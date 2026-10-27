@@ -1,14 +1,19 @@
 import {tg} from './telegram.js'
 
 // [DOC: api-url]
-const API = (import.meta.env.VITE_API_URL ?? '').replace(/\/+$/, '')
+export const API = (import.meta.env.VITE_API_URL ?? '').replace(/\/+$/, '')
 const NETWORK = 'No connection to the server. Check the network and try again.'
+
+let authorization = () => `tma ${tg()?.initData}`
+
+// [DOC: auth-header]
+export const authorize = get => {authorization = get}
 
 const messageOf = (status, detail) =>
   typeof detail === 'string' ? detail : detail?.[0]?.msg || `Request failed (${status})`
 
 const request = async (path, init = {}) => {
-  const headers = {...init.headers, Authorization: `tma ${tg()?.initData}`}
+  const headers = {...init.headers, Authorization: authorization()}
   const response = await fetch(API + path, {...init, headers}).catch(() => {throw new Error(NETWORK)})
   const body = await response.json().catch(() => ({}))
   if (!response.ok) throw new Error(messageOf(response.status, body.detail))
@@ -20,7 +25,7 @@ export const jobId = () => new URLSearchParams(location.search).get('job')
 export const launchAspect = () => Number(new URLSearchParams(location.search).get('a')) || null
 
 const jobPath = id => `/api/jobs/${encodeURIComponent(id)}`
-const post = (path, body) => request(path, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
+export const post = (path, body) => request(path, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
 
 export const getJob = id => request(jobPath(id))
 

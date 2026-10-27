@@ -2,21 +2,20 @@ import asyncio
 import contextlib
 import hashlib
 import hmac
-import json
 import os
 import time
 from typing import Literal
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field, model_validator
 
-from . import bot
-from .config import JOBS_DIR, MAX_DURATION, allowed_users, env
+from . import auth, bot
+from .config import JOBS_DIR, MAX_DURATION, env
 
-INIT_DATA_TTL, URL_TTL = 24 * 3600, 6 * 3600
+URL_TTL = 6 * 3600
 RELOADS, RELOAD_WAIT = 4, 0.3
 FILES = {'proxy.mp4': 'video/mp4', 'filmstrip.jpg': 'image/jpeg'}
 # [DOC: look-cors]
@@ -73,28 +72,16 @@ class LookRequest(BaseModel):
     exposure: float = Field(0, ge=-2, le=2)
 
 
-def secret(label: bytes) -> bytes:
-    return hmac.new(label, env('TELEGRAM_BOT_TOKEN').encode(), hashlib.sha256).digest()
-
-
-# [DOC: init-data]
-def user_from_init_data(init_data: str) -> int:
-    fields = dict(parse_qsl(init_data, keep_blank_values=True))
-    check = '\n'.join(f'{k}={v}' for k, v in sorted(fields.items()) if k != 'hash')
-    digest = hmac.new(secret(b'WebAppData'), check.encode(), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(digest, fields.get('hash', '')):
-        raise HTTPException(401, 'Open the editor from the bot')
-    if time.time() - int(fields.get('auth_date', 0)) > INIT_DATA_TTL:
-        raise HTTPException(401, 'The session expired, reopen the editor')
-    user_id = json.loads(fields.get('user', '{}')).get('id')
-    if user_id not in allowed_users():
-        raise HTTPException(403, 'This bot is private')
-    return user_id
+# [DOC: telegram-login]
+class Login(BaseModel):
+    code: str = Field(max_length=512)
+    verifier: str = Field(min_length=43, max_length=128)
+    redirect: str = Field(max_length=512)
 
 
 # [DOC: signed-urls]
 def signature(job_id: str, name: str, exp: int) -> str:
-    return hmac.new(secret(b'Files'), f'{job_id}:{name}:{exp}'.encode(), hashlib.sha256).hexdigest()
+    return hmac.new(auth.secret(b'Files'), f'{job_id}:{name}:{exp}'.encode(), hashlib.sha256).hexdigest()
 
 
 def signed_url(base: str, job_id: str, name: str) -> str:
@@ -108,7 +95,7 @@ def create(jobs, volume, spawn) -> FastAPI:
     api.add_middleware(CORSMiddleware, allow_origins=[origin], **CORS)
 
     async def own_job(job_id: str, authorization: str) -> dict:
-        user_id = user_from_init_data(authorization.removeprefix('tma '))
+        user_id = auth.user_of(authorization)  # [DOC: auth-header]
         job = await jobs.get.aio(job_id)
         if not job or job['user_id'] != user_id:
             raise HTTPException(404, 'Job not found')
@@ -128,8 +115,19 @@ def create(jobs, volume, spawn) -> FastAPI:
     async def webhook(request: Request, token: str = Header('', alias='X-Telegram-Bot-Api-Secret-Token')):
         if not hmac.compare_digest(token, env('TELEGRAM_WEBHOOK_SECRET')):
             raise HTTPException(403)
-        await bot.feed(await request.json(), jobs, spawn)
+        await bot.feed(await request.json(), jobs, spawn, volume)
         return {}
+
+    # [DOC: telegram-login]
+    @api.get('/api/auth/start')
+    async def login_start(redirect: str, challenge: str, state: str):
+        if not redirect.startswith(f'{origin}/'):
+            raise HTTPException(400, 'Unknown page')
+        return RedirectResponse(auth.login_url(redirect, challenge, state))
+
+    @api.post('/api/auth')
+    async def login(body: Login):
+        return await auth.login(body.code, body.verifier, body.redirect)
 
     @api.get('/api/jobs/{job_id}')
     async def get_job(job_id: str, request: Request, authorization: str = Header('')):
@@ -152,7 +150,7 @@ def create(jobs, volume, spawn) -> FastAPI:
         )
         update = {
             'status': 'rendering', 'stage': 'queued', 'progress': 0, 'error': None, 'request': body.model_dump(),
-            'status_message_id': reply.message_id, 'queued_at': time.time(),
+            'status_message_id': reply.message_id, 'queued_at': time.time(), 'held': None,
         }  # fmt: skip
         await jobs.put.aio(job_id, {**job, **update})
         await spawn['render'](job_id)

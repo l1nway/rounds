@@ -1,6 +1,10 @@
 # services
 
-`api.js`: the backend calls (`getJob`, `postRender`, for Lift `warmLift`, `segment`, and `lookFrame` for the HDR preview) (`Authorization: tma <initData>`, errors as `{detail}`, FastAPI validation lists read through `detail[0].msg`). `telegram.js`: the `Telegram.WebApp` integration. No mock code here (`miniapp/README.md`, Dev plugin).
+`api.js`: the backend calls (`getJob`, `postRender`, for Lift `warmLift`, `segment`, and `lookFrame` for the HDR preview) (`Authorization` from Auth header, errors as `{detail}`, FastAPI validation lists read through `detail[0].msg`). `telegram.js`: the `Telegram.WebApp` integration. No mock code here (`miniapp/README.md`, Dev plugin).
+
+## Auth header
+
+`authorization` is a getter, `tma <initData>` by default (the Mini App, `backend/rounds/README.md`, Init data). The browser entry replaces it through `authorize(get)` with `web <session>` (`features/auth/README.md`, Auth header). A setter rather than a branch on the platform here, because the Mini App must not carry browser code (`miniapp/README.md`, Launch router): this file stays Mini App code, and the web part lives in the module that only `web.jsx` loads. `API` and `post` are exported for the same module (`/api/auth`, `/api/auth/start`).
 
 ## Telegram setup
 

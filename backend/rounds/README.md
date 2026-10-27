@@ -8,8 +8,9 @@ One Modal app (`app.py`) that receives the source video, serves the Mini App and
 |---|---|---|
 | `app.py` | Modal app: images, Volume, Dict, secret, functions (`web`, `ingest`, `setup`, `watch`), the `Render` class (`warm`, `prepare`, `run`) and the `Lift` class | — |
 | `config.py` | env (from the `rounds` secret) and shared constants | everywhere |
-| `api.py` | FastAPI: Telegram webhook, Mini App API, `initData` auth, signed file URLs | `web` |
-| `bot.py` | aiogram handlers: accept videos, Mini App button, progress messages | `web`, `ingest`, `render` |
+| `api.py` | FastAPI: Telegram webhook, Mini App and browser API, signed file URLs | `web` |
+| `auth.py` | who is calling: Mini App `initData`, browser sessions, Telegram sign-in (OIDC) | `web` |
+| `bot.py` | aiogram handlers: accept videos, Mini App button, progress messages, note delivery and Resend | `web`, `ingest`, `render` |
 | `transfer.py` | MTProto (Telethon) download of the source | `ingest` |
 | `pipeline.py` | job orchestration: `ingest_job`, `render_job`, progress, stage timings, retry of stuck jobs | `ingest`, `Render`, `watch` |
 | `locate.py` | where the object is: decode → track → scene changes, the track cache, `prepare_job`, the camera path of a job (Track cache) | `Render` |
@@ -692,7 +693,30 @@ Measured 2026-10-27 (scratch probe, `region='eu'` → `eu-west`, the 146 MB sour
 
 ## Init data
 
-The Mini App sends `Authorization: tma <initData>`. Validation follows core.telegram.org/bots/webapps: secret key = HMAC-SHA256(key `WebAppData`, message = bot token); the hash is HMAC-SHA256 over the sorted `key=value` lines except `hash`. `auth_date` older than 24 h is refused, and the user must be in `ALLOWED_USER_IDS` and own the job.
+The Mini App sends `Authorization: tma <initData>`. Validation follows core.telegram.org/bots/webapps: secret key = HMAC-SHA256(key `WebAppData`, message = bot token); the hash is HMAC-SHA256 over the sorted `key=value` lines except `hash`. `auth_date` older than 24 h is refused, and the user must be in `ALLOWED_USER_IDS` and own the job. Lives in `auth.py` (`from_init_data`).
+
+## Auth header
+
+`auth.user_of` reads every API call's `Authorization`: `web <session>` is a browser session (Web session), anything else is Mini App `initData` (`tma <initData>`, Init data). Both end in the same user id, checked against `ALLOWED_USER_IDS` on every call, and `own_job` then requires the job to be that user's. So a job sent to the bot opens in the browser too, and removing an id from `ALLOWED_USER_IDS` locks both doors at once.
+
+## Web session
+
+The browser version keeps `<user id>.<expiry>.<hex HMAC-SHA256>` from `POST /api/auth` and sends it as `Authorization: web …`. The key is derived from the bot token (label `Session`, like `Files` for signed URLs), so there is no session store and no new secret; rotating the bot token signs everyone out. Lifetime `SESSION_TTL` = 30 days (chosen 2026-10-27: a personal tool, and the allow-list check on every call is the real revocation). Not a cookie: the API is on Modal and the page on GitHub Pages, two sites, so a cookie would be third-party and blocked by Safari.
+
+## Telegram login
+
+OpenID Connect, authorization code with PKCE (core.telegram.org/bots/telegram-login, read 2026-10-27), ported from w2w (`what-to-watch/functions/src/telegram.ts`, its README `telegram-auth`), where the same traps were found:
+
+1. The page makes the PKCE verifier and `state` itself (kept in its `sessionStorage`) and navigates to `GET /api/auth/start?redirect&challenge&state`, which answers 302 to `oauth.telegram.org/auth` with `client_id` = the bot id (the part of the bot token before `:`; the docs: the client id is the bot id) and `scope=openid profile telegram:bot_access`. The endpoint only exists so the page needs no build-time bot id; it refuses a `redirect` outside the Mini App origin (`MINIAPP_URL`), so it is no open redirector.
+2. Telegram returns to the page with `?code&state`; the page checks `state` and posts `{code, verifier, redirect}` to `POST /api/auth`.
+3. `auth.exchange` posts to `oauth.telegram.org/token` (form body, `client_id` in the body and HTTP Basic `bot id : TELEGRAM_CLIENT_SECRET`, as the docs list both). **A token error comes back as HTTP 200** with `{"error": …}` (w2w, observed 2026-10-10), so the answer is checked for `id_token`, not for the status; the log line omits `access_token`. Stdlib `urllib` in a thread: no HTTP client in the project's own dependencies.
+4. The profile is the id token (no userinfo endpoint). The user is the `id` claim (the `profile` scope), not `sub`: only `id` equals the Mini App's `user.id`. Not signature-checked, by design: it comes straight from the token endpoint over TLS in a request authenticated with the client secret (OpenID Connect Core 1.0, 3.1.3.7 (6)); `iss`, `aud` (the bot id) and `exp` are checked. A token handed in by a client must never take this path.
+
+- `telegram:bot_access` is the "Allows your bot to send direct messages to the user after login" scope (owner: ask for it at sign-in; no welcome message is sent). No claim says whether it was granted.
+- BotFather: Bot Settings → Login Widget → Allowed URLs must list the page (`https://l1nway.github.io/rounds/`), and the signing algorithm must stay `RS256` (or `ES256`): `EdDSA` / `ES256K` allow only `openid` and the `id` claim disappears.
+- A user outside `ALLOWED_USER_IDS` signs in at Telegram and gets 403 "This bot is private" from `/api/auth`.
+- No refresh and no revoke endpoint: the session is ours (Web session); the user removes the site from Telegram's active sessions themself.
+- Not signed in against the real Telegram yet (2026-10-27).
 
 ## Signed urls
 
@@ -732,3 +756,12 @@ Verified in sources (2026-10-25): TDLib rejects a video note `length` over 640 (
 Done (2026-10-26, owner's test): 720 and 1080 notes arrive as regular videos, not rounds, even under the 10 MB cap (High resolution); the note keeps its metadata (Note metadata).
 
 Done (2026-10-26): a 640² note of 13.2 MB arrives as a regular video (Note size). Owner (2026-10-26): a 640 HEVC note works, so HEVC became the default (Codecs). Done (2026-10-26): AV1 and VP9 notes of 12.8 s that filled the 12 000 000 B budget arrived as regular videos (they played on iOS 18); an H.266 note was not sent as a round and played neither on iOS nor on Desktop. The budget went back to 10 000 000 B (Note size), and AV1 and VP9 notes under it stayed rounds and played on iOS (owner, 2026-10-26); H.266 was dropped (Codecs). An upscaled note looked right on the phone (owner's IMG_4042). Open: AV1 and VP9 notes on Desktop and Android; the exact size threshold (between 10 and about 11.6 MB), a note longer than 60 s; each checked on iOS, Android and Desktop, and the downloaded file hashed against the uploaded one (server re-encoding).
+## Restricted notes
+
+A Telegram Premium user can restrict who sends them voice and video messages, and then `sendVideoNote` fails. `bot.deliver` treats a failure as that restriction when the error text has `VOICE_MESSAGES_FORBIDDEN` (MTProto `messages.sendMedia`, 400: "This user's privacy settings forbid you from sending voice messages"; the Bot API lists no such error, so the exact Bot API text is not verified) or when `getChat` then reports `has_restricted_voice_and_video_messages` (Bot API, ChatFullInfo: "the privacy settings of the other party restrict sending voice and video note messages"). Any other failure still fails the job.
+
+- Then the job is `done` with `held = {at, duration}` (the note stays at `jobs/<id>/note.mp4`), and `bot.finish` announces (a new message, so it notifies: Ready notice) how to allow the bot plus a `Resend` button (`resend:<job id>`). A delivered note sets `held` to `None` and edits `done` as before.
+- `Resend` (a callback query, so `setup` subscribes to `callback_query` as well as `message`: `bot.UPDATES`; rerun `setup` after the deploy that adds it, or Telegram keeps the old list) runs in `web`: owner check, `HOLD` = 10 minutes from `held.at`, `volume.reload()`, the same `deliver`. Still restricted: an alert (≤ 200 characters) and the button stays. Delivered: the message becomes `done` with the editor button. Expired, or a newer render cleared `held` (`POST /render` resets it): an alert "no longer kept".
+- `HOLD` (owner asked for about five minutes, "safe and economical", 2026-10-27): 10 minutes, since the path to the exception (Settings → Privacy and Security → Voice Messages → exceptions) takes a while on first use, and the window costs nothing: notes are never deleted from the Volume, the retry is one Bot API upload from the warm `web`, no GPU.
+- Not verified against a real restricted account yet.
+

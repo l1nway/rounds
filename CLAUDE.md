@@ -54,4 +54,4 @@ Flow: video sent to the bot → webhook → `ingest` (CPU: MTProto download to t
 
 ## Env
 
-`.env` at the root (never committed), pushed to the Modal secret `rounds`: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_WEBHOOK_SECRET`, `ALLOWED_USER_IDS`, `MINIAPP_URL`, `HF_TOKEN` (optional, gated SAM 3 checkpoints). The Mini App gets the public API URL at build time (`VITE_API_URL`, a GitHub Actions variable, not a secret).
+`.env` at the root (never committed), pushed to the Modal secret `rounds`: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_WEBHOOK_SECRET`, `ALLOWED_USER_IDS`, `MINIAPP_URL`, `HF_TOKEN` (optional, gated SAM 3 checkpoints), `TELEGRAM_CLIENT_SECRET` (BotFather → Bot Settings → Login Widget, the OIDC client secret of the browser sign-in; the client id is the bot id, taken from the token). The Mini App gets the public API URL at build time (`VITE_API_URL`, a GitHub Actions variable, not a secret).

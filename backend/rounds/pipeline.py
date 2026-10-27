@@ -155,10 +155,10 @@ async def render_job(job_id: str, jobs, state, volume, models) -> None:
                 await volume.commit.aio()
         job = await stage(jobs, job, 'sending')
         with timed(job_id, 'render.send') as facts:
-            await bot.send_note(job, out, result['duration'])
-            facts.update(speed=(result['size'] / MB, 'MB/s'))
-        job = await save(jobs, job, status='done', stage=None, progress=1)
-        await bot.status(job, bot.TEXTS['done'], bot.editor(job))
+            held = await bot.deliver(job, out, result['duration'])  # [DOC: restricted-notes]
+            facts.update(speed=(result['size'] / MB, 'MB/s'), held=bool(held))
+        job = await save(jobs, job, status='done', stage=None, progress=1, held=held)
+        await save(jobs, job, status_message_id=await bot.finish(job))
         note(job_id, 'render', time.monotonic() - began, clip=round(end - start, 2), **describe(meta))
     except Exception as error:
         await fail(jobs, job, error)

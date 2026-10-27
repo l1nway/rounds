@@ -189,7 +189,7 @@ async def setup() -> str:
     url = await modal.Function.from_name('rounds', 'web').get_web_url.aio()
     async with bot.session():
         await bot.get_bot().set_webhook(
-            f'{url}/telegram/webhook', secret_token=env('TELEGRAM_WEBHOOK_SECRET'), allowed_updates=['message']
+            f'{url}/telegram/webhook', secret_token=env('TELEGRAM_WEBHOOK_SECRET'), allowed_updates=bot.UPDATES
         )
     return url
 

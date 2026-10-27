@@ -8,9 +8,9 @@ from pathlib import Path
 from aiogram import Bot, Dispatcher, F
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.filters import CommandStart
-from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, Message, WebAppInfo
+from aiogram.types import CallbackQuery, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, Message, WebAppInfo
 
-from .config import OUT_SIZE, allowed_users, env
+from .config import JOBS_DIR, OUT_SIZE, allowed_users, env
 
 MAX_FILE = 2000 * 1024 * 1024
 WARM_FILE = 100 * 1024 * 1024
@@ -34,10 +34,20 @@ TEXTS = {
     'sending': 'Sending the round…',
     'retrying': 'The server stopped, starting again (attempt {} of {})…',
     'done': 'Done. Open the editor again to make another round from this video.',
+    'held': 'Telegram refused the round: your privacy settings block video messages from this bot. '
+    'Open Settings → Privacy and Security → Voice Messages, add this bot to the exceptions '
+    'and tap Resend within 10 minutes.',
+    'still_held': 'Still blocked. Settings → Privacy and Security → Voice Messages → add this bot to the exceptions.',
+    'expired': 'This round is no longer kept. Open the editor to render it again.',
     'failed': 'Something went wrong. {}.',
 }
 ACTION_EVERY = 4
 NOTE_NAME = 'round'
+# [DOC: restricted-notes]
+HOLD = 600
+FORBIDDEN = 'VOICE_MESSAGES_FORBIDDEN'
+RESEND = 'resend:'
+UPDATES = ['message', 'callback_query']
 VIDEO = F.video | F.video_note | F.document.mime_type.startswith('video/')
 
 dp = Dispatcher()
@@ -57,8 +67,8 @@ async def session(_=None):
         await get_bot().session.close()
 
 
-async def feed(update: dict, jobs, spawn) -> None:
-    await dp.feed_webhook_update(get_bot(), update, jobs=jobs, spawn=spawn)
+async def feed(update: dict, jobs, spawn, volume) -> None:
+    await dp.feed_webhook_update(get_bot(), update, jobs=jobs, spawn=spawn, volume=volume)
 
 
 # [DOC: launch-aspect]
@@ -111,6 +121,31 @@ async def send_note(job: dict, path: str, duration: float) -> None:
         await get_bot().send_video_note(job['chat_id'], note, **sent)
 
 
+# [DOC: restricted-notes]
+async def deliver(job: dict, path: str, duration: float) -> dict | None:
+    try:
+        await send_note(job, path, duration)
+    except TelegramAPIError as error:
+        if FORBIDDEN not in error.message and not await restricted(job['chat_id']):
+            raise
+        return {'at': time.time(), 'duration': duration}
+    return None
+
+
+async def restricted(chat_id: int) -> bool:
+    with suppress(TelegramAPIError):
+        return bool((await get_bot().get_chat(chat_id)).has_restricted_voice_and_video_messages)
+    return False
+
+
+async def finish(job: dict) -> int:
+    if not job.get('held'):
+        await status(job, TEXTS['done'], editor(job))
+        return job['status_message_id']
+    button = InlineKeyboardButton(text='Resend', callback_data=RESEND + job['id'])
+    return await announce(job, TEXTS['held'], InlineKeyboardMarkup(inline_keyboard=[[button]]))
+
+
 @dp.message(~F.from_user.id.func(lambda user_id: user_id in allowed_users()))
 async def private(message: Message) -> None:
     await message.answer(TEXTS['private'])
@@ -140,6 +175,27 @@ async def video(message: Message, jobs, spawn) -> None:
     # [DOC: warm-start]
     if (media.file_size or MAX_FILE) <= WARM_FILE:
         await spawn['warm']()
+
+
+# [DOC: restricted-notes]
+@dp.callback_query(F.data.startswith(RESEND))
+async def resend(query: CallbackQuery, jobs, volume) -> None:
+    job = await jobs.get.aio(query.data.removeprefix(RESEND))
+    if not job or job['user_id'] != query.from_user.id:
+        await query.answer()
+        return
+    if not job.get('held') or time.time() - job['held']['at'] > HOLD:
+        await query.answer(TEXTS['expired'], show_alert=True)
+        return
+    with suppress(RuntimeError):
+        await volume.reload.aio()
+    if await deliver(job, f'{JOBS_DIR}/{job["id"]}/note.mp4', job['held']['duration']):
+        await query.answer(TEXTS['still_held'], show_alert=True)
+        return
+    await query.answer()
+    job = {**job, 'held': None}
+    await jobs.put.aio(job['id'], job)
+    await finish(job)
 
 
 @dp.message()
