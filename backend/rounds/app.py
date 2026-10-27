@@ -2,13 +2,14 @@ import asyncio
 import importlib
 import os
 import threading
+from functools import partial
 from pathlib import Path
 
 import modal
 
-from . import locate, pipeline
+from . import bot, locate, pipeline
 from .api import create
-from .config import DATA_DIR, DCE_WEIGHTS, DEEP_FILTER, DVD_WEIGHTS, JOBS_DIR, RIFE_WEIGHTS, SEEDVR_CODE
+from .config import DATA_DIR, DCE_WEIGHTS, DEEP_FILTER, DVD_WEIGHTS, JOBS_DIR, RIFE_WEIGHTS
 
 PROJECT = Path(__file__).parent.parent
 FFMPEG = (
@@ -33,14 +34,13 @@ REPAIR = (
      '09f202b690f82da939b8e6ec8535960ae97ad8bd/Zero-DCE%2B%2B/snapshots_Zero_DCE%2B%2B/Epoch99.pth',
      'ca8855b90df9a80fa4195a831f33d3476b1964f787eb70602797c773067f3b84'),
 )  # fmt: skip
-# [DOC: upscale]
-SEEDVR = 'https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler', '4490bd1f482e026674543386bb2a4d176da245b9'
 MODELS_DIR = '/models'
 # [DOC: render-gpus]
 LIFT_GPUS = ['L4', 'L40S', 'A100-40GB']
 RENDER_GPUS = ['L40S', 'A100-40GB', 'L4', 'H100']
 RENDERS = 2
 LIFT_IDLE, RENDER_IDLE = 120, 240
+WATCH_MINUTES = 2
 SNAPSHOT_IMPORTS = '.render', '.upscale', 'transformers.models.sam2_video.modeling_sam2_video'
 
 
@@ -48,9 +48,9 @@ def fetch(path: str, url: str, sha: str) -> tuple[str, str]:
     return f'curl -fsSL --create-dirs -o {path} {url}', f'echo "{sha}  {path}" | sha256sum -c'
 
 
-def image(*groups: str, commands: tuple[str, ...] = ()) -> modal.Image:
+def image(*groups: str, commands: tuple[str, ...] = (), base: modal.Image | None = None) -> modal.Image:
     return (
-        modal.Image.debian_slim(python_version='3.12')
+        (base or modal.Image.debian_slim(python_version='3.12'))
         .apt_install('curl', 'xz-utils', 'git')
         .run_commands(
             f'curl -fsSL -o /tmp/ffmpeg.tar.xz {FFMPEG[0]}',
@@ -68,10 +68,8 @@ def image(*groups: str, commands: tuple[str, ...] = ()) -> modal.Image:
 app = modal.App('rounds')
 # [DOC: rife-weights]
 weights = tuple(c for f in ((RIFE_WEIGHTS, *RIFE), *REPAIR) for c in fetch(*f))
-seedvr = (f'git init -q {SEEDVR_CODE} && git -C {SEEDVR_CODE} fetch -q --depth 1 {SEEDVR[0]} {SEEDVR[1]}',
-          f'git -C {SEEDVR_CODE} checkout -q FETCH_HEAD')  # fmt: skip
 voice = (*fetch(DEEP_FILTER, *VOICE), f'chmod +x {DEEP_FILTER} && {DEEP_FILTER} --version')
-cpu_image, gpu_image = image(), image('gpu', commands=(*weights, *seedvr, *voice))
+cpu_image, gpu_image = image(), image('gpu', commands=(*weights, *voice))
 data = modal.Volume.from_name('rounds-data', create_if_missing=True)
 models = modal.Volume.from_name('rounds-models', create_if_missing=True)
 jobs = modal.Dict.from_name('rounds-jobs', create_if_missing=True)
@@ -88,8 +86,8 @@ with gpu_image.imports():
 @modal.concurrent(max_inputs=20)
 @modal.asgi_app()
 def web():
-    lift, studio = Lift(), Render()
-    calls = {'ingest': ingest.spawn.aio, 'render': studio.run.spawn.aio, 'warm': lift.warm.spawn.aio,
+    lift, studio, start = Lift(), Render(), starter()
+    calls = {'ingest': partial(start, 'ingest'), 'render': partial(start, 'render'), 'warm': lift.warm.spawn.aio,
              'warm_render': studio.warm.spawn.aio, 'prepare': studio.prepare.spawn.aio,
              'segment': lift.segment.remote.aio, 'look': lift.look.remote.aio,
              'follow': lift.follow.remote.aio}  # fmt: skip
@@ -100,7 +98,8 @@ def web():
 @app.function(image=cpu_image, secrets=secrets, volumes={DATA_DIR: data}, cpu=4, memory=4096, timeout=3600,
               max_containers=1, region='eu', enable_memory_snapshot=True)  # fmt: skip
 async def ingest(job_id: str) -> None:
-    await pipeline.ingest_job(job_id, jobs, state, data)
+    async with bot.session():  # [DOC: bot-session]
+        await pipeline.ingest_job(job_id, jobs, state, data)
 
 
 # [DOC: render-warm]
@@ -124,7 +123,7 @@ class Render:
 
     @modal.method()
     async def run(self, job_id: str) -> None:
-        async with self.running:
+        async with self.running, bot.session():
             await pipeline.render_job(job_id, jobs, state, data, models)
 
 
@@ -185,11 +184,26 @@ class Lift:
 
 @app.function(image=cpu_image, secrets=secrets)
 async def setup() -> str:
-    from .bot import get_bot
     from .config import env
 
     url = await modal.Function.from_name('rounds', 'web').get_web_url.aio()
-    await get_bot().set_webhook(
-        f'{url}/telegram/webhook', secret_token=env('TELEGRAM_WEBHOOK_SECRET'), allowed_updates=['message']
-    )
+    async with bot.session():
+        await bot.get_bot().set_webhook(
+            f'{url}/telegram/webhook', secret_token=env('TELEGRAM_WEBHOOK_SECRET'), allowed_updates=['message']
+        )
     return url
+
+
+# [DOC: stuck-jobs]
+def starter():
+    return partial(pipeline.start, {'ingest': ingest.spawn.aio, 'render': Render().run.spawn.aio}, state)
+
+
+@app.function(image=cpu_image, secrets=secrets, schedule=modal.Period(minutes=WATCH_MINUTES), scaledown_window=2)
+async def watch() -> None:
+    async with bot.session():
+        await pipeline.watch(jobs, state, starter())
+
+
+# [DOC: upscale-image]
+from . import upscale  # noqa: E402, F401

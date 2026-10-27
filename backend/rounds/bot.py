@@ -32,6 +32,7 @@ TEXTS = {
     'framing': 'Planning a smooth camera path…',
     'rendering': 'Rendering the round… {:.0%}',
     'sending': 'Sending the round…',
+    'retrying': 'The server stopped, starting again (attempt {} of {})…',
     'done': 'Done. Open the editor again to make another round from this video.',
     'failed': 'Something went wrong. {}.',
 }
@@ -45,6 +46,15 @@ dp = Dispatcher()
 @cache
 def get_bot() -> Bot:
     return Bot(env('TELEGRAM_BOT_TOKEN'))
+
+
+# [DOC: bot-session]
+@asynccontextmanager
+async def session(_=None):
+    try:
+        yield
+    finally:
+        await get_bot().session.close()
 
 
 async def feed(update: dict, jobs, spawn) -> None:

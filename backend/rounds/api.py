@@ -104,7 +104,7 @@ def signed_url(base: str, job_id: str, name: str) -> str:
 
 def create(jobs, volume, spawn) -> FastAPI:
     origin = '{0.scheme}://{0.netloc}'.format(urlsplit(env('MINIAPP_URL')))
-    api = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    api = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=bot.session)  # [DOC: bot-session]
     api.add_middleware(CORSMiddleware, allow_origins=[origin], **CORS)
 
     async def own_job(job_id: str, authorization: str) -> dict:
