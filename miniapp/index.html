@@ -37,6 +37,16 @@
 
       html {background: var(--bg); color: var(--text)}
     </style>
+    <!-- [DOC: launch-router] -->
+    <script>
+      {
+        let telegram = /[#&]tgWebAppData=/.test(location.hash)
+        try {telegram ||= sessionStorage.__telegram__initParams?.includes('tgWebAppData')} catch {}
+        const web = __WEB__, add = (tag, props) => document.head.append(Object.assign(document.createElement(tag), props))
+        if (telegram) document.write(__MINIAPP__)
+        else {web.preload.forEach(href => add('link', {rel: 'modulepreload', href})); add('script', {type: 'module', src: web.entry})}
+      }
+    </script>
     <!-- [DOC: telegram-script] -->
     <script src='https://telegram.org/js/telegram-web-app.js?64'></script>
   </head>

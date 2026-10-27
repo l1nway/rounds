@@ -13,7 +13,7 @@ export const haptic = {
 
 export const close = () => tg()?.close()
 
-const enter = () => {document.documentElement.dataset.enter = ''}
+export const enter = () => {document.documentElement.dataset.enter = ''}
 
 // [DOC: entrance]
 const settle = (app, fullscreen) => {
