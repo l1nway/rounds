@@ -26,7 +26,7 @@ The draft lives in the editor, so every draft change renders `Editor`; the child
 - `interpolate` ("Smooth to 60 fps") reads `meta.interpolable`, which the backend decides at ingest (`backend/rounds/README.md`, Output rate); jobs ingested before the field have it undefined, so the row is absent for them.
 - `upscale` ("AI upscale", 2026-10-26, contract with the backend session): shown when `min(meta.width, meta.height) < 640`, the same condition the backend applies. The hint's "about 4 min per 10 s" is the backend's L4 measurement at 30 fps (10 s of 384² took 254 s); it doubles at 60 fps. The copy does not branch on the rate on purpose (short hint, no logic for it).
 - `metadata` ("Keep original metadata") reads `meta.tags` (the source tags the note can carry, `backend/rounds/README.md`, Note metadata): shown when it has at least one key. Its hint must keep saying that the location travels with the note (privacy: the owner sends notes to other people).
-- The sliders are not in `OPTIONS`: they carry a float value each, their own top-level field (`look`, `exposure`, `denoise`), and come from `LEVELS` (Level rows), rendered after the switch rows. HDR and exposure have no `needs` (every video); noise reduction needs `meta.has_audio` and is sent as 0 for a video without audio.
+- The sliders are not in `OPTIONS`: they carry a float value each, their own top-level field (`look`, `exposure`, `stabilize`, `denoise`), and come from `LEVELS` (Level rows), rendered after the switch rows. HDR and exposure have no `needs` (every video); noise reduction needs `meta.has_audio` and is sent as 0 for a video without audio.
 - The size and codec switches (`hires`, then `hd720`, `hd1080`, `hevc`) were removed for good on 2026-10-26: Telegram delivers any note above 640 as a regular video (`backend/rounds/README.md`, High resolution); the backend ignores the keys in old requests. The codec is its own field (Codec picker).
 - The mock (`dev/mock-media.mjs`, 960 × 540 test video) shows every row except `upscale`; the Dev panel's switches (Has audio, Below 60 fps, Has metadata) hide the others, and a video under 640 px loaded through the panel shows `upscale` (`dev/README.md`).
 
@@ -62,7 +62,7 @@ Owner request 2026-10-26: a radio choice of the note's codec. `CODECS` in `draft
 
 ## Level rows
 
-The sliders are one component, `Level` in `options.jsx`, driven by `LEVELS` in `draft.js` (owner request 2026-10-26 with the HDR look: no copy-paste of the noise slider). Each entry: `key` (the draft field and the top-level field of `POST /render`), `label`, `min`, `max`, `steps` (the slider's step is `(max − min) / steps`), `zones`, optional `unit` and `needs(meta)` (missing = every video). Order on screen: HDR, Exposure, Reduce noise, after the switch rows and before the codec.
+The sliders are one component, `Level` in `options.jsx`, driven by `LEVELS` in `draft.js` (owner request 2026-10-26 with the HDR look: no copy-paste of the noise slider). Each entry: `key` (the draft field and the top-level field of `POST /render`), `label`, `min`, `max`, `steps` (the slider's step is `(max − min) / steps`), `zones`, optional `unit` and `needs(meta)` (missing = every video). Order on screen: HDR, Exposure, Stabilize, Reduce noise, after the switch rows and before the codec.
 
 - Draft and payload: `init` takes every `key` from `job.request` (default 0); `levelsFor` sends every key, 0 for a level this video does not show (`shows`), so a prefilled `denoise` of a video without audio is never sent.
 - Zones: `{to, hint}` per zone; the zone is the first entry whose `to` ≥ the value. The hint is the zone's, so the `Swap` under the title swaps only on a zone change, never per step. `aria-valuetext` is the hint, with the value in front when the level has a `unit`.
@@ -90,6 +90,10 @@ Owner request 2026-10-26: one "HDR" slider, 0..1 (`look`, top-level in `POST /re
 ## Exposure slider
 
 Owner request 2026-10-26: a smart exposure, −2..+2 EV in 0.1 steps (`exposure`, top-level in `POST /render`), combinable with the HDR slider: brighter or darker without blowing highlights or breaking colours (the backend's `curve` shifts the base layer by the EV and compresses above `KNEE` only as far as the highlights need). Centred: 0 in the middle is Off, the fill runs from the centre to the thumb, the value shows as `+0.7 EV`, the zone hint says "Brighter, highlights protected" or "Darker, colours kept". The zone border sits at −0.05 so that every negative step (−0.1 and below) is "darker" and exactly 0 is "Off". Double tap resets to 0 (Level rows).
+
+## Stabilize slider
+
+Owner request 2026-10-27: video stabilization as a slider like the others, off by default (`stabilize`, 0..1 in 100 steps, top-level in `POST /render`, backend `backend/rounds/README.md`, Stabilization). Every video, no `needs`. 0 is the old path; above 0 the backend compensates the shake fully and the value sets how much of the frame edge it may crop or paint to do it, so more value = steadier and more edge fill (`backend/rounds/README.md`, Stabilization, Slider). The slow roll and intentional movement stay at any value (owner: smooth, do not lock). Zones: Off, "Steadies shaky hands, fills the edges". No preview yet: the viewer shows the source; a stabilised proxy preview is a later step. Not checked in the mock or on the iPhone.
 
 ## Noise slider
 
@@ -166,3 +170,7 @@ The option rows are iOS switches built on a real `<input type='checkbox' role='s
 - Commit on release (WebKit's `willDispatchClick`): after at least one flip, the value is the visual state (back where it started = no change); otherwise toggle (a tap, a hold, a drag that never crossed). `pointercancel` commits the same way while tracking (WebKit treats `touchcancel` like `touchend`) and does nothing for an untracked touch.
 - We commit on `pointerup` ourselves instead of trusting the native click: iOS may send no click after a long hold or a moved finger. The click that may follow is cancelled in the capture phase (`g.done`; `preventDefault` on a checkbox click restores its state and fires no `change`); keyboard clicks (`detail` 0) and clicks on the label text (their `pointerdown` is not on the input, so `gesture` is null) pass and toggle natively. A new `pointerdown` clears a leftover gesture and its timer.
 - Not copied: WebKit's hold timer captures the first touch once (`lazyInitialize`), apparently a bug.
+
+## Tiers
+
+`GET /api/jobs/:id` carries `tier` (`backend/rounds/README.md`, Tiers). Items with `pro: true` in `OPTIONS` / `LEVELS` are locked on `free` (`locked(tier, item)`): the row stays visible but disabled (the shared disabled style), with a PRO badge next to the label, and `optionsFor` / `levelsFor` send them as off / 0, so a draft restored from an earlier request cannot post them. These two take the job (`meta` + `tier`), not `meta`. A free job may go without a selection (centre crop, `isValid`); a selection, when given, centres the frame. The server refuses PRO values anyway; the lock only keeps the UI honest. The viewer skips the warm, tap-to-lift and track preview calls on `free` (`viewer/README.md`, Tiers).

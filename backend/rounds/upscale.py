@@ -24,6 +24,7 @@ SPARSE = 2.0 * 768 * 1280
 # [DOC: upscale-chunks]
 LEAD, MIN_CHUNK, MAX_CHUNK, WORKERS = 16, 200, 600, 4
 GPUS, IDLE = ['L40S', 'A100-40GB', 'A100-80GB'], 60
+WARM_WAIT, WARMING = 300, []
 DEPTH = 65535
 RAW = ['-f', 'rawvideo', '-pix_fmt', 'rgb48le']
 LOSSLESS = ['-c:v', 'ffv1', '-level', '3', '-pix_fmt', 'gbrp10le', '-f', 'matroska']
@@ -72,8 +73,7 @@ def plan(n: int) -> list[tuple[int, int, int]]:
 async def warm(job: dict) -> None:
     request = job['request']
     n = media.frame_count(request['start'], request['end'], source.out_rate(job['meta'], request['options']))
-    for _ in range(min(WORKERS, len(plan(n)))):
-        await Upscaler().warm.spawn.aio()
+    WARMING[:] = [await Upscaler().warm.spawn.aio() for _ in range(min(WORKERS, len(plan(n))))]
 
 
 def ffmpeg(args: list, data: bytes) -> bytes:
@@ -99,6 +99,10 @@ def frames(stream, device):
     if not kept:
         return
     video, size = np.stack(kept).astype(np.uint16), kept[0].shape[0]
+    with contextlib.suppress(Exception):  # warm wait
+        for call in WARMING:
+            call.get(timeout=WARM_WAIT)
+    WARMING.clear()
     calls = [Upscaler().run.spawn(pack(video[s:b]), size, a - s, OUT_SIZE) for s, a, b in plan(len(video))]
     for call in calls:
         for img in unpack(call.get(), OUT_SIZE):

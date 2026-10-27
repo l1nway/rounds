@@ -101,13 +101,45 @@ async def located(state, job_id: str, start: float, end: float, prompt: dict, co
         return sliced(entry, start, end), False
 
 
-async def frame_path(job_id: str, jobs, state, job: dict, src: str) -> tuple[dict, np.ndarray, list]:
-    from . import camera
+def flowing(src, meta: dict, request: dict):
+    from . import motion, source
+
+    rate, start, end = source.out_rate(meta, request['options']), request['start'], request['end']
+    args = src, meta, start, media.frame_count(start, end, rate), rate, source.interpolating(meta, request['options'])
+    return asyncio.create_task(asyncio.to_thread(motion.flows, *args))
+
+
+# [DOC: stabilization]
+async def frame_path(job_id: str, jobs, state, job: dict, src: str) -> tuple[dict, np.ndarray, list, dict | None]:
+    from . import camera, motion
 
     request, meta, loop = job['request'], job['meta'], asyncio.get_running_loop()
+    start, end, size = request['start'], request['end'], (meta['width'], meta['height'])
+    n, strength, tracked = media.frame_count(start, end), request.get('stabilize', 0), follows(meta, request)
+    moving = flowing(src, meta, request) if strength > 0 else None
+    if not tracked and not moving:
+        return job, camera.still(n, *size), [], None
+    hit = {'found': {'present': np.zeros(n, bool), **dict.fromkeys(('cx', 'cy', 'r'), np.full(n, np.nan))}, 'cuts': []}
+    if tracked:
+        job, hit = await tracking(job_id, jobs, state, job, src, loop)
+    job, world = await stage(jobs, job, 'framing'), None
+    if moving:
+        with timed(job_id, 'render.motion') as facts:
+            flow = await moving
+            p = await asyncio.to_thread(motion.params, flow, size, hit['found'] if tracked else None, hit['cuts'])
+            world = motion.world(flow, p, strength, size, n) if len(flow['t']) > 1 else None
+            facts.update(frames=len(flow['t']))
+    with timed(job_id, 'render.camera'):
+        zoom = request['options'].get('zoom', False)
+        path = await asyncio.to_thread(camera.solve, hit['found'], *size, hit['cuts'], zoom=zoom, world=world)
+    if tracked:
+        np.savez(f'{JOBS_DIR}/{job_id}/track.npz', **hit['found'])
+    return job, path, hit['cuts'], world
+
+
+async def tracking(job_id: str, jobs, state, job: dict, src: str, loop) -> tuple[dict, dict]:
+    request, meta = job['request'], job['meta']
     start, end, prompt = (request[k] for k in SPAN)
-    if not follows(meta, request):
-        return job, camera.still(media.frame_count(start, end), meta['width'], meta['height']), []
 
     @contextlib.asynccontextmanager
     async def step(name: str):
@@ -124,12 +156,7 @@ async def frame_path(job_id: str, jobs, state, job: dict, src: str) -> tuple[dic
     with timed(job_id, 'render.locate') as facts:
         hit, cached = await located(state, job_id, start, end, prompt, compute, cancellable=False)
         facts.update(cached=cached, cuts=len(hit['cuts']))
-    job = await stage(jobs, job, 'framing')
-    with timed(job_id, 'render.camera'):
-        zoom, (w, h) = request['options'].get('zoom', False), (meta['width'], meta['height'])
-        path = await asyncio.to_thread(camera.solve, hit['found'], w, h, hit['cuts'], zoom=zoom)
-    np.savez(f'{JOBS_DIR}/{job_id}/track.npz', **hit['found'])
-    return job, path, hit['cuts']
+    return job, hit
 
 
 # [DOC: track-cache]

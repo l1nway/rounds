@@ -9,10 +9,14 @@ import cv2
 import numpy as np
 import torch
 
-from . import camera, color, encode, look, media, repair, smooth, source, tags, upscale
+from . import camera, color, encode, fill, look, media, motion, repair, smooth, source, tags, upscale
 from .config import FPS, OUT_SIZE
 
 TAPS = 3
+# [DOC: stabilization-warp]
+OVER = 2
+GUARD = 4
+BICUBIC = {'mode': 'bicubic', 'padding_mode': 'border', 'align_corners': False}
 PROGRESS_EVERY = 15
 FRAMES_SHARE = 0.6
 # [DOC: look-preview]
@@ -54,7 +58,24 @@ def window(buf, box, geo, device, out: tuple[int, int], look=None) -> torch.Tens
 
 
 def crop(buf, row, geo, device, size: int = OUT_SIZE, look=None) -> torch.Tensor:
-    return window(buf, (row[0], row[1], row[2], row[2]), geo, device, (size, size), look)
+    if len(row) < 4 or not row[3]:
+        return window(buf, (row[0], row[1], row[2], row[2]), geo, device, (size, size), look)
+    return turned(buf, row, geo, device, size, look)
+
+
+# [DOC: stabilization-warp]
+@torch.inference_mode()
+def turned(buf, row, geo, device, size: int, look) -> torch.Tensor:
+    (cx, cy, side, angle), big = row[:4], OVER * size
+    c, s = math.cos(angle), math.sin(angle)
+    m, step = math.ceil(big * (abs(c) + abs(s))) + 2 * GUARD, side / big
+    lin = window(buf, (cx, cy, m * step, m * step), geo, device, (m, m), look)
+    v = (torch.arange(big, device=device, dtype=torch.float32) + 0.5) / big - 0.5
+    gy, gx = torch.meshgrid(v * big, v * big, indexing='ij')
+    grid = torch.stack([c * gx - s * gy, s * gx + c * gy], -1) * (2 / m)
+    x = torch.nn.functional.grid_sample(lin[None], grid[None], **BICUBIC)
+    _, _, w = weights(big / 2, big, big, device, size)
+    return (w @ x[0].clamp(min=0) @ w.T).clamp(min=0)
 
 
 def still(buf, geo, device, out: tuple[int, int], look) -> torch.Tensor:
@@ -83,23 +104,26 @@ def cfr(src, meta: dict, start: float, n: int, rate: float, at, cut, raw, slow: 
 
 # [DOC: output-rate]
 def render(
-    src, meta: dict, start: float, end: float, path, cuts, out, options: dict, codec: str, progress=None
+    src, meta: dict, start: float, end: float, path, cuts, out, options: dict, codec: str, progress=None, world=None
 ) -> dict:
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     rate = source.out_rate(meta, options)
     n, (geo, raw) = media.frame_count(start, end, rate), layout(meta)
     up = upscale.wanted(meta, options)
     size = upscale.side(meta) if up else OUT_SIZE
-    at, stats = camera.sampler(np.asarray(path, np.float64), cuts), {}
+    base, stats = camera.sampler(np.asarray(path, np.float64), cuts), {}
+    at = motion.placer(base, world) if world else base
     tone = look.Look(options.get('look', 0), options.get('exposure', 0), meta['transfer'], rate)
     cut = partial(crop, geo=geo, device=device, size=size, look=tone)
-    if source.interpolating(meta, options):
+    if mixed := source.interpolating(meta, options):
         stats = {'synth': 0, 'dupes': 0, 'seams': 0}
         frames = media.retrying(
             lambda slow: smooth.frames(src, meta, start, n, rate, at, cuts, cut, raw, device, stats, slow, size)
         )
     else:
         frames = media.retrying(lambda slow: cfr(src, meta, start, n, rate, at, cut, raw, slow))
+    if world:  # [DOC: edge-fill]
+        frames = fill.frames(frames, fill.Edges(base, world, size, rate, mixed, device), n)
     if tone.repair > 0:  # [DOC: repair]
         frames = repair.frames(frames, device, tone.repair, rate)
     if up:

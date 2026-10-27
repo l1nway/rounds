@@ -10,7 +10,8 @@ from urllib.request import Request, urlopen
 
 from fastapi import HTTPException
 
-from .config import allowed_users, env
+from . import config
+from .config import env
 
 OAUTH = 'https://oauth.telegram.org'
 SCOPE = 'openid profile telegram:bot_access'
@@ -29,7 +30,7 @@ def bot_id() -> str:
 
 
 def allowed(user_id) -> int:
-    if user_id not in allowed_users():
+    if not config.admits(user_id):  # [DOC: tiers]
         raise HTTPException(403, 'This bot is private')
     return user_id
 

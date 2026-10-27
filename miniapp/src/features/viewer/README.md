@@ -174,3 +174,7 @@ Owner rule 2026-10-27: a new event replaces the previous one and takes over its 
 - No `AbortController`: aborting the fetch would not stop the GPU call on Modal; the single flight is what keeps the container free.
 - `Look` raises the editor's `previewing` from the start of a flight until it lands with nothing queued, and lowers it on unmount. That draft flag locks the HDR and exposure sliders (`editor/README.md`, Slider lock). `want` is cleared while a slider is pressed, during playback and offline, so a landing flight then releases the lock without a new call.
 - `DEBOUNCE` 350 ms is at least the slider's double-tap window (`DOUBLE` in `components/slider.jsx`). With a shorter debounce the first tap of a double tap would start a flight, and the lock would swallow the second tap (the exposure reset). Change both together.
+
+## Tiers
+
+On a `free` job (`editor/README.md`, Tiers) `useLift` and `useFollow` get no job id: no warm calls, no outline, no track preview, which the free server would refuse with 403. Points and the box still work: they centre the free crop.

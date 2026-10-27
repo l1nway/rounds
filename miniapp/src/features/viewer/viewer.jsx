@@ -42,7 +42,7 @@ function useLift(job, dispatch, readOnly) {
   const [lift, setLift] = useState(null)
   const [seen, setSeen] = useState(job)
   const flight = useRef({want: null, busy: false})
-  const id = job?.id
+  const id = job?.tier === 'free' ? null : job?.id  // [DOC: tiers]
   if (job !== seen) {setSeen(job); setLift(prefilled(job))}
 
   useEffect(() => {
@@ -71,7 +71,7 @@ function useLift(job, dispatch, readOnly) {
   const ask = selection => {
     dispatch({mask: null})
     flight.current.want = null
-    if (!asks(selection)) return setLift(null)
+    if (!asks(selection) || !id) return setLift(null)
     const {time, points, box} = selection
     setLift(prev => prev?.time === time ? {...prev, pending: true} : {time, candidates: [], index: 0, best: 0, pending: true})
     flight.current.want = {time, points, box}
@@ -142,7 +142,7 @@ export default memo(function Viewer({job, notice, aspect, selection, start, end,
   const [spinning, spinner] = usePresence(waiting && loaded)
   const {time, points, box} = selection
   const {lift, ask, cycle} = useLift(job, dispatch, readOnly)
-  const follow = useFollow(job?.id, selection, lift?.candidates[lift.index]?.mask ?? null, Boolean(lift?.pending), start, end)
+  const follow = useFollow(job?.tier === 'free' ? null : job?.id, selection, lift?.candidates[lift.index]?.mask ?? null, Boolean(lift?.pending), start, end)
   const graded = look > 0 || exposure !== 0
   const lookReady = useLook(loaded, graded)
   const {down, move, up, hide} = useGestures({job, selection, dispatch, readOnly, refs, ask, cycle})

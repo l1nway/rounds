@@ -2,6 +2,7 @@ import {useEffect, useLayoutEffect, useReducer, useRef} from 'react'
 import Swap from '../../components/swap.jsx'
 import {merge, useOnline} from '../../hooks/state.js'
 import {API, authorize, post} from '../../services/api.js'
+import Upload from '../upload/upload.jsx'
 
 const SESSION = 'rounds-session'
 const PENDING = 'rounds-login'
@@ -13,7 +14,6 @@ const FLOW = [{transform: 'translate(0, 0)'}, {transform: 'translate(-50%, -50%)
 const TIMING = {duration: 6000, easing: 'ease-in-out', iterations: Infinity, direction: 'alternate', pseudoElement: '::before'}
 const TEXTS = {
   intro: 'Turn any video into a Telegram round. Sign in with Telegram to continue.',
-  signedIn: 'Upload from the browser comes next. For now, send your videos to the bot.',
   offline: 'You are offline. Signing in needs the connection.',
   cancelled: 'Telegram did not sign you in. Try again.',
   stale: 'This sign-in link has expired. Try again.',
@@ -95,7 +95,7 @@ export default function Login() {
     <main className='login'>
       <div className='login-mark enter' aria-hidden='true'/>
       <h1 className='enter'>{user.name ? `Signed in as ${user.name}` : 'Signed in'}</h1>
-      <p className='enter'>{TEXTS.signedIn}</p>
+      <Upload/>
       <button className='login-out enter' type='button' onClick={signOut}>Sign out</button>
     </main>
   )

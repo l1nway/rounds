@@ -38,9 +38,10 @@ def model(device, side: int):
 
 
 # [DOC: timed-decode]
-def decode(src, meta: dict, start: float, dur: float, pix_fmt: str, slow: bool) -> tuple[subprocess.Popen, queue.Queue]:
+def decode(src, meta: dict, start: float, dur: float, pix_fmt: str, slow: bool,
+           vf: str = '') -> tuple[subprocess.Popen, queue.Queue]:  # fmt: skip
     head, cut = media.open_at(src, start, slow)
-    chain = ','.join(x for x in (cut, f'trim=end={dur:.3f}', 'showinfo') if x)
+    chain = ','.join(x for x in (cut, f'trim=end={dur:.3f}', vf, 'showinfo') if x)
     cmd = ['ffmpeg', '-v', 'level+info', '-hide_banner', '-nostats', '-nostdin', *head, '-map', media.video(meta),
            '-vf', chain, '-fps_mode', 'passthrough', '-pix_fmt', pix_fmt, '-f', 'rawvideo', 'pipe:1']  # fmt: skip
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
@@ -158,7 +159,7 @@ def frames(src, meta: dict, start: float, n: int, rate: float, at, cuts, cut, ra
             if kept and gap <= seam.HOLE and t - kept[-1].t < MAX_GAP and diff.max() <= level:
                 stats['dupes'] += 1
                 continue
-            img = (cut(buf, win * [1, 1, side / out], size=side).clamp(0, 1) ** (1 / GAMMA))[None]
+            img = (cut(buf, np.r_[win[:2], win[2] * side / out, win[3:]], size=side).clamp(0, 1) ** (1 / GAMMA))[None]
             img = img.to(half)
             kept.append(Anchor(t, y, img, head(img), float(diff.mean())))
             frozen = diff.max() <= level

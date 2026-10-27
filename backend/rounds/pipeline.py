@@ -95,11 +95,9 @@ async def ingest_job(job_id: str, jobs, state, volume) -> None:
     try:
         report = reporter(job, 'downloading', asyncio.get_running_loop())
         async with bot.acting(job['chat_id'], 'typing'):
-            async with transfer.clients(state, 'ingest') as tg:
-                with timed(job_id, 'ingest.download') as facts:
-                    src = await transfer.download(tg, job['source_message_id'], f'{job_dir}/source', report)
-                    size = os.path.getsize(src) / MB
-                    facts.update(mb=round(size), speed=(size, 'MB/s'), region=os.environ.get('MODAL_REGION'))
+            with timed(job_id, 'ingest.download') as facts:  # [DOC: browser-upload]
+                upload = job.get('upload') and f'{job_dir}/{job["source"]}'
+                src = upload or await transfer.fetch(state, job, f'{job_dir}/source', report, facts)
             await bot.status(job, bot.TEXTS['probing'])
             with timed(job_id, 'ingest.probe') as facts:
                 meta = await asyncio.to_thread(source.probe, src)
@@ -141,12 +139,12 @@ async def render_job(job_id: str, jobs, state, volume, models) -> None:
     try:
         src, out = f'{job_dir}/{job["source"]}', f'{job_dir}/note.mp4'
         async with bot.acting(job['chat_id'], 'record_video_note'):
-            job, path, cuts = await locate.frame_path(job_id, jobs, state, job, src)
+            job, path, cuts, world = await locate.frame_path(job_id, jobs, state, job, src)
             np.save(f'{job_dir}/path.npy', path)
             job = await stage(jobs, job, 'rendering')
             report = reporter(job, 'rendering', loop)
             options = {**request['options'], **{k: request.get(k, 0) for k in ('denoise', 'look', 'exposure')}}
-            args = (src, meta, start, end, path, cuts, out, options, request.get('codec', 'av1'), report)
+            args = (src, meta, start, end, path, cuts, out, options, request.get('codec', 'av1'), report, world)
             with timed(job_id, 'render.encode') as facts:
                 result = await asyncio.to_thread(render.render, *args)
                 stats = {k: v for k, v in result.items() if k in LOGGED}

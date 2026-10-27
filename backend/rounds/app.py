@@ -84,7 +84,7 @@ with gpu_image.imports():
 @app.function(image=cpu_image, secrets=secrets, volumes={DATA_DIR: data}, scaledown_window=300,
               enable_memory_snapshot=True)  # fmt: skip
 @modal.concurrent(max_inputs=20)
-@modal.asgi_app()
+@modal.asgi_app(requires_proxy_auth=True)  # [DOC: tiers]
 def web():
     lift, studio, start = Lift(), Render(), starter()
     calls = {'ingest': partial(start, 'ingest'), 'render': partial(start, 'render'), 'warm': lift.warm.spawn.aio,
@@ -186,7 +186,7 @@ class Lift:
 async def setup() -> str:
     from .config import env
 
-    url = await modal.Function.from_name('rounds', 'web').get_web_url.aio()
+    url = env('ROUTER_URL')  # [DOC: tiers]
     async with bot.session():
         await bot.get_bot().set_webhook(
             f'{url}/telegram/webhook', secret_token=env('TELEGRAM_WEBHOOK_SECRET'), allowed_updates=bot.UPDATES

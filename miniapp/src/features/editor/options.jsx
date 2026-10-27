@@ -2,7 +2,7 @@ import {memo, useRef} from 'react'
 import Slider from '../../components/slider.jsx'
 import Swap from '../../components/swap.jsx'
 import {haptic} from '../../services/telegram.js'
-import {CODECS, LEVELS, OPTIONS, shows} from './draft.js'
+import {CODECS, LEVELS, OPTIONS, locked as proOnly, shows} from './draft.js'
 import './options.css'
 
 const FIRST_OPTION = 3
@@ -15,8 +15,11 @@ const PREVIEWED = new Set(['look', 'exposure'])
 const flipAt = ({start, on, flipped, box: {width: w, height: h}}) =>
   flipped ? w / 2 : !on && start > w - h ? start + REACH * w : on && start < h ? start - REACH * w : w / 2
 
+// [DOC: tiers]
+const Label = ({label, pro}) => pro ? <span className='options-label'>{label}<span className='options-pro'>PRO</span></span> : label
+
 // [DOC: switch]
-function Switch({name, label, hint, checked, disabled, order, onSet}) {
+function Switch({name, label, hint, checked, disabled, pro, order, onSet}) {
   const gesture = useRef(null)
   const set = (value, felt) => {if (!felt) haptic.tap('light'); onSet(name, value)}
 
@@ -65,9 +68,9 @@ function Switch({name, label, hint, checked, disabled, order, onSet}) {
 
   return (
     <label className='options-row enter' style={{'--i': order}} onPointerDown={down} onPointerMove={move} onPointerUp={end} onPointerCancel={end} onClickCapture={click}>
-      <span className='options-text'>{label}<small>{hint}</small></span>
+      <span className='options-text'><Label label={label} pro={pro}/><small>{hint}</small></span>
       <span className='options-switch'>
-        <input type='checkbox' role='switch' name={name} checked={checked} disabled={disabled} onChange={event => set(event.target.checked)}/>
+        <input type='checkbox' role='switch' name={name} checked={checked && !pro} disabled={disabled || pro} onChange={event => set(event.target.checked)}/>
       </span>
     </label>
   )
@@ -77,7 +80,7 @@ const zone = (zones, value) => zones.findIndex(({to}) => value <= to)
 const signed = (value, unit) => `${value > 0 ? '+' : '−'}${Math.abs(value).toFixed(1)} ${unit}`
 
 // [DOC: level-rows]
-function Level({name, level: {label, min, max, steps, unit, zones}, value, disabled, locked, order, onSet, onDrag}) {
+function Level({name, level: {label, min, max, steps, unit, zones}, value, disabled, pro, locked, order, onSet, onDrag}) {
   const {hint} = zones[zone(zones, value)]
   const shown = unit && value ? signed(value, unit) : ''
   const set = next => {
@@ -87,8 +90,8 @@ function Level({name, level: {label, min, max, steps, unit, zones}, value, disab
   return (
     <div className='options-row options-level enter' style={{'--i': order}}>
       <span>
-        <span className='options-text'><span>{label}{shown && <output>{shown}</output>}</span><Swap as='small' text={hint}/></span>
-        <Slider value={value} min={min} max={max} step={(max - min) / steps} origin={Math.max(min, 0)} reset={min < 0} disabled={disabled} locked={locked}
+        <span className='options-text'><span><Label label={label} pro={pro}/>{shown && <output>{shown}</output>}</span><Swap as='small' text={hint}/></span>
+        <Slider value={value} min={min} max={max} step={(max - min) / steps} origin={Math.max(min, 0)} reset={min < 0} disabled={disabled || pro} locked={locked}
           aria-label={label} aria-valuetext={shown ? `${shown}, ${hint}` : hint} aria-busy={locked || undefined} onChange={set} onDrag={onDrag}/>
       </span>
     </div>
@@ -108,10 +111,10 @@ function Codec({codec, disabled, order, onSet}) {
 }
 
 // [DOC: late-rows]
-export default memo(function Options({meta, options, codec, denoise, look, exposure, locked, readOnly, dispatch}) {
+export default memo(function Options({meta, tier, options, codec, stabilize, denoise, look, exposure, locked, readOnly, dispatch}) {
   const rows = meta ? OPTIONS.filter(({needs}) => needs(meta)) : []
   const levels = meta ? LEVELS.filter(level => shows(meta, level)) : []
-  const values = {denoise, look, exposure}
+  const values = {stabilize, denoise, look, exposure}
   const late = rows.length + levels.length
   const order = i => `calc(${i} + ${FIRST_OPTION} * var(--early, 0))`
   const set = (name, value) => dispatch(prev => ({options: {...prev.options, [name]: value}}))
@@ -119,8 +122,9 @@ export default memo(function Options({meta, options, codec, denoise, look, expos
   const drag = active => dispatch({adjusting: active})
   return (
     <>
-      {rows.map(({key, label, hint}, i) => <Switch key={key} name={key} label={label} hint={hint} checked={Boolean(options[key])} disabled={readOnly} order={order(i)} onSet={set}/>)}
-      {levels.map((level, i) => <Level key={level.key} name={level.key} level={level} value={values[level.key]} disabled={readOnly}
+      {rows.map((row, i) => <Switch key={row.key} name={row.key} label={row.label} hint={row.hint} checked={Boolean(options[row.key])} disabled={readOnly}
+        pro={proOnly(tier, row)} order={order(i)} onSet={set}/>)}
+      {levels.map((level, i) => <Level key={level.key} name={level.key} level={level} value={values[level.key]} disabled={readOnly} pro={proOnly(tier, level)}
         locked={locked && PREVIEWED.has(level.key)} order={order(rows.length + i)} onSet={setLevel} onDrag={drag}/>)}
       <Codec codec={codec} disabled={!meta || readOnly} order={`calc(${FIRST_OPTION} + ${late} * var(--early, 0))`} onSet={value => dispatch({codec: value})}/>
     </>

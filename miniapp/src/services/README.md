@@ -37,3 +37,7 @@ APIs used, all checked in core.telegram.org/bots/webapps (2026-10-25): `initData
 ## API URL
 
 `API` is `VITE_API_URL` without trailing slashes, or empty when the variable is unset: the calls then go to the same origin (`/api/jobs/...`). The production build always has it (the CI workflow refuses an empty one: the Pages origin has no `/api`). Locally, unset, the gitignored dev client answers those same-origin calls in the page (`miniapp/README.md`, Dev plugin). There is no mock branch: until 2026-10-26 `api.js` and `main.jsx` imported `mock.js` when the variable was empty and relied on Rollup folding the check away; the owner wanted no mock code in the repo at all.
+
+## Browser upload
+
+`startUpload` and `sendParts` (3 lanes, 3 tries per part, resumable through the `done` set the caller keeps): `features/upload/README.md`, Browser upload; the server side is `backend/rounds/README.md`, Browser upload.

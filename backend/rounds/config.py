@@ -19,3 +19,11 @@ def env(name: str, default: str = '') -> str:
 
 def allowed_users() -> set[int]:
     return {int(x) for x in env('ALLOWED_USER_IDS').replace(' ', '').split(',') if x}
+
+
+# [DOC: tiers]
+PUBLIC = False
+
+
+def admits(user_id) -> bool:
+    return PUBLIC or user_id in allowed_users()

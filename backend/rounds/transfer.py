@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import os
 import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
@@ -10,6 +11,7 @@ from telethon.sessions import StringSession
 from .config import env
 
 LEASE = 60
+MB = 1 << 20
 WAIT = 1
 # [DOC: mtproto-lanes]
 PART, LANES = 512 * 1024, 4
@@ -85,4 +87,12 @@ async def download(tgs: list[TelegramClient], message_id: int, path: str, progre
 
     with open(path, 'wb') as out:
         await asyncio.gather(*(lane(k, r) for k, r in enumerate(lanes(-(-doc.size // PART), LANES * len(tgs)))))
+    return path
+
+
+async def fetch(state, job: dict, path: str, progress: Callable[[float], None], facts: dict) -> str:
+    async with clients(state, 'ingest') as tgs:
+        path = await download(tgs, job['source_message_id'], path, progress)
+    size = os.path.getsize(path) / MB
+    facts.update(mb=round(size), speed=(size, 'MB/s'), region=os.environ.get('MODAL_REGION'))
     return path

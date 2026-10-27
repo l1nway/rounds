@@ -1,28 +1,26 @@
 import asyncio
-import contextlib
-import hashlib
 import hmac
-import os
 import time
+from functools import partial
 from typing import Literal
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field, model_validator
 
-from . import auth, bot
-from .config import JOBS_DIR, MAX_DURATION, env
+from . import auth, bot, files
+from .config import MAX_DURATION, env
 
-URL_TTL = 6 * 3600
-RELOADS, RELOAD_WAIT = 4, 0.3
-FILES = {'proxy.mp4': 'video/mp4', 'filmstrip.jpg': 'image/jpeg'}
 # [DOC: look-cors]
 CORS = {'allow_methods': ['GET', 'POST'], 'allow_headers': ['Authorization', 'Content-Type', 'Range']}
 PUBLIC = ('id', 'status', 'stage', 'progress', 'error', 'meta', 'filmstrip', 'request')
 MASK = r'^data:image/png;base64,[A-Za-z0-9+/]+=*$'
 MASK_CHARS = 90_000
+# [DOC: tiers]
+PRO_OPTIONS, PRO_LEVELS = ('interpolate', 'upscale'), ('look', 'exposure', 'stabilize')
+PRO_ONLY = 'This needs the full version of the bot'
 
 
 class Prompt(BaseModel):
@@ -61,6 +59,7 @@ class RenderRequest(Span):
     options: dict[str, bool] = {}
     codec: Literal['av1', 'hevc', 'vp9'] = 'av1'  # [DOC: codecs]
     denoise: float = Field(0, ge=0, le=1)  # [DOC: denoise]
+    stabilize: float = Field(0, ge=0, le=1)  # [DOC: stabilization]
     look: float = Field(0, ge=0, le=1)  # [DOC: look]
     exposure: float = Field(0, ge=-2, le=2)
 
@@ -79,17 +78,12 @@ class Login(BaseModel):
     redirect: str = Field(max_length=512)
 
 
-# [DOC: signed-urls]
-def signature(job_id: str, name: str, exp: int) -> str:
-    return hmac.new(auth.secret(b'Files'), f'{job_id}:{name}:{exp}'.encode(), hashlib.sha256).hexdigest()
+# [DOC: tiers]
+def free_render(body: RenderRequest) -> bool:
+    return not any(body.options.get(k) for k in PRO_OPTIONS) and not any(getattr(body, k) for k in PRO_LEVELS)
 
 
-def signed_url(base: str, job_id: str, name: str) -> str:
-    exp = int(time.time()) + URL_TTL
-    return f'{base}/api/jobs/{job_id}/{name}?exp={exp}&sig={signature(job_id, name, exp)}'
-
-
-def create(jobs, volume, spawn) -> FastAPI:
+def create(jobs, volume, spawn, tier: str = 'pro') -> FastAPI:
     origin = '{0.scheme}://{0.netloc}'.format(urlsplit(env('MINIAPP_URL')))
     api = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=bot.session)  # [DOC: bot-session]
     api.add_middleware(CORSMiddleware, allow_origins=[origin], **CORS)
@@ -101,8 +95,14 @@ def create(jobs, volume, spawn) -> FastAPI:
             raise HTTPException(404, 'Job not found')
         return job
 
+    # [DOC: tiers]
+    def pro(call: str) -> None:
+        if call not in spawn:
+            raise HTTPException(403, PRO_ONLY)
+
     # [DOC: lift]
     async def lift(call: str, job_id: str, job: dict, at: float, *args, failure: str):
+        pro(call)
         if not job.get('proxy') or at > job['meta']['duration'] + 1e-3:
             raise HTTPException(409, 'The video is not ready yet')
         try:
@@ -132,9 +132,9 @@ def create(jobs, volume, spawn) -> FastAPI:
     @api.get('/api/jobs/{job_id}')
     async def get_job(job_id: str, request: Request, authorization: str = Header('')):
         job = await own_job(job_id, authorization)
-        base = str(request.base_url).rstrip('/').replace('http://', 'https://')
-        urls = {f'{name.split(".")[0]}_url': job.get('proxy') and signed_url(base, job_id, name) for name in FILES}
-        return {**{k: job.get(k) for k in PUBLIC}, **urls, 'max_duration': MAX_DURATION}
+        url = partial(files.signed_url, tier, request, job_id)
+        urls = {f'{n.split(".")[0]}_url': job.get('proxy') and url(n) for n in files.FILES}
+        return {**{k: job.get(k) for k in PUBLIC}, **urls, 'max_duration': MAX_DURATION, 'tier': tier}
 
     @api.post('/api/jobs/{job_id}/render', status_code=202)
     async def render(job_id: str, body: RenderRequest, authorization: str = Header('')):
@@ -143,10 +143,12 @@ def create(jobs, volume, spawn) -> FastAPI:
             raise HTTPException(409, 'The video is busy, wait for it to finish')
         if body.end > job['meta']['duration'] + 1e-3:
             raise HTTPException(422, 'The range is outside the video')
-        if body.prompt.time is None and job['meta']['width'] != job['meta']['height']:
+        if tier == 'pro' and body.prompt.time is None and job['meta']['width'] != job['meta']['height']:
             raise HTTPException(422, 'Select the object')
+        if tier == 'free' and not free_render(body):
+            raise HTTPException(403, PRO_ONLY)
         reply = await bot.get_bot().send_message(
-            job['chat_id'], bot.TEXTS['queued'], reply_to_message_id=job['source_message_id']
+            job['chat_id'], bot.TEXTS[f'queued_{tier}'], reply_to_message_id=job['source_message_id']
         )
         update = {
             'status': 'rendering', 'stage': 'queued', 'progress': 0, 'error': None, 'request': body.model_dump(),
@@ -159,7 +161,7 @@ def create(jobs, volume, spawn) -> FastAPI:
     @api.post('/api/jobs/{job_id}/warm', status_code=202)
     async def warm(job_id: str, authorization: str = Header('')):
         await own_job(job_id, authorization)
-        await asyncio.gather(spawn['warm'](), spawn['warm_render']())  # [DOC: render-warm]
+        await asyncio.gather(*(spawn[k]() for k in ('warm', 'warm_render') if k in spawn))  # [DOC: render-warm]
         return {}
 
     # [DOC: lift]
@@ -179,6 +181,7 @@ def create(jobs, volume, spawn) -> FastAPI:
             raise HTTPException(422, 'Select the object')
         if body.end > job['meta']['duration'] + 1e-3:
             raise HTTPException(422, 'The range is outside the video')
+        pro('prepare')
         await spawn['prepare'](job_id, body.model_dump())  # [DOC: track-cache]
         args = body.prompt.model_dump(), body.start, body.end
         return await lift('follow', job_id, job, body.prompt.time, *args, failure='The object cannot be followed here')
@@ -190,19 +193,5 @@ def create(jobs, volume, spawn) -> FastAPI:
         args = job.get('source'), job.get('meta'), body.look, body.exposure
         return await lift('look', job_id, job, body.time, *args, failure='The preview is not available')
 
-    @api.get('/api/jobs/{job_id}/{name}')
-    async def file(job_id: str, name: str, exp: int, sig: str):
-        if name not in FILES or exp < time.time() or not hmac.compare_digest(sig, signature(job_id, name, exp)):
-            raise HTTPException(403)
-        path = f'{JOBS_DIR}/{job_id}/{name}'
-        for _ in range(RELOADS):
-            if os.path.exists(path):
-                break
-            with contextlib.suppress(RuntimeError):
-                await volume.reload.aio()
-            await asyncio.sleep(RELOAD_WAIT)
-        if not os.path.exists(path):
-            raise HTTPException(404)
-        return FileResponse(path, media_type=FILES[name], headers={'Cache-Control': 'private, max-age=21600'})
-
+    files.mount(api, jobs, volume, spawn, own_job, tier)
     return api

@@ -10,7 +10,8 @@ from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.filters import CommandStart
 from aiogram.types import CallbackQuery, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, Message, WebAppInfo
 
-from .config import JOBS_DIR, OUT_SIZE, allowed_users, env
+from . import config
+from .config import JOBS_DIR, OUT_SIZE, env
 
 MAX_FILE = 2000 * 1024 * 1024
 WARM_FILE = 100 * 1024 * 1024
@@ -25,7 +26,8 @@ TEXTS = {
     'probing': 'Looking inside the file…',
     'preparing': 'Building the preview and the timeline…',
     'ready': 'Ready. Open the editor to pick the object, the range and the options.',
-    'queued': 'Waking up a GPU and loading the tracker, the first run takes about a minute…',
+    'queued_pro': 'Waking up a GPU and loading the tracker, the first run takes about a minute…',
+    'queued_free': 'In the queue, the round renders in a minute or two…',
     'decoding': 'Reading the frames…',
     'tracking': 'Following the object… {:.0%}',
     'cuts': 'Looking for scene cuts…',
@@ -146,7 +148,7 @@ async def finish(job: dict) -> int:
     return await announce(job, TEXTS['held'], InlineKeyboardMarkup(inline_keyboard=[[button]]))
 
 
-@dp.message(~F.from_user.id.func(lambda user_id: user_id in allowed_users()))
+@dp.message(~F.from_user.id.func(config.admits))  # [DOC: tiers]
 async def private(message: Message) -> None:
     await message.answer(TEXTS['private'])
 
