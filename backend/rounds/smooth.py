@@ -86,7 +86,7 @@ def disc(k: int) -> tuple[np.ndarray, np.ndarray]:
 
 
 def moved(a: np.ndarray, b: np.ndarray, win: np.ndarray) -> np.ndarray:
-    k = max(int(win[2] / DUP_STEP) // DUP_GRID * DUP_GRID, DUP_GRID)
+    k = min(max(int(win[2] / DUP_STEP) // DUP_GRID * DUP_GRID, DUP_GRID), min(a.shape) // DUP_GRID * DUP_GRID)
     x, y = np.clip(np.round(win[:2] / DUP_STEP - k / 2), 0, np.subtract(a.shape[::-1], k)).astype(int)
     mask, inside = disc(k)
     return (cells(np.abs(a - b)[y : y + k, x : x + k] * mask) / np.maximum(inside, 1))[inside >= inside.max() / 4]
