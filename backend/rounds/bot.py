@@ -44,6 +44,7 @@ TEXTS = {
     'failed': 'Something went wrong. {}.',
 }
 ACTION_EVERY = 4
+UPLOAD_TIMEOUT = 600
 NOTE_NAME = 'round'
 # [DOC: restricted-notes]
 HOLD = 600
@@ -120,7 +121,7 @@ async def send_note(job: dict, path: str, duration: float) -> None:
     note = FSInputFile(path, filename=Path(job.get('name') or NOTE_NAME).with_suffix('.mp4').name)
     sent = {'duration': round(duration), 'length': OUT_SIZE, 'reply_to_message_id': job['source_message_id']}
     async with acting(job['chat_id'], 'upload_video_note'):
-        await get_bot().send_video_note(job['chat_id'], note, **sent)
+        await get_bot().send_video_note(job['chat_id'], note, request_timeout=UPLOAD_TIMEOUT, **sent)
 
 
 # [DOC: restricted-notes]

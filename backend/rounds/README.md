@@ -918,6 +918,7 @@ Ideas for later modes (owner): "no subject" (a plain centre or a slow auto-crop 
 - The Bot API, like TDLib, uploads the file untouched (Telegram limits); `length` over 640 is rejected.
 - `duration` is an integer in the Bot API (MTProto took a float): 13.76 s is sent as 14. The clients play the file's own length; only the label can differ by under half a second.
 - The file name is the source's with the extension swapped for `.mp4` (`IMG_4359.MOV` → `IMG_4359.mp4`, `round.mp4` if the source has no name): `job.name` is stored by `bot.video` from the Bot API message (`video.file_name` / `document.file_name`; a video note has none), and goes in as the multipart file name. Jobs from before the field get `round.mp4`. Telegram clients do not show it on a round, it surfaces when the note is saved.
+- `send_video_note` passes `request_timeout=UPLOAD_TIMEOUT` (600 s): aiogram's default is 60 s, and a 9 MB upload from Modal exceeded it (`TelegramNetworkError: Request timeout error`, job TOyGyWV2yD, 2026-10-28) after a 15 min render, so the finished round was lost.
 - Not verified yet (owner's phone): that a note sent this way arrives as a round on iOS and Desktop, as the MTProto one did.
 
 ## Restricted notes
