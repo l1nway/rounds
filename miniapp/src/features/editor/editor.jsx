@@ -30,7 +30,7 @@ export default memo(function Editor({job, notice}) {
   const loaded = usePlayer(state => state.loaded)
   const [draft, dispatch] = useReducer(merge, job, init)
   const form = useRef(null)
-  const {start, end, time, points, box, mask, options, codec, stabilize, denoise, look, exposure, adjusting, previewing, posting, error} = draft
+  const {start, end, time, points, box, mask, options, codec, stabilize, deblur, denoise, look, exposure, adjusting, previewing, posting, error} = draft
   // [DOC: render-boundaries]
   const selection = useMemo(() => ({time, points, box}), [time, points, box])
   const readOnly = job?.status === 'rendering'
@@ -68,7 +68,7 @@ export default memo(function Editor({job, notice}) {
           look={look} exposure={exposure} adjusting={adjusting} dispatch={dispatch} readOnly={readOnly}/>
         <Timeline job={job} start={start} end={end} time={time} dispatch={dispatch} readOnly={readOnly}/>
         <form ref={form} id={FORM} className='options' onSubmit={submit} onKeyDown={noEnter}>
-          <Options meta={job?.meta} tier={job?.tier} options={options} codec={codec} stabilize={stabilize} denoise={denoise} look={look} exposure={exposure}
+          <Options meta={job?.meta} tier={job?.tier} options={options} codec={codec} stabilize={stabilize} deblur={deblur} denoise={denoise} look={look} exposure={exposure}
             locked={previewing} readOnly={readOnly} dispatch={dispatch}/>
         </form>
         <Swap as='p' className='editor-status enter' role='alert' text={error}/>

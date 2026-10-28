@@ -11,6 +11,7 @@ ZOOM_MARGIN = 1.6
 ZOOM_FLOOR = 0.25
 PROGRESS_EVERY = 15
 FRAMES_SHARE = 0.6
+GEO = (OUT_SIZE, OUT_SIZE, OUT_SIZE // 2, OUT_SIZE // 2), (8, False, 'bt709', 'sdr')
 FRAME_BYTES = OUT_SIZE * OUT_SIZE * 3 // 2
 
 
@@ -53,12 +54,17 @@ def render(src, meta: dict, request: dict, out, progress=None) -> dict:
     n = media.frame_count(start, end, rate)
     side, x, y = frame(meta, request['prompt'], options.get('zoom', False))
     vf = f'crop={side}:{side}:{x}:{y},{media.sdr_chain(meta, OUT_SIZE, OUT_SIZE)}'
+    clean = iter
+    if step := request.get('deblur', 0):  # [DOC: deblur]
+        from . import deblur
+
+        clean = deblur.cleaner(GEO, rate, step, OUT_SIZE, {})
     with tempfile.TemporaryDirectory() as tmp:
         first = encode.first_pass(tmp, codec, rate, n / rate, meta['has_audio'])
         q, t = encode.writer(tmp, first)
         k, last = 0, None
         try:
-            for buf in frames(src, meta, start, n, rate, vf):
+            for buf in clean(frames(src, meta, start, n, rate, vf)):
                 last = buf.tobytes()
                 q.put(last)
                 k += 1

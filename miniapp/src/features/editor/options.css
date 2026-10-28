@@ -103,6 +103,7 @@
 
 .options-segments {
   position: relative;
+  isolation: isolate;
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: 1fr;
@@ -117,6 +118,7 @@
   position: absolute;
   grid-area: 1 / 1 / 2 / 2;
   inset: 0;
+  z-index: 0;
   border-radius: 7px;
   background: var(--button);
   translate: calc(var(--n) * 100%);
@@ -125,6 +127,7 @@
 
 .options-segments label {
   position: relative;
+  z-index: 1;
   display: grid;
   place-items: center;
   min-height: 32px;

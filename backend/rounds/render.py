@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 import torch
 
-from . import camera, color, encode, fill, look, media, motion, repair, smooth, source, tags, upscale
+from . import camera, color, deblur, encode, fill, look, media, motion, paint, repair, smooth, source, tags, upscale
 from .config import FPS, OUT_SIZE
 
 TAPS = 3
@@ -91,12 +91,12 @@ def layout(meta: dict) -> tuple[tuple, tuple]:
     return geo, (w * h + 2 * cw * ch, np.int16 if deep else np.uint8, 'yuv420p10le' if deep else 'yuv420p')
 
 
-def cfr(src, meta: dict, start: float, n: int, rate: float, at, cut, raw, slow: bool):
+def cfr(src, meta: dict, start: float, n: int, rate: float, at, cut, raw, slow: bool, clean=iter):
     size, dtype, pix_fmt = raw
     rows = at(np.arange(n) * FPS / rate)
     dec = media.decode(src, meta, start, n, '', pix_fmt, rate, slow)
     try:
-        for k, buf in enumerate(media.reader(dec, n, size, dtype)):
+        for k, buf in enumerate(clean(media.reader(dec, n, size, dtype))):
             yield cut(buf, rows[k])
     finally:
         media.stop(dec)
@@ -111,19 +111,23 @@ def render(
     n, (geo, raw) = media.frame_count(start, end, rate), layout(meta)
     up = upscale.wanted(meta, options)
     size = upscale.side(meta) if up else OUT_SIZE
-    base, stats = camera.sampler(np.asarray(path, np.float64), cuts), {}
+    path = np.asarray(path, np.float64)
+    base, mixed = camera.sampler(path, cuts), source.interpolating(meta, options)
     at = motion.placer(base, world) if world else base
     tone = look.Look(options.get('look', 0), options.get('exposure', 0), meta['transfer'], rate)
     cut = partial(crop, geo=geo, device=device, size=size, look=tone)
-    if mixed := source.interpolating(meta, options):
-        stats = {'synth': 0, 'dupes': 0, 'seams': 0}
+    stats = {'synth': 0, 'dupes': 0, 'seams': 0} if mixed else {}
+    step, side = options.get('deblur', 0), float(np.median(path[:, 2]))  # [DOC: deblur]
+    clean = deblur.cleaner(geo, meta['fps'] if mixed else rate, step, side, stats)
+    if mixed:
         frames = media.retrying(
-            lambda slow: smooth.frames(src, meta, start, n, rate, at, cuts, cut, raw, device, stats, slow, size)
+            lambda slow: smooth.frames(src, meta, start, n, rate, at, cuts, cut, raw, device, stats, slow, size, clean)
         )
     else:
-        frames = media.retrying(lambda slow: cfr(src, meta, start, n, rate, at, cut, raw, slow))
+        frames = media.retrying(lambda slow: cfr(src, meta, start, n, rate, at, cut, raw, slow, clean))
     if world:  # [DOC: edge-fill]
-        frames = fill.frames(frames, fill.Edges(base, world, size, rate, mixed, device), n)
+        fills = paint.frames if paint.wanted() else fill.frames  # [DOC: propainter-fill]
+        frames = fills(frames, fill.Edges(base, world, size, rate, mixed, device), n)
     if tone.repair > 0:  # [DOC: repair]
         frames = repair.frames(frames, device, tone.repair, rate)
     if up:

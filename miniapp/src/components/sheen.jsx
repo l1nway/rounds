@@ -2,7 +2,7 @@ import {useLayoutEffect, useRef} from 'react'
 import {usePresence} from '../hooks/state.js'
 import './sheen.css'
 
-const SWEEP = [{transform: 'none'}, {transform: 'translateX(-66.667%)'}]
+const SWEEP = [{transform: 'translateX(-100%) skewX(-15deg)'}, {transform: 'translateX(100%) skewX(-15deg)'}]
 const TIMING = {duration: 3600, iterations: Infinity, pseudoElement: '::before'}
 
 // [DOC: sheen]

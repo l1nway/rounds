@@ -13,9 +13,8 @@
 .sheen::before {
   content: '';
   position: absolute;
-  inset: 0 auto 0 0;
-  width: 300%;
-  background: linear-gradient(105deg, transparent 30%, color-mix(in srgb, var(--text) 9%, transparent) 50%, transparent 70%) 0 0 / 33.3333% 100%;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 20%, color-mix(in srgb, var(--text) 9%, transparent) 50%, transparent 80%);
 }
 
 @media (prefers-reduced-motion: reduce) {

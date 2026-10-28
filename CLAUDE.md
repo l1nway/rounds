@@ -1,6 +1,7 @@
 # l1nway rounds bot
 
 @~/projects/claude-rules/python.md
+@~/projects/claude-rules/media.md
 @~/projects/claude-rules/react.md
 @~/projects/claude-rules/web.md
 @~/projects/claude-rules/web-platforms.md
@@ -23,6 +24,8 @@ One repo, four parts:
 - `miniapp/`: Preact (the React API through `preact/compat`, imported as `react`) + Vite SPA, `arch-features.md`, plain CSS. Opened from the bot's `web_app` button; shows the proxy video with a trim timeline (long press refines the step), point / box selection of the object on any frame with the tapped object's outline lifted from the frame (tap-to-lift), and the options. Deployed to GitHub Pages by `.github/workflows/pages.yml`.
 - `router/`: the Cloudflare Worker, the webhook target and the API URL; it verifies the caller and sends `ALLOWED_USER_IDS` to Modal, everyone else to Oracle (`router/README.md`).
 - `deploy/`: the Oracle VM setup (Caddy, systemd, FFmpeg arm64, DeepFilterNet3) for `rounds.free`, the free tier server (`deploy/README.md`).
+
+Open bugs and questions that nobody is working on right now are in `BUGS.md` at the root. Add one there when a finding is parked, and remove it when it is closed.
 
 Flow: video sent to the bot → webhook → `ingest` (CPU: MTProto download to the Volume, ffprobe, proxy video + filmstrip for the Mini App) → the bot sends the Mini App button → the owner submits trim + prompt + options → `render` (GPU: track → camera path → render) → `sendVideoNote`.
 

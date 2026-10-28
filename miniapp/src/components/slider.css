@@ -16,8 +16,8 @@
   position: absolute;
   inset: 0 calc(100% - var(--hi)) 0 var(--lo);
   border-radius: inherit;
-  background: var(--button);
-  transition: inset var(--dur-long) var(--boing), opacity var(--dur) var(--ease);
+  background-color: var(--button);
+  transition: inset var(--dur-long) var(--boing), background-color var(--dur) var(--ease);
 }
 
 .slider-thumb {
@@ -27,10 +27,10 @@
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: var(--on-stage);
+  background-color: var(--on-stage);
   box-shadow: var(--knob), 0 0 0 0.5px rgb(0 0 0 / 0.06);
   transform: translate(-50%, -50%);
-  transition: left var(--dur-long) var(--boing), transform 300ms var(--boing), scale var(--dur) var(--ease);
+  transition: left var(--dur-long) var(--boing), background-color var(--dur) var(--ease);
   cursor: grab;
 }
 
@@ -42,11 +42,11 @@
 
 .slider[data-mode='drag'] .slider-thumb {cursor: grabbing}
 
-.slider[aria-disabled] {cursor: default}
+.slider:is([aria-disabled], [data-locked]), .slider:is([aria-disabled], [data-locked]) .slider-thumb {cursor: default}
 
-.slider[data-locked] .slider-thumb {scale: 0.86}
+.slider[data-locked]:not([data-mode]) .slider-thumb {background-color: color-mix(in srgb, var(--on-stage) 45%, var(--track))}
 
-.slider[data-locked] .slider-fill {opacity: 0.55}
+.slider[data-locked]:not([data-mode]) .slider-fill {background-color: color-mix(in srgb, var(--button) 35%, var(--track))}
 
 @media (prefers-reduced-motion: reduce) {
   .slider-fill, .slider-thumb {transition: none}

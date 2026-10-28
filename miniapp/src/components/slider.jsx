@@ -18,6 +18,7 @@ const percentOf = (value, min, max) => (value - min) / (max - min) * 100
 export default function Slider({value, min = 0, max = 100, step = 1, origin = min, locked, disabled, onChange, onDrag, reset, ...props}) {
   const track = useRef(null)
   const thumb = useRef(null)
+  const fill = useRef(null)
   const live = useRef({raf: 0, drag: null, width: 0, tap: null, visual: {x: 0, y: 0, scale: 1}})
   const [mode, setMode] = useState(null)
   const off = disabled || locked
@@ -30,7 +31,10 @@ export default function Slider({value, min = 0, max = 100, step = 1, origin = mi
   // [DOC: slider-stretch]
   const render = () => {
     const {x, y, scale} = live.current.visual
-    const ox = x - clamp(x, 0, live.current.width)
+    const {width} = live.current
+    const edge = width ? clamp(x, 0, width) / width * 100 : 0, from = percentOf(origin, min, max)
+    fill.current.style.inset = `0 ${100 - Math.max(edge, from)}% 0 ${Math.min(edge, from)}%`
+    const ox = x - clamp(x, 0, width)
     const len = Math.hypot(ox, y)
     const s = Math.min(1, len / PULL)
     const c = len ? ox / len : 1, n = len ? y / len : 0
@@ -69,19 +73,21 @@ export default function Slider({value, min = 0, max = 100, step = 1, origin = mi
     const next = valueAt(percent)
     if (next !== d.value) {d.value = next; onChange(next)}
     Object.assign(live.current.visual, {x, y})
-    d.samples = [d.samples[1], {x, y, t: event.timeStamp}]
     render()
   }
 
   const down = event => {
     if (off || !event.isPrimary || event.button > 0) return
     event.preventDefault()
+    const flying = live.current.raf !== 0
     stop()
-    thumb.current.focus({preventScroll: true})
+    if (event.pointerType === 'mouse') thumb.current.focus({preventScroll: true})
     const {left, width} = track.current.getBoundingClientRect()
     live.current.width = width
-    live.current.drag = {id: event.pointerId, left, y0: event.clientY, x0: event.clientX, value, moved: false, samples: [null, null]}
+    if (!flying) live.current.visual = {x: percentOf(value, min, max) / 100 * width, y: 0, scale: 1}
+    live.current.drag = {id: event.pointerId, left, y0: event.clientY, x0: event.clientX, value, moved: false}
     event.currentTarget.setPointerCapture(event.pointerId)
+    event.currentTarget.dataset.mode = 'drag'
     thumb.current.style.left = '0'
     setMode('drag')
     onDrag?.(true)
@@ -89,7 +95,10 @@ export default function Slider({value, min = 0, max = 100, step = 1, origin = mi
     loop(dt => {
       const v = live.current.visual
       v.scale += (PRESS - v.scale) * Math.min(1, dt * 20)
-      return Math.abs(v.scale - PRESS) < 0.01
+      if (Math.abs(v.scale - PRESS) >= 0.01) return false
+      v.scale = PRESS
+      render()
+      return true
     })
   }
 
@@ -103,17 +112,18 @@ export default function Slider({value, min = 0, max = 100, step = 1, origin = mi
     const back = tap && reset && prev !== null && event.timeStamp - prev < DOUBLE
     live.current.tap = tap && !back ? event.timeStamp : null
     const target = percentOf(back ? origin : d.value, min, max) / 100 * live.current.width
-    const [a, b] = d.samples
-    const dt = a && b && b.t > a.t ? (b.t - a.t) / 1000 : 0
-    let vx = dt && (b.x - a.x) / dt, vy = dt && (b.y - a.y) / dt
+    let vx = 0, vy = 0
     if (back && d.value !== origin) onChange(origin)
     onDrag?.(false)
+    event.currentTarget.dataset.mode = 'settle'
     setMode('settle')
     loop(dt => {
-      const v = live.current.visual
+      const v = live.current.visual, lo = Math.min(0, v.x), hi = Math.max(live.current.width, v.x)
       vx += (-STIFFNESS * (v.x - target) - DAMPING * vx) * dt
       vy += (-STIFFNESS * v.y - DAMPING * vy) * dt
-      v.x += vx * dt
+      const nx = v.x + vx * dt
+      v.x = clamp(nx, lo, hi)
+      if (v.x !== nx) vx = 0
       v.y += vy * dt
       v.scale += (1 - v.scale) * Math.min(1, dt * 10)
       const done = Math.abs(v.x - target) < SETTLE_POS && Math.abs(v.y) < SETTLE_POS && Math.abs(vx) < SETTLE_VEL && Math.abs(vy) < SETTLE_VEL && Math.abs(v.scale - 1) < 0.01
@@ -121,6 +131,8 @@ export default function Slider({value, min = 0, max = 100, step = 1, origin = mi
       live.current.visual = {x: target, y: 0, scale: 1}
       thumb.current.style.left = ''
       thumb.current.style.transform = ''
+      fill.current.style.inset = ''
+      void thumb.current.offsetWidth
       setMode(null)
       return true
     })
@@ -141,7 +153,7 @@ export default function Slider({value, min = 0, max = 100, step = 1, origin = mi
       style={{'--progress': `${p}%`, '--lo': `${Math.min(p, o)}%`, '--hi': `${Math.max(p, o)}%`}}
       onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
       <div ref={track} className='slider-track'>
-        <div className='slider-fill'/>
+        <div ref={fill} className='slider-fill'/>
         <div ref={thumb} className='slider-thumb' role='slider' tabIndex={disabled ? -1 : 0} onKeyDown={key} {...props}
           aria-valuemin={min} aria-valuemax={max} aria-valuenow={value} aria-disabled={off || undefined}/>
       </div>

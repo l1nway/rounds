@@ -134,6 +134,7 @@ function Notice({notice}) {
 export default memo(function Viewer({job, notice, aspect, selection, start, end, look, exposure, adjusting, dispatch, readOnly}) {
   const refs = useRef({video: null, stage: null, draw: null, drag: null})
   const viewer = useRef(null)
+  const [{stage, video, draw}] = useState(() => Object.fromEntries(['stage', 'video', 'draw'].map(key => [key, el => {refs.current[key] = el}])))  // [DOC: stable-refs]
   const waiting = usePlayer(state => state.waiting)
   const loaded = usePlayer(state => state.loaded)
   const failed = usePlayer(state => state.failed)
@@ -160,16 +161,16 @@ export default memo(function Viewer({job, notice, aspect, selection, start, end,
 
   return (
     <section ref={viewer} className='viewer enter' aria-label='Video' style={{'--aspect': aspect}}>
-      <div ref={el => {refs.current.stage = el}} className='viewer-stage' data-reveal={(loaded && !revealed) || undefined} data-off={readOnly || !job || undefined}
+      <div ref={stage} className='viewer-stage' data-reveal={(loaded && !revealed) || undefined} data-off={readOnly || !job || undefined}
         onPointerDown={press} onPointerMove={move} onPointerUp={release(up)} onPointerCancel={release(hide)}>
         <Sheen on={Boolean(job) && !loaded && !failed}/>
         {/* [DOC: video-source] */}
-        {job && <video ref={el => {refs.current.video = el}} className='viewer-video' src={`${job.proxy_url}#t=0.001`} crossOrigin='anonymous' playsInline preload='auto'
+        {job && <video ref={video} className='viewer-video' src={`${job.proxy_url}#t=0.001`} crossOrigin='anonymous' playsInline preload='auto'
           disablePictureInPicture onAnimationEnd={() => setRevealed(true)}/>}
         {loaded && graded && lookReady && <Look job={job} look={look} exposure={exposure} adjusting={adjusting} refs={refs} dispatch={dispatch}/>}
         {loaded && <Lift lift={lift} refs={refs} origin={originOf(points, box)}/>}
         {loaded && (points.length > 0 || box) && <Marks time={time} points={points} box={box} pending={lift?.pending} follow={follow}/>}
-        {pressed && <div ref={el => {refs.current.draw = el}} className='viewer-box' data-draft hidden/>}
+        {pressed && <div ref={draw} className='viewer-box' data-draft hidden/>}
       </div>
       {spinning && <span ref={spinner} className='spinner viewer-spinner' aria-hidden='true'/>}
       <Notice notice={notice ?? (failed ? BROKEN : null)}/>

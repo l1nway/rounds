@@ -119,7 +119,7 @@ def final(img: torch.Tensor) -> torch.Tensor:
 # [DOC: interpolation]
 @torch.inference_mode()
 def frames(src, meta: dict, start: float, n: int, rate: float, at, cuts, cut, raw, device, stats: dict, slow: bool,
-           out: int = OUT_SIZE):  # fmt: skip
+           out: int = OUT_SIZE, clean=iter):  # fmt: skip
     (size, dtype, pix_fmt), (w, h), side = raw, (meta['width'], meta['height']), out + 2 * PAD
     net, head, half, base = model(device, side)
     deep = 4 if dtype == np.int16 else 1
@@ -149,7 +149,7 @@ def frames(src, meta: dict, start: float, n: int, rate: float, at, cuts, cut, ra
 
     proc, stamps = decode(src, meta, start, n / rate + 2 / meta['fps'], pix_fmt, slow)
     try:
-        for buf in media.reader(proc, sys.maxsize, size, dtype):
+        for buf in clean(media.reader(proc, sys.maxsize, size, dtype)):  # [DOC: deblur]
             raw_t = None if ended else stamps.get(timeout=STAMP_WAIT)
             ended = raw_t is None
             t = stamp(raw_t, last, meta['fps'])

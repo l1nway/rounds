@@ -42,6 +42,7 @@ const paint = ({host, params}, {video, stage}, alpha) => {
 export default memo(function Look({job, look, exposure, adjusting, refs, dispatch}) {
   const own = useRef({host: null, params: null, want: null, flying: false, queued: false, alive: false})
   const [, setTick] = useState(0)
+  const [host] = useState(() => el => {own.current.host = el})  // [DOC: stable-refs]
   useState(setup)
   const [frame, setFrame] = useState(null)
   const online = useOnline()
@@ -130,7 +131,7 @@ export default memo(function Look({job, look, exposure, adjusting, refs, dispatc
   }, [refs, shown])
 
   return (ok || mounted) && (
-    <div ref={el => {own.current.host = el}} className='viewer-look' aria-hidden='true'>
+    <div ref={host} className='viewer-look' aria-hidden='true'>
       {mounted && <img ref={shot} className='viewer-look-shot' src={(shown ?? last).img.src} alt=''/>}
       {waiting && (
         <svg ref={wait} className='viewer-ai' viewBox='0 0 24 24' width='22' height='22'>

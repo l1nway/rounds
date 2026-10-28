@@ -23,6 +23,11 @@ export const LEVELS = [
   {key: 'stabilize', pro: true, label: 'Stabilize', min: 0, max: 1, steps: 100, zones: [
     {to: 0, hint: 'Off'}, {to: 1, hint: 'Steadies shaky hands, fills the edges'}
   ]},
+  // [DOC: deblur-slider]
+  {key: 'deblur', pro: true, label: 'Deblur', min: 0, max: 4, steps: 4, zones: [
+    {to: 0, hint: 'Off'}, {to: 1, hint: 'Classic: detail from sharp neighbors'}, {to: 2, hint: 'AI: undoes motion blur. Slower'},
+    {to: 3, hint: 'Mix: AI on a half-classic pass'}, {to: 4, hint: 'Both: classic, then AI. Strongest'}
+  ]},
   // [DOC: noise-slider]
   {key: 'denoise', label: 'Reduce noise', min: 0, max: 1, steps: 100, needs: meta => meta.has_audio, zones: [
     {to: 0, hint: 'Off'}, {to: 1, hint: 'AI keeps voices, cuts the rest, music too'}

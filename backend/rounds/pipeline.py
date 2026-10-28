@@ -4,19 +4,18 @@ import os
 import time
 import traceback
 
-import modal
 import numpy as np
 
 from . import bot, media, source, transfer
 from .config import JOBS_DIR
 
-ATTEMPTS, QUEUE_LIMIT = 3, 900
 ACTIVE = ('ingesting', 'rendering')
 PROGRESS_INTERVAL = 3
 MB = 1 << 20
 UNEXPECTED = 'The details are in the bot log'
 STDERR_TAIL = 4000
 LOGGED = ('codec', 'fit', 'upscale', 'rate', 'synth', 'dupes', 'seams')
+LEVELS = ('denoise', 'look', 'exposure', 'deblur')
 
 
 def reporter(job: dict, stage: str, loop: asyncio.AbstractEventLoop):
@@ -143,7 +142,7 @@ async def render_job(job_id: str, jobs, state, volume, models) -> None:
             np.save(f'{job_dir}/path.npy', path)
             job = await stage(jobs, job, 'rendering')
             report = reporter(job, 'rendering', loop)
-            options = {**request['options'], **{k: request.get(k, 0) for k in ('denoise', 'look', 'exposure')}}
+            options = {**request['options'], **{k: request.get(k, 0) for k in LEVELS}}
             args = (src, meta, start, end, path, cuts, out, options, request.get('codec', 'av1'), report, world)
             with timed(job_id, 'render.encode') as facts:
                 result = await asyncio.to_thread(render.render, *args)
@@ -160,49 +159,3 @@ async def render_job(job_id: str, jobs, state, volume, models) -> None:
         note(job_id, 'render', time.monotonic() - began, clip=round(end - start, 2), **describe(meta))
     except Exception as error:
         await fail(jobs, job, error)
-
-
-# [DOC: stuck-jobs]
-async def start(spawn: dict, state, kind: str, job_id: str, attempt: int = 1) -> None:
-    call = await spawn[kind](job_id)
-    await state.put.aio(f'call:{job_id}', {'id': call.object_id, 'kind': kind, 'attempt': attempt})
-
-
-async def alive(call) -> bool:
-    try:
-        await call.get.aio(timeout=0)
-    except TimeoutError:
-        return True
-    except Exception as error:
-        print(f'{call.object_id} ended: {error!r}', flush=True)
-    return False
-
-
-async def stuck(jobs, job_id: str, call) -> bool:
-    if not await alive(call):
-        return True
-    job = await jobs.get.aio(job_id)
-    queued = job and job['status'] in ACTIVE and job.get('stage') == 'queued' and waited(job) > QUEUE_LIMIT
-    if queued:
-        await call.cancel.aio()
-    return bool(queued)
-
-
-# [DOC: stuck-jobs]
-async def watch(jobs, state, start) -> None:
-    calls = [(k, v) async for k, v in state.items.aio() if isinstance(k, str) and k.startswith('call:')]
-    for key, entry in calls:
-        job_id, kind, attempt = key.removeprefix('call:'), entry['kind'], entry['attempt'] + 1
-        if not await stuck(jobs, job_id, modal.FunctionCall.from_id(entry['id'])):
-            continue
-        job = await jobs.get.aio(job_id)
-        if not job or job['status'] not in ACTIVE or attempt > ATTEMPTS:
-            await state.pop.aio(key, None)
-            if job and job['status'] in ACTIVE:
-                await fail(jobs, job, Interrupted(f'The server stopped {ATTEMPTS} times in a row, try again later'))
-            continue
-        print(f'[{job_id}] retry {kind} attempt={attempt}', flush=True)
-        reset = {'stage': 'queued', 'progress': 0} if kind == 'render' else {}
-        job = await save(jobs, job, queued_at=time.time(), **reset)
-        await bot.status(job, bot.TEXTS['retrying'].format(attempt, ATTEMPTS))
-        await start(kind, job_id, attempt)

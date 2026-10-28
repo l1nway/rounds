@@ -46,8 +46,8 @@ class Edges:
 
 
 class Canvas:
-    def __init__(self, edges: Edges, n: int):
-        rows = np.array([edges.window(k) for k in range(n)])
+    def __init__(self, edges: Edges, n: int, start: int = 0):
+        rows = np.array([edges.window(k) for k in range(start, start + n)])
         lo, hi = (rows[:, :2] - rows[:, 2:] / 2).min(0), (rows[:, :2] + rows[:, 2:] / 2).max(0)
         self.edges, self.lo = edges, lo
         self.scale = min(edges.size / np.median(rows[:, 2]), CANVAS / (hi - lo).max())
@@ -88,6 +88,11 @@ def spread(x: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
     return x + (1 - w) * up
 
 
+def alpha(bad: torch.Tensor) -> torch.Tensor:
+    good = (~bad).float()[None]
+    return good * F.avg_pool2d(good[None], 2 * FEATHER + 1, 1, FEATHER, count_include_pad=False)[0]
+
+
 def toward(edges: Edges, k: int, j: int) -> torch.Tensor:
     (xk, yk, sk), (xj, yj, sj) = edges.window(k), edges.window(j)
     shift = torch.tensor([xk - xj, yk - yj], device=edges.device, dtype=torch.float32)
@@ -98,28 +103,27 @@ def fill(k: int, img: torch.Tensor, bad: torch.Tensor, donors: list, edges: Edge
          canvas: Canvas | None = None) -> torch.Tensor:  # fmt: skip
     if not bad.any():
         return img
-    good = (~bad).float()[None]
-    alpha = good * F.avg_pool2d(good[None], 2 * FEATHER + 1, 1, FEATHER, count_include_pad=False)[0]
-    acc, cover = torch.zeros_like(img), torch.zeros_like(alpha)
+    keep = alpha(bad)
+    acc, cover = torch.zeros_like(img), torch.zeros_like(keep)
     for j, other, _, use in donors:
-        if (cover + alpha >= COVER).all():
+        if (cover + keep >= COVER).all():
             break
         g = toward(edges, k, j)
         rgb, ok = F.grid_sample(other[None], g, **SAMPLE)[0], F.grid_sample(use[None], g, **SAMPLE)[0]
-        take = (ok >= COVER).float() * (1 - cover) * (alpha < 1)
+        take = (ok >= COVER).float() * (1 - cover) * (keep < 1)
         acc, cover = acc + take * rgb, cover + take
     if canvas is not None:
         rgb, seen = canvas.read(k)
-        take = seen * (1 - cover) * (alpha < 1)
+        take = seen * (1 - cover) * (keep < 1)
         acc, cover = acc + take * rgb, cover + take
-    rest = spread(img * alpha + acc * (1 - alpha), (alpha + cover * (1 - alpha)).clamp(max=1))
-    return alpha * img + (1 - alpha) * (acc + (1 - cover) * rest)
+    rest = spread(img * keep + acc * (1 - keep), (keep + cover * (1 - keep)).clamp(max=1))
+    return keep * img + (1 - keep) * (acc + (1 - cover) * rest)
 
 
 # [DOC: edge-fill]
 @torch.inference_mode()
-def frames(stream, edges: Edges, n: int):
-    reach, ring, emitted, canvas = max(1, math.ceil(REACH * edges.rate)), [], 0, Canvas(edges, n)
+def frames(stream, edges: Edges, n: int, start: int = 0):
+    reach, ring, emitted, canvas = max(1, math.ceil(REACH * edges.rate)), [], start, Canvas(edges, n, start)
 
     def emit(k: int):
         nonlocal ring
@@ -130,7 +134,7 @@ def frames(stream, edges: Edges, n: int):
         canvas.write(k, centre[1], centre[3])
         return out
 
-    for k, img in enumerate(stream):
+    for k, img in enumerate(stream, start):
         bad = edges.bad(k)
         ring.append((k, img, bad, (~bad).float()[None]))
         while k - emitted >= reach:

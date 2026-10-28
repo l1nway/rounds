@@ -20,6 +20,7 @@ MASK = r'^data:image/png;base64,[A-Za-z0-9+/]+=*$'
 MASK_CHARS = 90_000
 # [DOC: tiers]
 PRO_OPTIONS, PRO_LEVELS = ('interpolate', 'upscale'), ('look', 'exposure', 'stabilize')
+FREE_DEBLUR = 0  # [DOC: deblur]
 PRO_ONLY = 'This needs the full version of the bot'
 
 
@@ -62,6 +63,7 @@ class RenderRequest(Span):
     stabilize: float = Field(0, ge=0, le=1)  # [DOC: stabilization]
     look: float = Field(0, ge=0, le=1)  # [DOC: look]
     exposure: float = Field(0, ge=-2, le=2)
+    deblur: int = Field(0, ge=0, le=4)  # [DOC: deblur]
 
 
 # [DOC: look-preview]
@@ -80,7 +82,8 @@ class Login(BaseModel):
 
 # [DOC: tiers]
 def free_render(body: RenderRequest) -> bool:
-    return not any(body.options.get(k) for k in PRO_OPTIONS) and not any(getattr(body, k) for k in PRO_LEVELS)
+    levels = any(getattr(body, k) for k in PRO_LEVELS) or body.deblur > FREE_DEBLUR
+    return not any(body.options.get(k) for k in PRO_OPTIONS) and not levels
 
 
 def create(jobs, volume, spawn, tier: str = 'pro') -> FastAPI:

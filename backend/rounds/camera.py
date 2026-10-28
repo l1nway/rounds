@@ -32,6 +32,7 @@ TIME_LIMIT = 30
 # [DOC: stabilization]
 STAB_CROP = 0.2
 EDGE_EXIT = 300, 0.3
+EDGE_CAP, EDGE_DEEP, PAN_SOFT, STAB_ACCEL = 24, 1000, 3, 2
 CROP_SHARE = 0.5
 
 
@@ -104,7 +105,7 @@ def _lp(on, px, py, r, box, lo, rate, zoom, edge):
     data = [(x[sel], px[sel], CENTER * q, np.inf), (y[sel], py[sel], CENTER * q, np.inf)]
     framing = [(z[sel], r[sel] / FILL, FRAMING * q, np.inf)] if zoom else []
     a_t, b_eq, w, ub = _stack([*smooth, *data, *framing])
-    vh, ah, zh = 2 * PAN_SPEED * dt, 2 * PAN_ACCEL * dt**2, ZOOM_SPEED * dt
+    vh, ah, zh = 2 * PAN_SPEED * dt, 2 * PAN_ACCEL * (1 if edge is None else STAB_ACCEL) * dt**2, ZOOM_SPEED * dt
     caps = ((x, 0, e1, vh), (y, 0, e1, vh), (x, 1, e2, ah), (y, 1, e2, ah), (z, 0, e1, zh))
     # [DOC: edge-fill]
     frame = [] if box is None else [(z - x, 0), (x + z, box[0]), (z - y, 0), (y + z, box[1])]
@@ -114,24 +115,28 @@ def _lp(on, px, py, r, box, lo, rate, zoom, edge):
     sx, sy, sz, m = x[fit], y[fit], z[fit], len(fit)
     inc = [(-a * sx - b * sy - ck * SAFE * sz, -(a * px + b * py + ck * r)[fit]) for a, b in zip(ux, uy, strict=True)]
     gi, bi = _stack([*inc, (-ck * (1 - SAFE) * sz, 0)])
-    t, im, pad, u = len(w), sp.identity(m), sp.csr_matrix, 0 if edge is None else n
+    t, im, pad = len(w), sp.identity(m), sp.csr_matrix
+    u, v = (0, 0) if edge is None else (n, 4 * n - 4)  # [DOC: stabilization]
     slack = sp.vstack([sp.hstack([-im, -im])] * SIDES + [sp.hstack([im, pad((m, m))])])
-    a_eq = sp.hstack([a_t, -sp.identity(t), sp.identity(t), pad((t, 2 * m + u))])
-    top = sp.hstack([g0, pad((len(b0), 2 * t + 2 * m + u))])
-    a_ub = [top, sp.hstack([gi, pad((len(bi), 2 * t)), slack, pad((len(bi), u))])]
+    a_eq = sp.hstack([a_t, -sp.identity(t), sp.identity(t), pad((t, 2 * m + 2 * u + v))])
+    soft = sp.vstack([-sp.identity(v), pad((len(b0) - v, v))]) if v else pad((len(b0), 0))
+    a_ub = [sp.hstack([g0, pad((len(b0), 2 * t + 2 * m + 2 * u)), soft])]
+    a_ub.append(sp.hstack([gi, pad((len(bi), 2 * t)), slack, pad((len(bi), 2 * u + v))]))
     b_ub = [b0, bi]
     # [DOC: stabilization]
     if edge is not None:
         j, nx, ny, c, exit_cost = edge
         out = -sp.csr_matrix((np.ones(len(j)), (np.arange(len(j)), j)), (len(j), n))
-        a_ub.append(sp.hstack([sp.diags(-nx) @ x[j] + sp.diags(-ny) @ y[j] + z[j], pad((len(j), 2 * t + 2 * m)), out]))
+        rows = sp.diags(-nx) @ x[j] + sp.diags(-ny) @ y[j] + z[j]
+        a_ub.append(sp.hstack([rows, pad((len(j), 2 * t + 2 * m)), out, out, pad((len(j), v))]))
         b_ub.append(-c)
     (fw, fh), free = (np.inf, np.inf) if box is None else box, -np.inf if box is None else 0
-    exit_cost = 0 if edge is None else edge[4]
-    exits = np.full(m, SAFE_EXIT * q), np.full(m, CIRCLE_EXIT * q), np.full(u, exit_cost * q)
-    cost = np.r_[np.zeros(2 * n), np.full(n, 0 if zoom else -CROP_SHARE * exit_cost * q), w, w, *exits]
-    lb = np.r_[np.full(2 * n, free), np.full(n, lo), np.zeros(2 * t + 2 * m + u)]
-    hb = np.r_[np.full(n, fw), np.full(n, fh), np.ones(n), ub, ub, np.full(2 * m + u, np.inf)]
+    e = 0 if edge is None else edge[4] * q
+    exits = [np.full(m, SAFE_EXIT * q), np.full(m, CIRCLE_EXIT * q), np.full(u, e), np.full(u, EDGE_DEEP * e)]
+    cost = np.r_[np.zeros(2 * n), np.full(n, 0 if zoom else -CROP_SHARE * e), w, w, *exits, np.full(v, PAN_SOFT * e)]
+    lb = np.r_[np.full(2 * n, free), np.full(n, lo), np.zeros(2 * t + 2 * m + 2 * u + v)]
+    cap = np.full(u, EDGE_CAP / (OUT_SIZE / 2))
+    hb = np.r_[np.full(n, fw), np.full(n, fh), np.ones(n), ub, ub, np.full(2 * m, np.inf), cap, np.full(u + v, np.inf)]
     bounds, options = np.column_stack([lb, hb]), {'time_limit': TIME_LIMIT}
     res = linprog(cost, sp.vstack(a_ub), np.concatenate(b_ub), a_eq, b_eq, bounds, method='highs', options=options)
     return res.x[: 3 * n].reshape(3, n).T if res.status == 0 else None

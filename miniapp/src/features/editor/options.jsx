@@ -111,10 +111,10 @@ function Codec({codec, disabled, order, onSet}) {
 }
 
 // [DOC: late-rows]
-export default memo(function Options({meta, tier, options, codec, stabilize, denoise, look, exposure, locked, readOnly, dispatch}) {
+export default memo(function Options({meta, tier, options, codec, stabilize, deblur, denoise, look, exposure, locked, readOnly, dispatch}) {
   const rows = meta ? OPTIONS.filter(({needs}) => needs(meta)) : []
   const levels = meta ? LEVELS.filter(level => shows(meta, level)) : []
-  const values = {stabilize, denoise, look, exposure}
+  const values = {stabilize, deblur, denoise, look, exposure}
   const late = rows.length + levels.length
   const order = i => `calc(${i} + ${FIRST_OPTION} * var(--early, 0))`
   const set = (name, value) => dispatch(prev => ({options: {...prev.options, [name]: value}}))
