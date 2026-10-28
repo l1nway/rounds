@@ -14,7 +14,7 @@ from . import auth, bot, files
 from .config import MAX_DURATION, env
 
 # [DOC: look-cors]
-CORS = {'allow_methods': ['GET', 'POST'], 'allow_headers': ['Authorization', 'Content-Type', 'Range']}
+CORS = {'allow_methods': ['GET', 'POST', 'PUT'], 'allow_headers': ['Authorization', 'Content-Type', 'Range']}
 PUBLIC = ('id', 'status', 'stage', 'progress', 'error', 'meta', 'filmstrip', 'request')
 MASK = r'^data:image/png;base64,[A-Za-z0-9+/]+=*$'
 MASK_CHARS = 90_000

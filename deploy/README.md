@@ -11,7 +11,11 @@ The free tier's server: an Oracle Cloud Always Free VM (Ampere A1, 4 OCPU, 24 GB
 - uv, `uv sync --no-dev` of `backend/`, and `/data/jobs` (the same `DATA_DIR` as the Modal Volume mount, so `config.py` is unchanged).
 - The service runs `uv run --no-dev --with uvicorn uvicorn rounds.free:app` on 127.0.0.1:8000. `--with` keeps uvicorn out of the project: Modal brings its own ASGI server, only this host needs one. The environment comes from `<repo>/.env`, a copy of the root `.env` (systemd `EnvironmentFile`).
 - Host name: Let's Encrypt needs a name, not a bare IP, so `<ip-with-dashes>.sslip.io` (a free wildcard DNS that resolves to the IP inside the name). Caddy gets and renews the certificate itself.
-- Update: `git pull && uv sync --project backend --no-dev && sudo systemctl restart rounds-free`. Logs: `journalctl -u rounds-free -f`.
+- Update: automatic (Auto-update below). By hand: `git pull && ~/.local/bin/uv sync --project backend --no-dev && sudo systemctl restart rounds-free` (uv lives in `~/.local/bin`, not on the default PATH). Logs: `journalctl -u rounds-free -f`.
+
+## Oracle auto-update
+
+The VM must never drift from `main`, so a systemd timer (`rounds-update.timer`, every minute) runs `update.sh`: `git fetch`, and when `origin/main` moved, a fast-forward merge; if anything under `backend/` changed, `uv sync` and a restart of `rounds-free`. A change only in `miniapp/`, `router/` or docs restarts nothing, because a restart fails the jobs still running ("The server restarted"). `autoupdate.sh` installs the two units (`setup.sh` calls it; on an existing VM run `bash deploy/autoupdate.sh` once). Traps: a non-fast-forward state (a local commit or edit on the VM) makes the merge fail and the timer keep failing, see `journalctl -u rounds-update`; `deploy/` changes (Caddyfile, the units) are not applied by the timer, rerun `setup.sh` or the relevant `sed | tee` step; the restart needs passwordless sudo (the default for `ubuntu` on Oracle images). Modal is not covered: `modal deploy` still runs on the owner's PC (a GitHub Actions deploy would need a Modal token as a repo secret).
 
 ## Oracle firewall
 

@@ -1,0 +1,9 @@
+[Unit]
+Description=Rounds free tier: check for new commits
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+
+[Install]
+WantedBy=timers.target

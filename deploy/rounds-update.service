@@ -1,0 +1,8 @@
+[Unit]
+Description=Rounds free tier: pull and restart on new commits
+After=network-online.target
+
+[Service]
+Type=oneshot
+User={user}
+ExecStart={repo}/deploy/update.sh

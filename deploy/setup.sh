@@ -35,4 +35,5 @@ sed "s|{user}|$USER|; s|{repo}|$REPO|; s|{uv}|$HOME/.local/bin/uv|" "$REPO/deplo
 sudo systemctl daemon-reload
 sudo systemctl enable --now rounds-free
 sudo systemctl reload caddy
+bash "$REPO/deploy/autoupdate.sh"
 echo "Ready: https://$HOST (put the .env at $REPO/.env, then: sudo systemctl restart rounds-free)"

@@ -855,7 +855,7 @@ Without tracking the note is one fixed square for the whole range (`crop.frame`)
 The browser sends a file in parts, because the router accepts at most 100 MB per request (`router/README.md`, Limits):
 
 1. `POST /api/uploads {name, size}` (size ≤ 2000 MB) creates a job (`upload: true`, `status: 'uploading'`, `chat_id` = the user) and posts the first status message in the bot's chat. It answers 409 "Start the bot in Telegram first" when the bot cannot write to the user; the reply carries `chunk` (50 MB).
-2. `PUT /api/jobs/:id/parts/:k`: raw bytes of part `k`, each saved as its own file (`part0000`…), so parts can go in parallel (3 lanes in the client) and land on different Modal containers without overwriting each other; each part commits the Volume. A part can be sent again; the last write wins.
+2. `PUT /api/jobs/:id/parts/:k`: raw bytes of part `k`, each saved as its own file (`part0000`…), so parts can go in parallel (3 lanes in the client) and land on different Modal containers without overwriting each other; each part commits the Volume. A part can be sent again; the last write wins. `PUT` must be in `CORS['allow_methods']` (`api.py`): the browser preflights a cross-origin PUT with `Authorization`, and without it the page only sees "No connection to the server" (found 2026-10-28, the first browser test; the job and its status message were already created by the POST).
 3. `POST /api/jobs/:id/uploaded`: after a Volume reload the sizes must add up to `size` (409 otherwise), the parts are joined into `source.<ext>`, the job becomes `ingesting`, and `ingest_job` skips the MTProto download (`job['upload']`) and builds the proxy as usual. The bot then sends the editor button as for a video sent in Telegram.
 
 ## Client note
