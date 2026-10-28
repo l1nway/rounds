@@ -10,6 +10,7 @@ import numpy as np
 
 from . import media, source
 from .app import MODELS_DIR, app, image, models
+from .blob import DEPTH, LOSSLESS, RAW, clone, pack, unpack
 from .config import FLASHVSR_CODE, OUT_SIZE
 
 # [DOC: upscale]
@@ -25,18 +26,11 @@ SPARSE = 2.0 * 768 * 1280
 LEAD, MIN_CHUNK, MAX_CHUNK, WORKERS = 16, 200, 600, 4
 GPUS, IDLE = ['L40S', 'A100-40GB', 'A100-80GB'], 60
 WARM_WAIT, WARMING = 300, []
-DEPTH = 65535
-RAW = ['-f', 'rawvideo', '-pix_fmt', 'rgb48le']
-LOSSLESS = ['-c:v', 'ffv1', '-level', '3', '-pix_fmt', 'gbrp10le', '-f', 'matroska']
 # [DOC: upscale-image]
 FLASHVSR = 'https://github.com/OpenImagingLab/FlashVSR', '0d403ee351905cb1d5eb802855cc4c1f0f4cf929'
 BSA = 'https://github.com/mit-han-lab/Block-Sparse-Attention', '49d6c39e4dc0303442cda3bb758b3925d4399c49'
 TORCH = '--extra-index-url https://download.pytorch.org/whl/cu124 torch==2.6.0 torchvision==0.21.0'
 PINNED = 'torch|torchvision|torchaudio|numpy|protobuf|opencv-python'
-
-
-def clone(path: str, url: str, sha: str) -> str:
-    return f'git clone -q {url} {path} && git -C {path} checkout -q {sha}'
 
 
 cuda = (
@@ -74,19 +68,6 @@ async def warm(job: dict) -> None:
     request = job['request']
     n = media.frame_count(request['start'], request['end'], source.out_rate(job['meta'], request['options']))
     WARMING[:] = [await Upscaler().warm.spawn.aio() for _ in range(min(WORKERS, len(plan(n))))]
-
-
-def ffmpeg(args: list, data: bytes) -> bytes:
-    return subprocess.run(['ffmpeg', '-v', 'error', *args], input=data, capture_output=True, check=True).stdout
-
-
-def pack(frames: np.ndarray) -> bytes:
-    n, h, w, _ = frames.shape
-    return ffmpeg([*RAW, '-s', f'{w}x{h}', '-i', '-', *LOSSLESS, '-'], frames.astype('<u2').tobytes())
-
-
-def unpack(blob: bytes, size: int) -> np.ndarray:
-    return np.frombuffer(ffmpeg(['-i', '-', *RAW, '-'], blob), '<u2').reshape(-1, size, size, 3)
 
 
 def frames(stream, device):

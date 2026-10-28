@@ -4,8 +4,8 @@ import zlib
 import modal
 import numpy as np
 
+from .blob import DEPTH, clone, pack, unpack
 from .cloud import app, fetch, image
-from .upscale import DEPTH, clone, pack, unpack
 
 # [DOC: propainter-worker]
 CODE = '/opt/propainter'

@@ -161,7 +161,7 @@ Owner's pick 2026-10-28, by eye from a side-by-side (source | `fill.py` | ProPai
 - Only the transformer windows that touch a wanted frame run (95 % of the local time was this stage): a frame's result averages only the windows that contain it, so the skipped ones change nothing. Lead and tail still go through the flows and the propagation, they are the context.
 - Output: the prediction where the dilated mask is, the input elsewhere (as ProPainter's own inference), 16-bit → FFV1 10-bit.
 - GPUs `GPUS` L40S, A100-40GB, L4 (24 GB, reasoned enough for a 364-frame chunk at 640: frames, four flow fields and the propagated frames are about 9 GB in fp32; not measured); `WORKERS` 3 (`max_containers`): 4 Upscaler + 2 Render + 1 Lift + 3 Painter = 10, the account's GPU cap. `IDLE` 60 s, `TIMEOUT` 1800 s, 4 CPUs, 16 GB.
-- Imports: `app.py` imports `painter` at its end so the class registers (as `upscale`). `painter` borrows `pack`, `unpack`, `clone` and `DEPTH` from `upscale`; they belong in a shared module once `upscale.py` is next edited.
+- Imports: `app.py` imports `painter` at its end so the class registers (as `upscale`). `pack`, `unpack`, `clone`, `ffmpeg`, `DEPTH`, `RAW` and `LOSSLESS` live in `blob.py`, which imports nothing from the package: `painter` used to import them from `upscale`, and Modal loads `rounds.upscale` first in a container (`upscale` → `app` → `painter` → `upscale`), so `DEPTH` was not defined yet and `Upscaler` crash-looped with `ImportError`. Keep `blob.py` free of package imports.
 
 ## Propainter fallback
 

@@ -8,10 +8,10 @@ import torch
 import torch.nn.functional as F
 
 from . import fill
+from .blob import DEPTH, pack, unpack
 from .color import GAMMA
 from .config import FPS, OUT_SIZE
 from .painter import WORKERS, Painter
-from .upscale import DEPTH, pack, unpack
 
 # [DOC: propainter-fill]
 LEAD, TAIL, MIN_CHUNK, MAX_CHUNK = 40, 24, 150, 300
