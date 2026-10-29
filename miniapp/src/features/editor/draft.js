@@ -40,7 +40,10 @@ export const CODECS = [
   {key: 'vp9', label: 'VP9', hint: 'A little less detail per MB'}
 ]
 
-const codecOf = key => CODECS.some(codec => codec.key === key) ? key : CODECS[0].key
+const codecOf = (key, off = []) => {
+  const open = CODECS.filter(codec => !off.includes(codec.key))
+  return open.some(codec => codec.key === key) ? key : (open[0] ?? CODECS[0]).key
+}
 
 // [DOC: tiers]
 const RANK = {local: 0, free: 1, pro: 2}
@@ -56,7 +59,7 @@ export const init = job => {
   return {
     start: last?.start ?? 0, end: last?.end ?? ms(Math.min(job?.meta.duration ?? 0, job?.max_duration ?? 0)),
     time: last?.prompt.time ?? null, points: last?.prompt.points ?? [], box: last?.prompt.box ?? null,
-    mask: last?.prompt.mask ?? null, options: {...last?.options}, codec: codecOf(last?.codec),
+    mask: last?.prompt.mask ?? null, options: {...last?.options}, codec: codecOf(last?.codec, job?.meta.off),
     ...Object.fromEntries(LEVELS.map(({key}) => [key, last?.[key] ?? 0])), posting: false, error: null
   }
 }

@@ -216,7 +216,7 @@ export default memo(function Viewer({job, notice, aspect, selection, start, end,
         onPointerDown={press} onPointerMove={move} onPointerUp={release(up)} onPointerCancel={release(hide)}>
         <Sheen on={Boolean(job) && !loaded && !failed}/>
         {/* [DOC: video-source] */}
-        {job && <video ref={video} className='viewer-video' src={`${job.proxy_url}#t=0.001`} crossOrigin='anonymous' playsInline preload='auto'
+        {job && <video ref={video} className='viewer-video' src={`${job.proxy_url}#t=0.001`} crossOrigin={job.proxy_url.startsWith('blob:') ? undefined : 'anonymous'} playsInline preload='auto'
           disablePictureInPicture onAnimationEnd={() => setRevealed(true)}/>}
         {loaded && graded && lookReady && (job.id || job.local) && <Look job={job} look={held ? 0 : look} exposure={held ? 0 : exposure} adjusting={adjusting} refs={refs} dispatch={dispatch}/>}
         {loaded && <Lift lift={lift} refs={refs} origin={originOf(points, box)}/>}
