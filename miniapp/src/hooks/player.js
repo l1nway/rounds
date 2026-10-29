@@ -79,10 +79,18 @@ export const toggle = () => {
 
 export const attach = video => {
   live.video = video
+  if (!video) return () => {}
+  store.set({waiting: true, loaded: false, failed: false})
   const handlers = {
-    loadedmetadata: flush,
+    loadedmetadata: () => {
+      try {if (video.currentTime === 0) video.currentTime = 0.001} catch {}
+      flush()
+    },
     loadeddata: () => store.set({waiting: false, loaded: true, failed: false}),
-    error: () => store.set({waiting: false, failed: true}),
+    error: () => {
+      console.warn('Video playback error:', video.error?.code, video.error?.message)
+      store.set({waiting: false, failed: true})
+    },
     seeking: () => store.set({waiting: true}),
     seeked: () => {live.busy = false; store.set({waiting: false}); flush()},
     waiting: () => store.set({waiting: true}),
@@ -92,7 +100,7 @@ export const attach = video => {
     emptied: () => {live.busy = false}
   }
   Object.entries(handlers).forEach(([type, fn]) => video.addEventListener(type, fn))
-  if (video.readyState >= 2) store.set({waiting: false, loaded: true})
+  if (video.readyState >= 2) store.set({waiting: false, loaded: true, failed: false})
   flush()
   return () => {
     stop()

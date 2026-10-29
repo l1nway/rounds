@@ -53,7 +53,8 @@ Owner request 2026-10-26: a quick double tap inside the box removes it. `reset` 
 
 ## Video source
 
-The `<video>` src ends with `#t=0.001`. iOS (Telegram's WKWebView) does not honour `preload` and shows nothing until it is played, so no `loadeddata` arrives, the spinner never stops and a frame cannot be picked; the media fragment forces the first frame to load. Reasoned from the symptom (the editor worked in Telegram Web, not on the iPhone), not yet confirmed on the device.
+For remote HTTP URLs (`job.id`), `<video>` src ends with `#t=0.001`. iOS (Telegram's WKWebView) does not honour `preload` for remote media and shows nothing until it is played, so no `loadeddata` arrives, the spinner never stops and a frame cannot be picked; the media fragment forces the first frame to load.
+For local `blob:` URLs (`job.local`), `#t=0.001` is omitted: WebKit's AVFoundation media pipeline fails with `MEDIA_ERR_SRC_NOT_SUPPORTED` on media fragment requests over `blob:` URLs (found 2026-10-29 on iPhone XR / iOS 18); instead, `attach` in `player.js` nudges `currentTime = 0.001` on `loadedmetadata` if at 0 to reveal the first frame cleanly. Also, `key={job.proxy_url}` resets the `<video>` element on source changes.
 
 ## Selection frame
 

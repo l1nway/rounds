@@ -19,6 +19,12 @@ const hasFiles = event => event.dataTransfer?.types.includes('Files')
 const CARRY = ['start', 'end', 'time', 'points', 'box', 'mask', 'options', 'codec', ...LEVELS.map(({key}) => key)]
 const resume = job => prev => ({...init(job), ...Object.fromEntries(CARRY.map(key => [key, prev[key]]))})
 
+const mimeOf = file => {
+  if (file.type && file.type.startsWith('video/')) return file.type
+  const ext = file.name?.split('.').pop()?.toLowerCase()
+  return ext === 'mov' ? 'video/quicktime' : 'video/mp4'
+}
+
 const base = name => name.replace(/\.[^.]+$/, '') || 'round'
 
 // [DOC: web-shell]
@@ -83,7 +89,9 @@ export default function WebApp() {
       const [{probe}, {deviceOf}] = await Promise.all([import('../local/probe.js'), import('../local/models.js')])
       const [found, dev] = await Promise.all([probe(file), deviceOf()])
       if (turn !== latest.current) return
-      dispatch({source: {...found, file, size: file.size, name: file.name, gpu: dev.gpu, proxy_url: URL.createObjectURL(file)}, notice: null})
+      const blob = file.type?.startsWith('video/') ? file : new Blob([file], {type: mimeOf(file)})
+      const proxy_url = URL.createObjectURL(blob)
+      dispatch({source: {...found, file, size: file.size, name: file.name, gpu: dev.gpu, proxy_url, type: mimeOf(file)}, notice: null})
     } catch (failure) {
       if (user && navigator.onLine && file.size <= MAX_BYTES) {
         try {
@@ -164,7 +172,7 @@ export default function WebApp() {
       onDragOver={event => dispatch({over: accepts(event)})}
       onDragLeave={event => event.currentTarget.contains(event.relatedTarget) || dispatch({over: false})} onDrop={drop}>
       <Account user={user} onUser={setUser}/>
-      <Editor job={job} notice={notice ?? (source ? failed && notices.playback : notices.empty) ?? null} send={send} gate={gate} retry/>
+      <Editor job={job} notice={notice ?? (source ? (failed ? notices.playback : null) : notices.empty)} send={send} gate={gate} retry/>
       {sync && <p className='web-sync' role='status'>{sync}</p>}
       <input ref={setInput} type='file' accept='video/*' hidden onChange={event => {load(event.target.files[0]); event.target.value = ''}}/>
       <Result work={work} result={result} consent={consent} user={user} onClose={close} onAnother={() => {close(); pick()}}/>

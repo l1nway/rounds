@@ -57,7 +57,10 @@ function useLift(job, dispatch, readOnly) {
     }
     wake()
     document.addEventListener('visibilitychange', wake)
-    return () => document.removeEventListener('visibilitychange', wake)
+    const isBlob = Boolean(job?.proxy_url?.startsWith('blob:'))
+  const src = job ? isBlob ? job.proxy_url : `${job.proxy_url}#t=0.001` : ''
+
+  return () => document.removeEventListener('visibilitychange', wake)
   }, [id, readOnly])
 
   // [DOC: single-flight]
@@ -108,6 +111,9 @@ function useLook(loaded, on) {
 // [DOC: selection-frame]
 const Marks = memo(function Marks({time, points, box, pending, follow}) {
   const away = useAway(time)
+  const isBlob = Boolean(job?.proxy_url?.startsWith('blob:'))
+  const src = job ? isBlob ? job.proxy_url : `${job.proxy_url}#t=0.001` : ''
+
   return (
     <div ref={follow} className='viewer-marks' data-away={away || undefined} data-pending={pending || undefined} aria-hidden='true'>
       {box && <div className='viewer-box' style={boxStyle(box)}>{CORNERS.map(c => <i key={c} className='viewer-corner' data-corner={c}/>)}</div>}
@@ -152,7 +158,10 @@ function Compare({show, held, set}) {
     const away = event => {if (event.type === 'scroll' || !el?.contains(event.target)) el?.blur()}
     const events = ['pointerdown', 'scroll']
     events.forEach(t => addEventListener(t, away, true))
-    return () => events.forEach(t => removeEventListener(t, away, true))
+    const isBlob = Boolean(job?.proxy_url?.startsWith('blob:'))
+  const src = job ? isBlob ? job.proxy_url : `${job.proxy_url}#t=0.001` : ''
+
+  return () => events.forEach(t => removeEventListener(t, away, true))
   }, [held, button])
   const down = event => {
     const el = event.currentTarget
@@ -210,13 +219,19 @@ export default memo(function Viewer({job, notice, aspect, selection, start, end,
     setPressed(false)
   }
 
+  const isBlob = Boolean(job?.proxy_url?.startsWith('blob:'))
+  const src = job ? (isBlob ? job.proxy_url : `${job.proxy_url}#t=0.001`) : ''
+
+  const isBlob = Boolean(job?.proxy_url?.startsWith('blob:'))
+  const src = job ? isBlob ? job.proxy_url : `${job.proxy_url}#t=0.001` : ''
+
   return (
     <section ref={viewer} className='viewer enter' aria-label='Video' style={{'--aspect': aspect}}>
       <div ref={stage} className='viewer-stage' data-reveal={(loaded && !revealed) || undefined} data-off={readOnly || !job || undefined}
         onPointerDown={press} onPointerMove={move} onPointerUp={release(up)} onPointerCancel={release(hide)}>
         <Sheen on={Boolean(job) && !loaded && !failed}/>
         {/* [DOC: video-source] */}
-        {job && <video ref={video} className='viewer-video' src={`${job.proxy_url}#t=0.001`} crossOrigin={job.proxy_url.startsWith('blob:') ? undefined : 'anonymous'} playsInline preload='auto'
+        {job && <video key={job.proxy_url} ref={video} className='viewer-video' src={src} crossOrigin={isBlob ? undefined : 'anonymous'} playsInline preload='auto'
           disablePictureInPicture onAnimationEnd={() => setRevealed(true)}/>}
         {loaded && graded && lookReady && (job.id || job.local) && <Look job={job} look={held ? 0 : look} exposure={held ? 0 : exposure} adjusting={adjusting} refs={refs} dispatch={dispatch}/>}
         {loaded && <Lift lift={lift} refs={refs} origin={originOf(points, box)}/>}
