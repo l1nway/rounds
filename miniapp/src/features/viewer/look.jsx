@@ -52,7 +52,7 @@ export default memo(function Look({job, look, exposure, adjusting, refs, dispatc
   const hdr = Number(HDR.includes(job.meta.transfer))
   const ok = Boolean(gpu.draw) && !gpu.broken
   // [DOC: exact-frame]
-  const key = r > 0 && still !== null && !adjusting ? `${still}:${look}:${exposure}` : null
+  const key = job.id && r > 0 && still !== null && !adjusting ? `${still}:${look}:${exposure}` : null
   const shown = frame?.key === key ? frame : null
   const [mounted, shot] = usePresence(Boolean(shown))
   const [last, setLast] = useState(shown)

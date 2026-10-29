@@ -1,0 +1,84 @@
+/* [DOC: account-widget] */
+.account {
+  position: fixed;
+  z-index: 20;
+  top: max(12px, env(safe-area-inset-top));
+  left: max(12px, env(safe-area-inset-left));
+}
+
+.account-button {
+  display: grid;
+  place-items: center;
+  width: var(--control);
+  height: var(--control);
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--button);
+  color: var(--button-text);
+  font-weight: 600;
+  text-transform: uppercase;
+  transition: opacity var(--dur) var(--ease), scale var(--dur) var(--ease), background-color var(--dur-hover, 300ms) var(--ease);
+  cursor: pointer;
+}
+
+.account-button:disabled {opacity: 0.4; cursor: not-allowed}
+
+.account-button:enabled:active {scale: 0.94; cursor: grabbing}
+
+.account-button svg {width: 22px; height: 22px; fill: currentColor}
+
+.account-button img {width: 100%; height: 100%; object-fit: cover}
+
+.account-panel {
+  position: absolute;
+  top: calc(var(--control) + 8px);
+  left: 0;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  overflow: hidden;
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: 0 8px 32px color-mix(in srgb, var(--stage) 35%, transparent);
+  animation: enter var(--dur-long) var(--ease);
+}
+
+.account-login {width: min(340px, calc(100vw - 24px)); height: min(460px, calc(100dvh - 80px))}
+
+.account-login iframe {grid-area: 1 / 1; width: 100%; height: 100%; border: 0; transition: opacity var(--dur) var(--ease)}
+
+.account-login iframe[data-busy] {opacity: 0.2}
+
+.account-login .spinner {grid-area: 1 / 1; width: 28px; height: 28px; color: var(--hint)}
+
+.account-login p {grid-area: 1 / 1; display: grid; gap: 8px; padding: 16px; color: var(--danger); text-align: center}
+
+.account-login p button, .account-menu button {
+  min-height: var(--control);
+  padding: 0 16px;
+  color: var(--link);
+  cursor: pointer;
+  transition: background-color var(--dur-hover, 300ms) var(--ease);
+}
+
+.account-login p button:active, .account-menu button:active {cursor: grabbing}
+
+.account-menu {gap: 2px; min-width: 180px; padding: 12px 8px 4px; justify-items: stretch}
+
+.account-menu strong, .account-menu small {padding-inline: 8px}
+
+.account-menu small {color: var(--hint)}
+
+.account-menu button {text-align: left}
+
+@media (hover: hover) and (pointer: fine) {
+  .account-button:enabled:hover {
+    background-color: color-mix(in srgb, var(--button), #fff 12%);
+  }
+
+  .account-login p button:hover,
+  .account-menu button:hover {
+    background-color: color-mix(in srgb, var(--link) 12%, transparent);
+    border-radius: var(--radius);
+  }
+}

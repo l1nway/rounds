@@ -9,7 +9,7 @@ const PQ_PEAK = pq(LOOK.HDR_PEAK)
 const PQ_TOP = pq(LOOK.SDR_WHITE) / PQ_PEAK
 const DEFS = {
   FLOOR: LOOK.FLOOR, EPS: LOOK.EPS, CLIP0: LOOK.CLIP[0], CLIP1: LOOK.CLIP[1], PIVOT: LOOK.PIVOT, LIFT: LOOK.LIFT,
-  DARK0: LOOK.DARK[0], DARK1: LOOK.DARK[1], KNEE: LOOK.KNEE, WHITE: LOOK.WHITE, TARGET: LOOK.TARGET, SOFT: LOOK.SOFT,
+  DARK0: LOOK.DARK[0], DARK1: LOOK.DARK[1], SHADE0: LOOK.SHADE[0], SHADE1: LOOK.SHADE[1], EV_LIFT: LOOK.EV_LIFT, KNEE: LOOK.KNEE, WHITE: LOOK.WHITE, TARGET: LOOK.TARGET, SOFT: LOOK.SOFT,
   DETAIL: LOOK.DETAIL, SHOULDER: LOOK.SHOULDER, GAMMA: LOOK.GAMMA, SDR_WHITE: LOOK.SDR_WHITE,
   J, MA, MB, MK: (MB + J) ** 2 / (MB - MA), M1, M2, C1, C2, C3, PQ_PEAK, PQ_TOP, KS: 1.5 * PQ_TOP - 0.5
 }
@@ -106,8 +106,8 @@ vec3 rebuild(vec3 x, vec3 r) {
   return x + m * max(r * est - x, 0.0) * (t * smoothstep(0.0, 0.5, keep.r + keep.g + keep.b));
 }
 float curve(float base, float hi) {
-  float b = base + ev;
-  b += t * LIFT * max(PIVOT - b, 0.0) * smoothstep(DARK0, DARK1, b);
+  float b = base + ev * (ev < 0.0 ? smoothstep(SHADE0, SHADE1, base) : 1.0);
+  b += max(t, EV_LIFT * max(ev, 0.0)) * LIFT * max(PIVOT - b, 0.0) * smoothstep(DARK0, DARK1, b);
   float peak = hi + ev, cap = min(peak, max(hi, WHITE));
   cap += t * (min(cap, TARGET) - cap);
   if (peak <= cap || peak <= KNEE) return b;

@@ -109,4 +109,6 @@ async def login(code: str, verifier: str, redirect: str) -> dict:
     user = claims(await asyncio.to_thread(exchange, code, verifier, redirect))
     user_id = allowed(int(user.get('id', 0)))
     name = user.get('name') or user.get('preferred_username')
-    return {'token': session(user_id), 'user': {'id': user_id, 'name': name, 'photo': user.get('picture')}}
+    tier = 'pro' if user_id in config.allowed_users() else 'free'  # [DOC: tiers]
+    profile = {'id': user_id, 'name': name, 'photo': user.get('picture'), 'tier': tier}
+    return {'token': session(user_id), 'user': profile}

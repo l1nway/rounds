@@ -20,15 +20,28 @@
 
 .lift-layer[data-leaving] {animation: lift-out var(--dur-long) var(--ease) forwards}
 
-.lift-mask {position: absolute; inset: 0; mask-image: var(--m); mask-size: 100% 100%; mask-repeat: no-repeat}
+.lift-mask {
+  position: absolute;
+  inset: 0;
+  -webkit-mask-image: var(--m);
+  mask-image: var(--m);
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
 
 .lift-dim {
   position: absolute;
   inset: 0;
   background: rgb(0 0 0 / 0.42);
+  -webkit-mask-image: var(--m), linear-gradient(#000 0 0);
   mask-image: var(--m), linear-gradient(#000 0 0);
+  -webkit-mask-size: 100% 100%;
   mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat;
   mask-repeat: no-repeat;
+  -webkit-mask-composite: xor;
   mask-composite: exclude;
 }
 

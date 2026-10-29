@@ -502,8 +502,8 @@ SDR only (HDR keeps real values above white). `look.rebuild`: a channel is clipp
 
 `look.curve` on the base layer (log2 luminance), detail `L − base` kept and boosted by `t · DETAIL` (0.2):
 
-- Exposure first: `base + ev`.
-- Shadows: lifted toward `PIVOT` (log2 0.18) by `t · LIFT` (0.75) of their distance, faded in over `DARK` (0.0005 → 0.008 linear) so black and the noise floor stay put (noise there would only be amplified).
+- Exposure first: `base + ev · w`. Brighter (`ev > 0`): `w = 1`, the whole picture goes up, and the shadow lift below also runs at strength `EV_LIFT · ev` (0.25 per stop, so +2 EV is half the HDR slider's honest lift) so the dark parts come up more than a plain gain would. Darker (`ev < 0`): `w = smoothstep(SHADE, base)` (0.004 → 0.125 linear), so the mids and highlights drop the full `ev` while the deep shadows barely move and are never pushed to zero. The `ev` step is monotonic over the slider range (`1 + ev · w'` stays above 0.4 at −2 EV, `w'` ≤ 0.3 per stop). The change is a luminance ratio applied to all three channels, so hue is kept; a channel pushed past white is then compressed on max(R, G, B) by `shoulder`, not clipped per channel. Chosen 2026-10-29 from the owner's request (shadows lifted when brighter, not killed when darker); it is the usual shadow/highlight-aware exposure of grading tools, not a standard, and the constants are reasoned, not tuned by eye. Mirrored in `miniapp/src/constants/look.js` and `look-glsl.js`.
+- Shadows: lifted toward `PIVOT` (log2 0.18) by `max(t, EV_LIFT · max(ev, 0)) · LIFT` (0.75) of their distance, faded in over `DARK` (0.0005 → 0.008 linear) so black and the noise floor stay put (noise there would only be amplified).
 - Highlights: `peak = top + ev`; the cap is `max(top, WHITE)` (an exposure push never goes past where the brightest region already was, or white), pulled toward `TARGET` (log2 0.8) by `t`. When the peak exceeds the cap, everything above `KNEE` (log2 0.3) is compressed linearly in log by `(cap − KNEE) / (peak − KNEE)`, with a soft max (`SOFT` 0.5) so there is no kink at the knee.
 - `top` is smoothed over time in the render (EMA, `TAU` 0.3 s at the output rate): per-frame stats would pump the brightness.
 - SDR display: `shoulder` on max(R, G, B) from `SHOULDER` 0.9 (exponential, C1): white 1.0 lands at 0.963, 1.3 at 0.998.
@@ -760,7 +760,7 @@ Cold starts cost the owner most of the waiting that is not the GPU work itself, 
 
 ## Render gpus
 
-`app.RENDER_GPUS` = L40S, A100-40GB, L4, H100 and `app.LIFT_GPUS` = L4, L40S, A100-40GB: Modal GPU fallback lists, tried in order (Modal docs, GPU guide). Owner's speed plan 2026-10-27.
+`app.RENDER_GPUS` = L40S, L4 and `app.LIFT_GPUS` = L4, L40S: Modal GPU fallback lists, tried in order (Modal docs, GPU guide). Owner's speed plan 2026-10-27; A100-40GB and H100 dropped from the lists 2026-10-28 (budget cut: the usage page showed H100 $1.90 and A100-40GB $3.28 of $34 in three days, and the tables below show they do not render or track faster than L40S per dollar). `Painter` falls back L40S, L4 (2 workers, 30 s idle); `Upscaler` L40S, A100-40GB (2 workers, 30 s idle, A100-80GB dropped).
 
 - Why a list: L4 capacity runs out. 2026-10-27 `render.wait` was 1720 s with `waiting to be scheduled on a GPU_L4 worker` in the log, `Lift` waited too, and a benchmark container on L4 waited over 20 min while L40S, A100 and H100 started at once.
 - Measured (2026-10-27, scratch app with this `gpu_image`, `cpu=8`, 32 GB; job `FU92F7nT5Q`, 4K60 HEVC, 13.8 s, AV1; job `qbtO81fF8Z`, 1080p30 with RIFE, 304 synthesized frames):
@@ -781,7 +781,8 @@ Cold starts cost the owner most of the waiting that is not the GPU work itself, 
 
 The render is the `Render` class, not a function, so the GPU container the note is made in is the one warmed while the owner edits (2026-10-27, owner's speed plan).
 
-- `POST /warm` (the editor opened) spawns `Render.warm` next to `Lift.warm`; `POST /track` (a selection) spawns `Render.prepare` (Track cache). `Render.run` is the render (`POST /render`). `bot.video` warms only `Lift`: a render container idling through a long download would be paid for nothing.
+- `POST /warm` (the editor opened) spawns only `Lift.warm` (changed 2026-10-28: `Render.warm` was spawned too, and an L40S container with 8 CPUs and 32 GB idled `RENDER_IDLE` after every editor open and every return to the app, the main suspect of the $30 in three days, reasoned). `POST /track` (a selection) spawns `Render.prepare` (Track cache), which is now what wakes `Render`. `Render.run` is the render (`POST /render`). `bot.video` warms only `Lift`: a render container idling through a long download would be paid for nothing. The Mini App repeats the warm at most every 90 s (`viewer.jsx`, `WARM_GAP`), not on every `visibilitychange`.
+- `Render` asks `cpu=4`, 16 GB since 2026-10-28 (was 8 and 32): not measured on a 60 s 4K source. If a render dies with an out-of-memory error, raise it first.
 - `RENDER_IDLE` (240 s) keeps the container after its last input. The owner spent about 3 min in the editor in the 2026-10-27 log; each warm-up that no render follows costs up to `RENDER_IDLE` of the container (about $0.10 on L4 with 8 CPUs and 32 GB, by the Modal price list).
 - `@modal.concurrent(max_inputs=2, target_inputs=1)`: a prepare and a run share one container (the run waits for the prepare's track instead of tracking again), while the autoscaler still gives a second run its own container up to `RENDERS` (2). Two runs that do end up in one container (bursting at `max_containers`) take turns on `self.running`: two renders on one GPU could run out of VRAM with upscale, and their encoders would fight for the 8 CPUs.
 - Async methods in a concurrent class share one event loop; all heavy work in `render_job` and `locate` goes through `asyncio.to_thread`, so a prepare and a run interleave.
@@ -803,13 +804,23 @@ The render is the `Render` class, not a function, so the GPU container the note 
 
 `retry.start` + `retry.watch`, the scheduled function `watch` in `app.py`: an ingest or a render whose Modal call died outside our `try` (a redeploy dropping the input, a container killed, OOM, the 3600 s timeout) is started again, and the user sees "The server stopped, starting again (attempt n of 3)…" in the status message (owner 2026-10-27: retry and tell, never just lose the job). Before this, job DstPz_viAe stayed in `rendering/queued` for good after a redeploy: `POST /render` refuses a busy job, so even a manual retry was impossible.
 
-- `web` spawns `ingest` and `Render.run` only through `start` (`app.starter`), which stores `call:<job>` = `{id, kind, attempt}` in `rounds-state`. `watch` runs every `WATCH_MINUTES` (2) and checks only these entries, never the whole `rounds-jobs` Dict (requests carry masks up to 90 KB).
+- `web` spawns `ingest` and `Render.run` only through `start` (`app.starter`), which stores `call:<job>` = `{id, kind, attempt}` in `rounds-state`. `watch` runs every `WATCH_MINUTES` (5, was 2 until 2026-10-28) and checks only these entries, never the whole `rounds-jobs` Dict (requests carry masks up to 90 KB).
 - Alive: `FunctionCall.get(timeout=0)` raising the built-in `TimeoutError` (no output yet; source: `modal/_functions.py`, `poll_function`). Any other exception (cancelled, timed out, crashed, `OutputExpiredError`, which is a Modal `TimeoutError`, not the built-in one) or a normal return means the call is over.
 - An alive call is still stuck when the job sat at stage `queued` longer than `QUEUE_LIMIT` (900 s): the body never started (no GPU, an orphaned input of an old version). It is cancelled first, so two renders never send two notes.
 - Over: the job is read again; if it is no longer `ingesting` / `rendering` (it finished or failed through `fail`), the entry is dropped. Otherwise it is retried with `queued_at` reset (and `stage: queued` for a render) up to `ATTEMPTS` (3), then failed with the readable `Interrupted` reason and the editor button.
 - Cost (reasoned from the Modal price list): one CPU container every 2 min for a few seconds, `scaledown_window=2`, well under $1 a month; one of the 5 Starter crons.
 - Jobs from before this change have no `call:` entry and are not watched.
 - Checked locally (2026-10-27, scratch test with fake Dicts and calls): a finished call dropped, a dead one retried, a running one left, a stale queued one cancelled and retried, the last attempt failed with the message. Not verified on Modal yet.
+
+## Typing status
+
+`ticker.typing(job)` + `ticker.say(job, text)`: the status message is edited by one background loop per job, so the text types in and the trailing dots shimmer (owner 2026-10-28; before, the message sat at "Downloading… 0%" for minutes while the container woke and Telethon connected).
+
+- Used by `ingest_job`, `Render` (`render_job`, from the frame path on) and the Oracle `free.render_job`. `pipeline.stage`, `pipeline.reporter` and `ingest_job` call `ticker.say`, which falls back to a plain `bot.status` when no ticker runs for the job (retry, `prepare_job`). The ticker stops before `bot.announce` / `bot.finish`, which delete or replace the message.
+- One edit per `TICK` (1 s): Telegram's FAQ allows about one message a second in a private chat and answers `429` beyond short bursts (core.telegram.org/bots/faq). A text types in `TYPING_TICKS` (4) steps of several characters, not letter by letter; true letter by letter would need about 15 edits a second. A `TelegramRetryAfter` sleeps `retry_after`. Text ending in `…` then shimmers `.`, `..`, `...`, `..`, `.`, none; texts ending in a percent are shown as they are.
+- A new text keeps the common prefix, so a progress change retypes only the digits.
+- Not used: `sendMessageDraft` (Bot API 9.3, all bots since 9.5): Telegram animates the growth itself, but the draft is an ephemeral 30 s preview in a private chat and the persistent message must still be sent separately, so it is not "the same message edited". A candidate if the edit rate proves too slow.
+- Not verified on a device: how the 1 s edits look and whether `429` ever appears.
 
 ## Bot session
 
@@ -888,7 +899,8 @@ OpenID Connect, authorization code with PKCE (core.telegram.org/bots/telegram-lo
 
 - `telegram:bot_access` is the "Allows your bot to send direct messages to the user after login" scope (owner: ask for it at sign-in; no welcome message is sent). No claim says whether it was granted.
 - BotFather: Bot Settings → Login Widget → Allowed URLs must list the page (`https://l1nway.github.io/rounds/`), and the signing algorithm must stay `RS256` (or `ES256`): `EdDSA` / `ES256K` allow only `openid` and the `id` claim disappears.
-- A user outside `ALLOWED_USER_IDS` signs in at Telegram and gets 403 "This bot is private" from `/api/auth`.
+- A user outside `ALLOWED_USER_IDS` signs in at Telegram and gets 403 "This bot is private" from `/api/auth` on Modal; on Oracle (`config.PUBLIC`, where `/api/auth` always runs, Router) everyone signs in. The reply's `user.tier` is `pro` when the id is in this host's `ALLOWED_USER_IDS`, else `free` (2026-10-28): the browser version's tier (`miniapp/src/features/account/README.md`), so the Oracle VM's `.env` must carry the same `ALLOWED_USER_IDS` as Modal's, or an allowed user is shown the free level. The tier only shapes the UI; every other call is routed and checked by the user's id anyway (Tiers).
+- The browser's sign-in runs in an iframe (2026-10-28): the page opens `/api/auth/start` in it and Telegram returns the frame to the page's own URL with `?code`; the page relays the query to the parent window. Whether `oauth.telegram.org` allows framing is not verified (`miniapp/src/features/account/README.md`, Frame login).
 - No refresh and no revoke endpoint: the session is ours (Web session); the user removes the site from Telegram's active sessions themself.
 - Not signed in against the real Telegram yet (2026-10-27).
 

@@ -5,7 +5,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from . import bot, config, crop, pipeline
+from . import bot, config, crop, pipeline, ticker
 from .api import create
 from .config import DATA_DIR, JOBS_DIR
 from .store import Disk, Store
@@ -29,7 +29,7 @@ async def render_job(job_id: str) -> None:
     job_dir = f'{JOBS_DIR}/{job_id}'
     try:
         src, out = f'{job_dir}/{job["source"]}', f'{job_dir}/note.mp4'
-        async with bot.acting(job['chat_id'], 'record_video_note'):
+        async with bot.acting(job['chat_id'], 'record_video_note'), ticker.typing(job):
             job = await pipeline.stage(jobs, job, 'rendering')
             report = pipeline.reporter(job, 'rendering', asyncio.get_running_loop())
             with pipeline.timed(job_id, 'render.encode') as facts:

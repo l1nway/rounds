@@ -12,11 +12,11 @@ from .cloud import MODELS_DIR, app, cpu_image, data, gpu_image, image, jobs, mod
 from .config import DATA_DIR, JOBS_DIR
 
 # [DOC: render-gpus]
-LIFT_GPUS = ['L4', 'L40S', 'A100-40GB']
-RENDER_GPUS = ['L40S', 'A100-40GB', 'L4', 'H100']
+LIFT_GPUS = ['L4', 'L40S']
+RENDER_GPUS = ['L40S', 'L4']
 RENDERS = 2
 LIFT_IDLE, RENDER_IDLE = 120, 240
-WATCH_MINUTES = 2
+WATCH_MINUTES = 5
 SNAPSHOT_IMPORTS = '.render', '.upscale', 'transformers.models.sam2_video.modeling_sam2_video'
 
 # [DOC: warm-start]
@@ -32,14 +32,14 @@ with gpu_image.imports():
 def web():
     lift, studio, start = Lift(), Render(), starter()
     calls = {'ingest': partial(start, 'ingest'), 'render': partial(start, 'render'), 'warm': lift.warm.spawn.aio,
-             'warm_render': studio.warm.spawn.aio, 'prepare': studio.prepare.spawn.aio,
+             'prepare': studio.prepare.spawn.aio,
              'segment': lift.segment.remote.aio, 'look': lift.look.remote.aio,
              'follow': lift.follow.remote.aio}  # fmt: skip
     return create(jobs, data, calls)
 
 
 # [DOC: mtproto-keys]
-@app.function(image=cpu_image, secrets=secrets, volumes={DATA_DIR: data}, cpu=4, memory=4096, timeout=3600,
+@app.function(image=cpu_image, secrets=secrets, volumes={DATA_DIR: data}, cpu=2, memory=4096, timeout=3600,
               max_containers=1, region='eu', enable_memory_snapshot=True)  # fmt: skip
 async def ingest(job_id: str) -> None:
     async with bot.session():  # [DOC: bot-session]
@@ -47,8 +47,8 @@ async def ingest(job_id: str) -> None:
 
 
 # [DOC: render-warm]
-@app.cls(image=gpu_image, gpu=RENDER_GPUS, secrets=secrets, volumes={DATA_DIR: data, MODELS_DIR: models}, cpu=8,
-         memory=32768, timeout=3600, max_containers=RENDERS, scaledown_window=RENDER_IDLE,
+@app.cls(image=gpu_image, gpu=RENDER_GPUS, secrets=secrets, volumes={DATA_DIR: data, MODELS_DIR: models}, cpu=4,
+         memory=16384, timeout=3600, max_containers=RENDERS, scaledown_window=RENDER_IDLE,
          enable_memory_snapshot=True)  # fmt: skip
 @modal.concurrent(max_inputs=2, target_inputs=1)
 class Render:

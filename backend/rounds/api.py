@@ -1,4 +1,3 @@
-import asyncio
 import hmac
 import time
 from functools import partial
@@ -164,7 +163,7 @@ def create(jobs, volume, spawn, tier: str = 'pro') -> FastAPI:
     @api.post('/api/jobs/{job_id}/warm', status_code=202)
     async def warm(job_id: str, authorization: str = Header('')):
         await own_job(job_id, authorization)
-        await asyncio.gather(*(spawn[k]() for k in ('warm', 'warm_render') if k in spawn))  # [DOC: render-warm]
+        await spawn['warm']()  # [DOC: render-warm]
         return {}
 
     # [DOC: lift]

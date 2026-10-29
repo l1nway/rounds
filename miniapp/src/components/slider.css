@@ -30,7 +30,7 @@
   background-color: var(--on-stage);
   box-shadow: var(--knob), 0 0 0 0.5px rgb(0 0 0 / 0.06);
   transform: translate(-50%, -50%);
-  transition: left var(--dur-long) var(--boing), background-color var(--dur) var(--ease);
+  transition: left var(--dur-long) var(--boing), background-color var(--dur-hover, 300ms) var(--ease);
   cursor: grab;
 }
 
@@ -40,9 +40,28 @@
 
 .slider[data-mode] .slider-thumb {will-change: transform}
 
-.slider[data-mode='drag'] .slider-thumb {cursor: grabbing}
+.slider:not([aria-disabled]):not([data-locked]):not([data-pro]):active,
+.slider:not([aria-disabled]):not([data-locked]):not([data-pro]):active *,
+.slider[data-mode='drag'],
+.slider[data-mode='drag'] * {
+  cursor: grabbing !important;
+}
 
-.slider:is([aria-disabled], [data-locked]), .slider:is([aria-disabled], [data-locked]) .slider-thumb {cursor: default}
+.slider-thumb:not([aria-disabled]):not([data-locked]):not([data-pro]):active {
+  cursor: grabbing;
+}
+
+.slider:is([aria-disabled], [data-locked], [data-pro]),
+.slider:is([aria-disabled], [data-locked], [data-pro]) * {
+  cursor: not-allowed;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .slider:not([aria-disabled]):not([data-locked]):not([data-pro]):hover .slider-thumb,
+  .slider-thumb:not([aria-disabled]):not([data-locked]):not([data-pro]):hover {
+    background-color: color-mix(in srgb, var(--button) 15%, var(--on-stage));
+  }
+}
 
 .slider[data-locked]:not([data-mode]) .slider-thumb {background-color: color-mix(in srgb, var(--on-stage) 45%, var(--track))}
 

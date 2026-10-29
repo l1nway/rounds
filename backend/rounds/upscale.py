@@ -23,8 +23,8 @@ SETTINGS = {'prompt': '', 'negative_prompt': '', 'cfg_scale': 1.0, 'num_inferenc
             'color_fix': True}  # fmt: skip
 SPARSE = 2.0 * 768 * 1280
 # [DOC: upscale-chunks]
-LEAD, MIN_CHUNK, MAX_CHUNK, WORKERS = 16, 200, 600, 4
-GPUS, IDLE = ['L40S', 'A100-40GB', 'A100-80GB'], 60
+LEAD, MIN_CHUNK, MAX_CHUNK, WORKERS = 16, 200, 600, 2
+GPUS, IDLE = ['L40S', 'A100-40GB'], 30
 WARM_WAIT, WARMING = 300, []
 # [DOC: upscale-image]
 FLASHVSR = 'https://github.com/OpenImagingLab/FlashVSR', '0d403ee351905cb1d5eb802855cc4c1f0f4cf929'

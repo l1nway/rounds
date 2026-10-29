@@ -6,7 +6,7 @@ import traceback
 
 import numpy as np
 
-from . import bot, media, source, transfer
+from . import bot, media, source, ticker, transfer
 from .config import JOBS_DIR
 
 ACTIVE = ('ingesting', 'rendering')
@@ -25,7 +25,7 @@ def reporter(job: dict, stage: str, loop: asyncio.AbstractEventLoop):
         nonlocal last
         if time.monotonic() - last >= PROGRESS_INTERVAL:
             last = time.monotonic()
-            asyncio.run_coroutine_threadsafe(bot.status(job, bot.TEXTS[stage].format(fraction)), loop)
+            asyncio.run_coroutine_threadsafe(ticker.say(job, bot.TEXTS[stage].format(fraction)), loop)
 
     return report
 
@@ -68,7 +68,7 @@ async def save(jobs, job: dict, **update) -> dict:
 
 
 async def stage(jobs, job: dict, name: str) -> dict:
-    await bot.status(job, bot.TEXTS[name].format(0))
+    await ticker.say(job, bot.TEXTS[name].format(0))
     return await save(jobs, job, stage=name)
 
 
@@ -93,15 +93,16 @@ async def ingest_job(job_id: str, jobs, state, volume) -> None:
     os.makedirs(job_dir, exist_ok=True)
     try:
         report = reporter(job, 'downloading', asyncio.get_running_loop())
-        async with bot.acting(job['chat_id'], 'typing'):
+        async with bot.acting(job['chat_id'], 'typing'), ticker.typing(job):
+            await ticker.say(job, bot.TEXTS['connecting'])
             with timed(job_id, 'ingest.download') as facts:  # [DOC: browser-upload]
                 upload = job.get('upload') and f'{job_dir}/{job["source"]}'
                 src = upload or await transfer.fetch(state, job, f'{job_dir}/source', report, facts)
-            await bot.status(job, bot.TEXTS['probing'])
+            await ticker.say(job, bot.TEXTS['probing'])
             with timed(job_id, 'ingest.probe') as facts:
                 meta = await asyncio.to_thread(source.probe, src)
                 facts.update(describe(meta), tags=len(meta['tags']))
-            await bot.status(job, bot.TEXTS['preparing'])
+            await ticker.say(job, bot.TEXTS['preparing'])
             with timed(job_id, 'ingest.proxy') as facts:
                 extra, checked = await asyncio.to_thread(media.make_proxy, src, job_dir, meta)
                 meta = {**meta, **checked}
@@ -124,6 +125,7 @@ async def render_job(job_id: str, jobs, state, volume, models) -> None:
     began = time.monotonic()
     job = await jobs.get.aio(job_id)
     note(job_id, 'render.wait', waited(job))
+    await bot.status(job, bot.TEXTS['loading'])
     with timed(job_id, 'render.load') as facts:
         facts['gpu'] = torch.cuda.get_device_name().replace(' ', '_') if torch.cuda.is_available() else 'cpu'
         if upscale.wanted(job['meta'], job['request']['options']):
@@ -137,7 +139,7 @@ async def render_job(job_id: str, jobs, state, volume, models) -> None:
     start, end, loop = request['start'], request['end'], asyncio.get_running_loop()
     try:
         src, out = f'{job_dir}/{job["source"]}', f'{job_dir}/note.mp4'
-        async with bot.acting(job['chat_id'], 'record_video_note'):
+        async with bot.acting(job['chat_id'], 'record_video_note'), ticker.typing(job):
             job, path, cuts, world = await locate.frame_path(job_id, jobs, state, job, src)
             np.save(f'{job_dir}/path.npy', path)
             job = await stage(jobs, job, 'rendering')

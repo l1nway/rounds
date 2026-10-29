@@ -35,7 +35,8 @@ export function useFollow(id, {time, points, box}, mask, pending, start, end) {
     if (o.busy || !want) return
     o.busy = true
     const {id: job, start, end, ...prompt} = want
-    track(job, {start, end, prompt}).then(answer => answer, () => null).then(answer => {
+    const req = typeof job === 'function' ? job({start, end, prompt}) : track(job, {start, end, prompt})
+    req.catch(error => {console.warn(error); return null}).then(answer => {
       o.busy = false
       if (o.want !== want) return send()
       o.want = null

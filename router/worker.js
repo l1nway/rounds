@@ -82,6 +82,6 @@ export default {
       return pro === null ? new Response(null, {status: 403}) : forward(request, env, pro)
     }
     const id = request.method === 'OPTIONS' ? null : await userOf(env, request.headers.get('Authorization') ?? '')
-    return forward(request, env, id != null && allowed(env, id))
+    return forward(request, env, id != null && allowed(env, id) && url.searchParams.get('via') !== 'oracle')
   }
 }

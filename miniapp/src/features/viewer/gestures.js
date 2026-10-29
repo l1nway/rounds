@@ -62,14 +62,14 @@ export function useGestures({job, selection, dispatch, readOnly, refs, ask, cycl
   const hide = () => {
     const {draw, stage} = refs.current
     refs.current.drag = null
-    draw.hidden = true
-    delete stage.dataset.editing
+    if (draw) draw.hidden = true
+    if (stage) delete stage.dataset.editing
   }
 
   const down = event => {
     if (readOnly || !job || !event.isPrimary || event.button > 0) return
     hold()
-    event.currentTarget.setPointerCapture(event.pointerId)
+    try {event.currentTarget.setPointerCapture(event.pointerId)} catch {}
     const rect = event.currentTarget.getBoundingClientRect()
     const {clientX: x, clientY: y} = event
     const handle = box && frame().same ? grab(box, x, y, rect) : {}
@@ -83,8 +83,8 @@ export function useGestures({job, selection, dispatch, readOnly, refs, ask, cycl
     drag.box = shift
       ? shifted(shift, (event.clientX - drag.x) / rect.width, (event.clientY - drag.y) / rect.height)
       : span(from, [event.clientX, event.clientY], rect)
-    Object.assign(draw.style, boxStyle(drag.box))
-    draw.hidden = false
+    if (draw) Object.assign(draw.style, boxStyle(drag.box))
+    if (draw) draw.hidden = false
     if (edit) stage.dataset.editing = ''
   }
 

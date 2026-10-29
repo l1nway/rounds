@@ -2,7 +2,7 @@ import {memo, useRef} from 'react'
 import Slider from '../../components/slider.jsx'
 import Swap from '../../components/swap.jsx'
 import {haptic} from '../../services/telegram.js'
-import {CODECS, LEVELS, OPTIONS, locked as proOnly, shows} from './draft.js'
+import {CODECS, LEVELS, OPTIONS, capOf, locked as proOnly, shows} from './draft.js'
 import './options.css'
 
 const FIRST_OPTION = 3
@@ -16,7 +16,8 @@ const flipAt = ({start, on, flipped, box: {width: w, height: h}}) =>
   flipped ? w / 2 : !on && start > w - h ? start + REACH * w : on && start < h ? start - REACH * w : w / 2
 
 // [DOC: tiers]
-const Label = ({label, pro}) => pro ? <span className='options-label'>{label}<span className='options-pro'>PRO</span></span> : label
+const BADGES = {free: 'Sign in', pro: 'PRO'}
+const Label = ({label, pro}) => pro ? <span className='options-label'>{label}<span className='options-pro'>{BADGES[pro]}</span></span> : label
 
 // [DOC: switch]
 function Switch({name, label, hint, checked, disabled, pro, order, onSet}) {
@@ -67,7 +68,7 @@ function Switch({name, label, hint, checked, disabled, pro, order, onSet}) {
   }
 
   return (
-    <label className='options-row enter' style={{'--i': order}} onPointerDown={down} onPointerMove={move} onPointerUp={end} onPointerCancel={end} onClickCapture={click}>
+    <label className='options-row enter' data-pro={pro || undefined} style={{'--i': order}} onPointerDown={down} onPointerMove={move} onPointerUp={end} onPointerCancel={end} onClickCapture={click}>
       <span className='options-text'><Label label={label} pro={pro}/><small>{hint}</small></span>
       <span className='options-switch'>
         <input type='checkbox' role='switch' name={name} checked={checked && !pro} disabled={disabled || pro} onChange={event => set(event.target.checked)}/>
@@ -80,7 +81,7 @@ const zone = (zones, value) => zones.findIndex(({to}) => value <= to)
 const signed = (value, unit) => `${value > 0 ? '+' : '−'}${Math.abs(value).toFixed(1)} ${unit}`
 
 // [DOC: level-rows]
-function Level({name, level: {label, min, max, steps, unit, zones}, value, disabled, pro, locked, order, onSet, onDrag}) {
+function Level({name, level: {label, min, max, steps, unit, zones}, cap, value, disabled, pro, locked, order, onSet, onDrag}) {
   const {hint} = zones[zone(zones, value)]
   const shown = unit && value ? signed(value, unit) : ''
   const set = next => {
@@ -88,32 +89,34 @@ function Level({name, level: {label, min, max, steps, unit, zones}, value, disab
     onSet(name, next)
   }
   return (
-    <div className='options-row options-level enter' style={{'--i': order}}>
+    <div className='options-row options-level enter' data-pro={pro || undefined} style={{'--i': order}}>
       <span>
         <span className='options-text'><span><Label label={label} pro={pro}/>{shown && <output>{shown}</output>}</span><Swap as='small' text={hint}/></span>
-        <Slider value={value} min={min} max={max} step={(max - min) / steps} origin={Math.max(min, 0)} reset={min < 0} disabled={disabled || pro} locked={locked}
+        <Slider value={value} min={min} max={cap} step={(max - min) / steps} origin={Math.max(min, 0)} reset={min < 0} disabled={disabled || pro} locked={locked} data-pro={pro || undefined}
           aria-label={label} aria-valuetext={shown ? `${shown}, ${hint}` : hint} aria-busy={locked || undefined} onChange={set} onDrag={onDrag}/>
       </span>
     </div>
   )
 }
 
-function Codec({codec, disabled, order, onSet}) {
+function Codec({codec, off, disabled, order, onSet}) {
   const index = CODECS.findIndex(({key}) => key === codec)
   return (
     <div className='options-codec enter' role='radiogroup' aria-label='Codec' style={{'--i': order}}>
-      <span className='options-text'>Codec<Swap as='small' text={CODECS[index].hint}/></span>
-      <span className='options-segments' style={{'--n': index}}>
-        {CODECS.map(({key, label}) => <label key={key}><input type='radio' name='codec' value={key} checked={codec === key} disabled={disabled} onChange={() => onSet(key)}/>{label}</label>)}
+      <span>
+        <span className='options-text'>Codec<Swap as='small' text={CODECS[index].hint}/></span>
+        <span className='options-segments' style={{'--n': index}}>
+          {CODECS.map(({key, label}) => <label key={key}><input type='radio' name='codec' value={key} checked={codec === key} disabled={disabled || off?.includes(key)} onChange={() => onSet(key)}/>{label}</label>)}
+        </span>
       </span>
     </div>
   )
 }
 
 // [DOC: late-rows]
-export default memo(function Options({meta, tier, options, codec, stabilize, deblur, denoise, look, exposure, locked, readOnly, dispatch}) {
-  const rows = meta ? OPTIONS.filter(({needs}) => needs(meta)) : []
-  const levels = meta ? LEVELS.filter(level => shows(meta, level)) : []
+export default memo(function Options({ready, meta, tier, local, options, codec, stabilize, deblur, denoise, look, exposure, locked, readOnly, dispatch}) {
+  const rows = meta && ready ? OPTIONS.filter(({needs}) => needs(meta)) : []
+  const levels = meta && ready ? LEVELS.filter(level => shows(meta, level)) : []
   const values = {stabilize, deblur, denoise, look, exposure}
   const late = rows.length + levels.length
   const order = i => `calc(${i} + ${FIRST_OPTION} * var(--early, 0))`
@@ -123,10 +126,10 @@ export default memo(function Options({meta, tier, options, codec, stabilize, deb
   return (
     <>
       {rows.map((row, i) => <Switch key={row.key} name={row.key} label={row.label} hint={row.hint} checked={Boolean(options[row.key])} disabled={readOnly}
-        pro={proOnly(tier, row)} order={order(i)} onSet={set}/>)}
-      {levels.map((level, i) => <Level key={level.key} name={level.key} level={level} value={values[level.key]} disabled={readOnly} pro={proOnly(tier, level)}
+        pro={proOnly(tier, row, local)} order={order(i)} onSet={set}/>)}
+      {levels.map((level, i) => <Level key={level.key} name={level.key} level={level} cap={capOf(tier, level)} value={values[level.key]} disabled={readOnly} pro={proOnly(tier, level, local)}
         locked={locked && PREVIEWED.has(level.key)} order={order(rows.length + i)} onSet={setLevel} onDrag={drag}/>)}
-      <Codec codec={codec} disabled={!meta || readOnly} order={`calc(${FIRST_OPTION} + ${late} * var(--early, 0))`} onSet={value => dispatch({codec: value})}/>
+      {ready && <Codec codec={codec} off={meta?.off} disabled={!meta || readOnly} order={order(late)} onSet={value => dispatch({codec: value})}/>}
     </>
   )
 })

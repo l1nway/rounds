@@ -1,4 +1,5 @@
 import {memo, useEffect, useLayoutEffect, useRef, useState} from 'react'
+import Icon from '../../components/icon.jsx'
 import Sheen from '../../components/sheen.jsx'
 import Swap from '../../components/swap.jsx'
 import {attach, useAway, usePlayer} from '../../hooks/player.js'
@@ -12,7 +13,8 @@ import './viewer.css'
 const CORNERS = ['tl', 'tr', 'bl', 'br']
 // [DOC: viewer-fit]
 const FIT = {duration: 600, easing: 'cubic-bezier(0.4, 0, 0.2, 1)'}
-const BROKEN = {title: 'The video did not load', text: 'Check the connection and open the editor again.'}
+const WARM_GAP = 90000
+const BROKEN ={title: 'The video did not load', text: 'Check the connection and open the editor again.'}
 
 const prefilled = job => {
   const prompt = job?.request?.prompt
@@ -33,7 +35,7 @@ function useFit(ref, aspect) {
     el.style.setProperty('--aspect', prev)
     const from = el.offsetHeight
     el.style.setProperty('--aspect', aspect)
-    el.animate({height: [`${from}px`, `${el.offsetHeight}px`], '--aspect': [prev, aspect]}, FIT)
+    el.animate({height: [`${from}px`, `${el.offsetHeight}px`], '--aspect': [prev, aspect]}, {...FIT, id: 'fit'})
   }, [ref, aspect])
 }
 
@@ -42,12 +44,17 @@ function useLift(job, dispatch, readOnly) {
   const [lift, setLift] = useState(null)
   const [seen, setSeen] = useState(job)
   const flight = useRef({want: null, busy: false})
-  const id = job?.tier === 'free' ? null : job?.id  // [DOC: tiers]
+  const id = job?.lift ?? (job?.tier === 'free' ? null : job?.id)  // [DOC: tiers]
   if (job !== seen) {setSeen(job); setLift(prefilled(job))}
 
   useEffect(() => {
-    if (!id || readOnly) return
-    const wake = () => {if (document.visibilityState === 'visible') warmLift(id).catch(() => {})}
+    if (typeof id !== 'string' || readOnly) return
+    let last = 0
+    const wake = () => {
+      if (document.visibilityState !== 'visible' || Date.now() - last < WARM_GAP) return
+      last = Date.now()
+      warmLift(id).catch(() => {})
+    }
     wake()
     document.addEventListener('visibilitychange', wake)
     return () => document.removeEventListener('visibilitychange', wake)
@@ -58,7 +65,7 @@ function useLift(job, dispatch, readOnly) {
     const f = flight.current, want = f.want
     if (f.busy || !want) return
     f.busy = true
-    segment(id, want).then(answer => answer, () => null).then(answer => {
+    ;(id.call ? id(want) : segment(id, want)).catch(() => null).then(answer => {
       f.busy = false
       if (f.want !== want) return send()
       f.want = null
@@ -121,13 +128,51 @@ function Notice({notice}) {
     <div ref={ref} className='viewer-notice' role='status' data-busy={shown.busy || undefined} data-still={still || undefined}>
       <Sheen on={Boolean(shown.busy)}/>
       <Swap as='div' item='div' className='viewer-notice-body' text={shown}>
-        {({title, text, action, onAction}) => <>
+        {({title, text, action, onAction, local}) => <>
           <h2>{title}</h2>
           {text && <p>{text}</p>}
-          {action && <button type='button' className='viewer-action' disabled={!online} onClick={onAction}>{action}</button>}
+          {action && <button type='button' className='viewer-action' disabled={!online && !local}
+            onClick={same(notice, {title, text, action}) ? notice.onAction : onAction}>{action}</button>}
         </>}
       </Swap>
     </div>
+  )
+}
+
+// [DOC: compare]
+const NO_HOVER = '(hover: none)'
+function Compare({show, held, set}) {
+  const was = useRef(false)
+  const [mounted, button] = usePresence(show)
+  const touch = () => matchMedia(NO_HOVER).matches
+  // a tap elsewhere or a scroll ends the comparison: Safari does not blur a button for a tap on a plain area
+  useEffect(() => {
+    if (!held || !touch()) return
+    const el = button.current
+    const away = event => {if (event.type === 'scroll' || !el?.contains(event.target)) el?.blur()}
+    const events = ['pointerdown', 'scroll']
+    events.forEach(t => addEventListener(t, away, true))
+    return () => events.forEach(t => removeEventListener(t, away, true))
+  }, [held, button])
+  const down = event => {
+    const el = event.currentTarget
+    if (touch()) {
+      was.current = document.activeElement === el
+      if (!was.current) el.focus()  // Safari does not focus a button on tap
+      return
+    }
+    el.setPointerCapture(event.pointerId)
+    set(true)
+  }
+  const release = () => {if (!touch()) set(false)}
+  const key = value => event => {if ((event.key === ' ' || event.key === 'Enter') && !event.repeat && !touch()) set(value)}
+  return mounted && (
+    <button ref={button} type='button' className='viewer-compare' aria-label='Hold to see the original' aria-pressed={held}
+      onPointerDown={down} onPointerUp={release} onPointerCancel={release} onKeyDown={key(true)} onKeyUp={key(false)}
+      onFocus={() => {if (touch()) set(true)}} onBlur={() => set(false)}
+      onClick={event => {if (touch() && was.current) event.currentTarget.blur(); was.current = false}}>
+      <Icon name='compare'/>
+    </button>
   )
 }
 
@@ -139,12 +184,18 @@ export default memo(function Viewer({job, notice, aspect, selection, start, end,
   const loaded = usePlayer(state => state.loaded)
   const failed = usePlayer(state => state.failed)
   const [revealed, setRevealed] = useState(false)
+  const [shown, setShown] = useState(null)
+  const source = job?.file ?? job?.id ?? null  // [DOC: loading-crossfade]
+  if (source !== shown) {setShown(source); setRevealed(false)}
   const [pressed, setPressed] = useState(false)
   const [spinning, spinner] = usePresence(waiting && loaded)
   const {time, points, box} = selection
   const {lift, ask, cycle} = useLift(job, dispatch, readOnly)
-  const follow = useFollow(job?.tier === 'free' ? null : job?.id, selection, lift?.candidates[lift.index]?.mask ?? null, Boolean(lift?.pending), start, end)
+  const follow = useFollow(job?.follow ?? (job?.tier === 'free' ? null : job?.id), selection, lift?.candidates[lift.index]?.mask ?? null, Boolean(lift?.pending), start, end)
   const graded = look > 0 || exposure !== 0
+  const [bypass, setBypass] = useState(false)
+  const held = bypass && graded  // [DOC: compare]
+  if (bypass && !graded) setBypass(false)
   const lookReady = useLook(loaded, graded)
   const {down, move, up, hide} = useGestures({job, selection, dispatch, readOnly, refs, ask, cycle})
   useFit(viewer, aspect)
@@ -167,11 +218,12 @@ export default memo(function Viewer({job, notice, aspect, selection, start, end,
         {/* [DOC: video-source] */}
         {job && <video ref={video} className='viewer-video' src={`${job.proxy_url}#t=0.001`} crossOrigin='anonymous' playsInline preload='auto'
           disablePictureInPicture onAnimationEnd={() => setRevealed(true)}/>}
-        {loaded && graded && lookReady && <Look job={job} look={look} exposure={exposure} adjusting={adjusting} refs={refs} dispatch={dispatch}/>}
+        {loaded && graded && lookReady && (job.id || job.local) && <Look job={job} look={held ? 0 : look} exposure={held ? 0 : exposure} adjusting={adjusting} refs={refs} dispatch={dispatch}/>}
         {loaded && <Lift lift={lift} refs={refs} origin={originOf(points, box)}/>}
         {loaded && (points.length > 0 || box) && <Marks time={time} points={points} box={box} pending={lift?.pending} follow={follow}/>}
         {pressed && <div ref={draw} className='viewer-box' data-draft hidden/>}
       </div>
+      {loaded && <Compare show={graded} held={held} set={setBypass}/>}
       {spinning && <span ref={spinner} className='spinner viewer-spinner' aria-hidden='true'/>}
       <Notice notice={notice ?? (failed ? BROKEN : null)}/>
     </section>

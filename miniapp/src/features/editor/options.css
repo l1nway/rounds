@@ -32,7 +32,18 @@
 
 .options-row > * {min-height: 0}
 
-.options-row:has(:disabled), .options-codec:has(:disabled) {opacity: 0.5}
+.options-row:has(:disabled), .options-codec:not(:has(input:enabled)) {opacity: 0.5}
+
+label.options-row:not([data-pro]):not(:has(.options-pro)):not(:has(:disabled)) {cursor: pointer}
+
+label.options-row:not([data-pro]):not(:has(.options-pro)):not(:has(:disabled)) .options-switch input {cursor: pointer}
+
+.options-switch input:enabled:active {cursor: grabbing}
+
+.options-row:is([data-pro], :has(.options-pro), :has(:disabled)),
+.options-row:is([data-pro], :has(.options-pro), :has(:disabled)) * {
+  cursor: not-allowed;
+}
 
 .options-text {display: grid}
 
@@ -83,6 +94,7 @@
   border-radius: 13.5px;
   background: var(--on-stage);
   box-shadow: var(--knob);
+  transition: background-color var(--dur-hover, 300ms) var(--ease);
 }
 
 /* [DOC: level-rows] */
@@ -97,7 +109,9 @@
 .options-level:has(.slider[aria-disabled]) {opacity: 0.5}
 
 /* [DOC: codec-picker] */
-.options-codec {display: grid; gap: 8px; padding: 6px 0 10px; transition: opacity var(--dur) var(--ease)}
+.options-codec {display: grid; grid-template-rows: 1fr; padding: 6px 0 10px; transition: opacity var(--dur) var(--ease)}
+
+.options-codec > span {display: grid; gap: 8px; min-height: 0}
 
 .options-codec :is(.options-text, [data-swap]) {justify-items: center; text-align: center}
 
@@ -134,11 +148,33 @@
   border-radius: 7px;
   font-size: 13px;
   font-weight: 600;
-  transition: color var(--dur) var(--ease);
+  transition: color var(--dur) var(--ease), background-color var(--dur-hover, 300ms) var(--ease);
 }
 
 .options-segments label:has(:checked) {color: var(--button-text)}
 
+.options-codec:has(input:enabled) label:has(:disabled) {opacity: 0.4}
+
 .options-segments label:has(:focus-visible) {outline: 2px solid var(--button); outline-offset: 2px}
 
-.options-segments input {position: absolute; inset: 0; opacity: 0; cursor: pointer}
+.options-segments input {position: absolute; inset: 0; opacity: 0}
+
+.options-segments label:has(input:enabled:not(:checked)),
+.options-segments input:enabled:not(:checked) {cursor: pointer}
+
+.options-segments label:has(input:checked),
+.options-segments input:checked {cursor: default}
+
+.options-segments label:has(input:disabled),
+.options-segments input:disabled {cursor: not-allowed}
+
+@media (hover: hover) and (pointer: fine) {
+  label.options-row:not([data-pro]):not(:has(.options-pro)):not(:has(:disabled)):hover .options-switch input:enabled::after,
+  .options-switch input:enabled:hover::after {
+    background-color: color-mix(in srgb, var(--button) 15%, var(--on-stage));
+  }
+
+  .options-segments label:has(input:enabled:not(:checked)):hover {
+    background-color: color-mix(in srgb, var(--button) 15%, transparent);
+  }
+}

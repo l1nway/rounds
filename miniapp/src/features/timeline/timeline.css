@@ -56,10 +56,10 @@
   .timeline-film i {animation: enter var(--dur-enter) var(--ease) calc(var(--c) * var(--wave)) backwards}
 }
 
-.timeline-shade, .timeline-trim, .timeline-playhead {transition: opacity var(--dur-long) var(--ease)}
+.timeline-shade, .timeline-playhead {transition: opacity var(--dur-long) var(--ease) var(--reveal)}
 
 @starting-style {
-  .timeline-shade, .timeline-trim, .timeline-playhead {opacity: 0}
+  .timeline-shade, .timeline-playhead {opacity: 0}
 }
 
 .timeline-shade {position: absolute; top: 0; bottom: 0; background: rgb(0 0 0 / 0.55); pointer-events: none}
@@ -78,7 +78,21 @@
   pointer-events: none;
 }
 
+/* [DOC: trim-reveal] the work-area frame unfolds from the middle once the video has settled, handles last */
+@media (prefers-reduced-motion: no-preference) {
+  .timeline-trim {animation: unfold 900ms cubic-bezier(0.4, 0, 0.2, 1) calc(var(--reveal) + 150ms) backwards}
+}
+
+@keyframes unfold {
+  from {opacity: 0; clip-path: inset(-3px 50% -3px 50%)}
+  to {opacity: 1; clip-path: inset(-3px calc(-1 * var(--hit)) -3px calc(-1 * var(--hit)))}
+}
+
 .timeline-scrub {position: absolute; inset: 0; border-radius: 6px; cursor: pointer}
+
+.timeline-scrub:active {cursor: grabbing}
+
+.timeline-scrub:focus-visible, .timeline-handle:focus-visible {outline: 2px solid var(--button); outline-offset: 2px}
 
 .timeline-handle {position: absolute; top: -3px; bottom: -3px; width: var(--hit); pointer-events: auto; cursor: ew-resize}
 
@@ -118,6 +132,7 @@
   background: var(--on-stage);
   box-shadow: 0 0 0 1px rgb(0 0 0 / 0.35), 0 1px 4px rgb(0 0 0 / 0.4);
   pointer-events: none;
+  transition: opacity var(--dur-long) var(--ease) var(--reveal), background-color var(--dur-hover, 300ms) var(--ease);
 }
 
 .timeline-mark {
@@ -129,7 +144,7 @@
   border-radius: 50%;
   background: var(--button);
   pointer-events: none;
-  transition: left var(--dur) var(--ease), opacity var(--dur) var(--ease);
+  transition: left var(--dur) var(--ease), opacity var(--dur) var(--ease) var(--reveal);
 }
 
 @starting-style {
@@ -147,3 +162,9 @@
 }
 
 .timeline-length {color: var(--hint); font-size: var(--label); text-align: end; font-variant-numeric: tabular-nums; animation: appear var(--dur-long) var(--ease)}
+
+@media (hover: hover) and (pointer: fine) {
+  .timeline-scrub:hover .timeline-playhead {
+    background-color: color-mix(in srgb, var(--button) 15%, var(--on-stage));
+  }
+}

@@ -2,6 +2,7 @@ import {LOOK} from '../../constants/look.js'
 import {APPLY, BOX, COEF, HEAD, POOL, REDUCE, VERTEX} from './look-glsl.js'
 
 const BLOCK = 8
+const ZERO = new Float32Array(4)
 const OPTIONS = {alpha: false, depth: false, stencil: false, antialias: false}
 
 // [DOC: look-shaders]
@@ -50,6 +51,7 @@ export function createLook(canvas) {
     gl.bindFramebuffer(gl.FRAMEBUFFER, fb)
     textures.forEach((tex, i) => gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + i, T, tex, 0))
     gl.drawBuffers(textures.map((_, i) => gl.COLOR_ATTACHMENT0 + i))
+    textures.forEach((_, i) => gl.clearBufferfv(gl.COLOR, i, ZERO))  // [DOC: look-gl]
     return {fb, w, h, tex: textures[0]}
   }
   const layer = ([w, h]) => target(w, h, texture(w, h))

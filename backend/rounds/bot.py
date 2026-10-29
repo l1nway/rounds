@@ -22,11 +22,14 @@ TEXTS = {
     'private': 'This bot is private.',
     'not_video': 'Send a video file.',
     'too_big': 'The file is over 2000 MB: Telegram does not let bots download it.',
+    'starting': 'Got it. Waking up the server…',
+    'connecting': 'Connecting to Telegram…',
     'downloading': 'Downloading the video… {:.0%}',
     'probing': 'Looking inside the file…',
     'preparing': 'Building the preview and the timeline…',
     'ready': 'Ready. Open the editor to pick the object, the range and the options.',
-    'queued_pro': 'Waking up a GPU and loading the tracker, the first run takes about a minute…',
+    'loading': 'GPU is awake, loading the models…',
+    'queued_pro': 'Waking up the GPU server, the first run takes about a minute…',
     'queued_free': 'In the queue, the round renders in a minute or two…',
     'decoding': 'Reading the frames…',
     'tracking': 'Following the object… {:.0%}',
@@ -165,7 +168,7 @@ async def video(message: Message, jobs, spawn) -> None:
     if media.file_size and media.file_size > MAX_FILE:
         await message.reply(TEXTS['too_big'])
         return
-    reply = await message.reply(TEXTS['downloading'].format(0))
+    reply = await message.reply(TEXTS['starting'])
     job_id = secrets.token_urlsafe(8)[:10]
     job = {
         'id': job_id, 'user_id': message.from_user.id, 'chat_id': message.chat.id,

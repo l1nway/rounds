@@ -115,6 +115,7 @@ export default memo(function Timeline({job, start, end, time, dispatch, readOnly
     write(kind, event.shiftKey ? value + dir : frameTime(frameOf(value) + dir))
   }
 
+  const loaded = usePlayer(state => state.loaded)  // [DOC: trim-reveal]
   const film = job?.filmstrip ?? {}
   return (
     <section className='timeline' aria-label='Trim' style={{'--strip': `${STRIP}px`}}>
@@ -131,7 +132,7 @@ export default memo(function Timeline({job, start, end, time, dispatch, readOnly
       )}
       <div className='timeline-track enter' onKeyDown={key} {...(job ? drag : {})}>
         <Filmstrip url={job?.filmstrip_url} missing={Boolean(job) && !job.filmstrip_url} tiles={film.tiles} tileWidth={film.tile_width} tileHeight={film.tile_height}/>
-        {job && <>
+        {job && loaded && <>
           <i className='timeline-shade' data-side='start' style={{left: 0, width: pct(start)}}/>
           <i className='timeline-shade' data-side='end' style={{right: 0, width: pct(duration - end)}}/>
           {time !== null && <i className='timeline-mark' style={{left: pct(time)}}/>}

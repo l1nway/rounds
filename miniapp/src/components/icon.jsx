@@ -2,7 +2,8 @@ const PATHS = {
   play: 'M8 5v14l11-7z',
   pause: 'M6 5h4v14H6zm8 0h4v14h-4z',
   previous: 'M6 6h2v12H6zm3.5 6 8.5 6V6z',
-  next: 'M16 6h2v12h-2zM6 18l8.5-6L6 6z'
+  next: 'M16 6h2v12h-2zM6 18l8.5-6L6 6z',
+  compare: 'M10 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h5v2h2V1h-2zm0 15H5l5-6zm9-15h-5v2h5v13l-5-6v9h5c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z'
 }
 
 export default function Icon({name}) {

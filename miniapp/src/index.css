@@ -20,6 +20,7 @@
   --radius: 12px;
   --control: 44px;
   --dur: 200ms;
+  --dur-hover: 300ms;
   --dur-long: 400ms;
   --dur-enter: 700ms;
   --stagger: 110ms;
@@ -27,7 +28,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :root {--dur: 0ms; --dur-long: 0ms; --dur-enter: 0ms}
+  :root {--dur: 0ms; --dur-hover: 0ms; --dur-long: 0ms; --dur-enter: 0ms}
 }
 
 html {font: 15px/1.35 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif}
@@ -36,6 +37,10 @@ html {font: 15px/1.35 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif}
 html {scrollbar-gutter: stable}
 
 :focus-visible {outline: 2px solid var(--link); outline-offset: 2px}
+
+:where(button:enabled, [role='button']:not([aria-disabled='true']), summary, a[href]) {cursor: pointer}
+:where(button:disabled, [role='button'][aria-disabled='true']) {cursor: not-allowed}
+:where(button:enabled:active, [role='button']:not([aria-disabled='true']):active) {cursor: grabbing}
 
 .icon-button {
   display: inline-flex;
@@ -47,10 +52,16 @@ html {scrollbar-gutter: stable}
   padding: 0 12px;
   border-radius: var(--radius);
   color: var(--link);
-  transition: opacity var(--dur) var(--ease), background-color var(--dur) var(--ease), color var(--dur) var(--ease);
+  transition: opacity var(--dur) var(--ease), background-color var(--dur-hover) var(--ease), color var(--dur) var(--ease);
 }
 
-.icon-button:disabled {opacity: 0.4}
+.icon-button:disabled {opacity: 0.4; cursor: not-allowed}
+
+.icon-button:enabled:active {cursor: grabbing}
+
+@media (hover: hover) and (pointer: fine) {
+  .icon-button:enabled:hover {background-color: color-mix(in srgb, var(--link) 12%, transparent)}
+}
 
 .icon-button svg {width: 22px; height: 22px; fill: currentColor}
 

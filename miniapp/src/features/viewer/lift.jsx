@@ -13,16 +13,17 @@ function Layer({n, mask, sweep, on, refs, done}) {
     const {video, stage} = refs.current
     const paint = source => {
       const c = canvas.current
+      if (!c || !video || !video.videoWidth || !video.videoHeight) return
       if (c.width !== video.videoWidth || c.height !== video.videoHeight) Object.assign(c, {width: video.videoWidth, height: video.videoHeight})
       c.getContext('2d').drawImage(source ?? video, 0, 0, c.width, c.height)
     }
     // [DOC: lift-source]
-    const fresh = () => {paint(); stage.dispatchEvent(new Event(STAGE_EVENTS.ask))}
+    const fresh = () => {paint(); stage?.dispatchEvent(new Event(STAGE_EVENTS.ask))}
     const graded = event => paint(event.detail)
-    stage.addEventListener(STAGE_EVENTS.paint, graded)
-    if (video.seeking) video.addEventListener('seeked', fresh, {once: true})
+    stage?.addEventListener(STAGE_EVENTS.paint, graded)
+    if (video?.seeking) video.addEventListener('seeked', fresh, {once: true})
     else fresh()
-    return () => {stage.removeEventListener(STAGE_EVENTS.paint, graded); video.removeEventListener('seeked', fresh)}
+    return () => {stage?.removeEventListener(STAGE_EVENTS.paint, graded); video?.removeEventListener('seeked', fresh)}
   }, [refs])
 
   return (

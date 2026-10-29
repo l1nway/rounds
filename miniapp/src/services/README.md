@@ -4,7 +4,7 @@
 
 ## Auth header
 
-`authorization` is a getter, `tma <initData>` by default (the Mini App, `backend/rounds/README.md`, Init data). The browser entry replaces it through `authorize(get)` with `web <session>` (`features/auth/README.md`, Auth header). A setter rather than a branch on the platform here, because the Mini App must not carry browser code (`miniapp/README.md`, Launch router): this file stays Mini App code, and the web part lives in the module that only `web.jsx` loads. `API` and `post` are exported for the same module (`/api/auth`, `/api/auth/start`).
+`authorization` is a getter, `tma <initData>` by default (the Mini App, `backend/rounds/README.md`, Init data). The browser entry replaces it through `authorize(get)` with `web <session>` (`features/account/README.md`, Auth header). A setter rather than a branch on the platform here, because the Mini App must not carry browser code (`miniapp/README.md`, Launch router): this file stays Mini App code, and the web part lives in the module that only `web.jsx` loads. `API` and `post` are exported for the same module (`/api/auth`, `/api/auth/start`).
 
 ## Telegram setup
 
@@ -40,4 +40,4 @@ APIs used, all checked in core.telegram.org/bots/webapps (2026-10-25): `initData
 
 ## Browser upload
 
-`startUpload` and `sendParts` (3 lanes, 3 tries per part, resumable through the `done` set the caller keeps): `features/upload/README.md`, Browser upload; the server side is `backend/rounds/README.md`, Browser upload.
+The upload calls (`/api/uploads`, the parts, `/uploaded`) and the client note live in `features/local/server.js`, which only the browser entry loads: while they sat in `api.js` the shared chunk carried them into the Mini App. `api.js` exports `request`, `post` and `jobPath` for that module (`features/local/README.md`, Local server). The server side is `backend/rounds/README.md`, Browser upload and Client note.

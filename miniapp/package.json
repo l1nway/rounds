@@ -16,6 +16,10 @@
     "vite": "^8.3.4"
   },
   "dependencies": {
+    "@lofcz/deepfilternet-web": "0.1.0",
+    "@yume-chan/libde265": "1.0.0",
+    "mediabunny": "^1.63.0",
+    "onnxruntime-web": "1.31.1",
     "preact": "^10.29.8"
   }
 }

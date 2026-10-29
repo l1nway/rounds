@@ -149,7 +149,7 @@ export default function Slider({value, min = 0, max = 100, step = 1, origin = mi
 
   const p = percentOf(value, min, max), o = percentOf(origin, min, max)
   return (
-    <div className='slider' data-mode={mode || undefined} data-locked={locked || undefined} aria-disabled={disabled || undefined}
+    <div className='slider' data-mode={mode || undefined} data-locked={locked || undefined} data-pro={props['data-pro'] || undefined} aria-disabled={disabled || undefined}
       style={{'--progress': `${p}%`, '--lo': `${Math.min(p, o)}%`, '--hi': `${Math.max(p, o)}%`}}
       onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
       <div ref={track} className='slider-track'>

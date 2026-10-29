@@ -5,6 +5,11 @@
   --safe-right: max(env(safe-area-inset-right), var(--tg-safe-area-inset-right, 0px));
   --safe-bottom: calc(max(env(safe-area-inset-bottom), var(--tg-safe-area-inset-bottom, 0px)) + var(--tg-content-safe-area-inset-bottom, 0px));
   --bar: 66px;
+  --reveal: 600ms;  /* the viewer's glide: everything that appears after the video waits for it */
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {--reveal: 0ms}
 }
 
 /* [DOC: editor-scroll] */
@@ -17,6 +22,7 @@
   margin-inline: auto;
   padding: var(--safe-top) var(--safe-right) calc(var(--safe-bottom) + var(--bar)) var(--safe-left);
   container-type: inline-size;
+  overflow: clip;  /* the slide between layouts must never create scrollbars */
 }
 
 /* [DOC: editor-draft] */
@@ -35,12 +41,22 @@
 
 /* [DOC: late-rows] */
 @media (prefers-reduced-motion: no-preference) {
-  :root[data-enter] .enter:is(.options-row, .editor-status) {
+  :root[data-enter] .enter:is(.options-row, .options-codec, .editor-status, .editor-bar[data-inline]) {
     animation-name: enter, grow;
     animation-duration: var(--dur-enter), 600ms;
     animation-timing-function: var(--ease), cubic-bezier(0.4, 0, 0.2, 1);
     animation-delay: calc(var(--i, 0) * var(--stagger)), 0s;
   }
+
+  /* [DOC: reveal-order] switches and sliders, then the codec, then the button: each waits for the video, then takes its turn */
+  :root[data-enter] .enter:is(.options-row, .options-codec, .editor-bar) {
+    animation-delay: calc(var(--reveal) + var(--i, 0) * var(--stagger)), var(--reveal);
+    animation-fill-mode: backwards;
+  }
+
+  /* [DOC: glide-wait] the rows mount only after the layout glide, so the video's wait is already spent */
+  :root[data-enter] .editor-bar[data-glided] {--reveal: 0ms}
+  :root[data-enter] [data-glided] :is(.options-row, .options-codec) {--reveal: 0ms}
 }
 
 @keyframes grow {
@@ -68,7 +84,18 @@
   background: var(--button);
   color: var(--button-text);
   font-weight: 600;
-  transition: opacity var(--dur) var(--ease);
+  transition: opacity var(--dur) var(--ease), background-color var(--dur-hover, 300ms) var(--ease);
+  cursor: pointer;
+}
+
+.editor-submit:enabled:active {cursor: grabbing}
+
+.editor-submit:disabled {cursor: not-allowed}
+
+@media (hover: hover) and (pointer: fine) {
+  .editor-submit:enabled:hover {
+    background-color: color-mix(in srgb, var(--button), #fff 12%);
+  }
 }
 
 .editor-submit > * {grid-area: 1 / 1}
@@ -80,14 +107,23 @@
 .editor-submit .spinner {width: 24px; height: 24px; border-width: 2px}
 
 /* [DOC: split-layout] */
-@media (orientation: landscape) and (min-width: 900px) and (min-height: 560px) {
-  .editor[data-split] {grid-template: auto 1fr auto / minmax(0, 1fr) 380px; max-width: none}
+.editor[data-split] {grid-template: auto 1fr auto / minmax(0, 1fr) 380px; max-width: none; padding-bottom: var(--safe-bottom)}
 
-  .editor[data-split] > .viewer {grid-area: 1 / 1 / 3; height: auto; background: none}
+.editor[data-split] > .viewer {grid-area: 1 / 1 / 3; height: auto; background: none}
 
-  .editor[data-split] > .timeline {grid-area: 3 / 1}
+.editor[data-split] > .timeline {grid-area: 3 / 1}
 
-  .editor[data-split] > .options {grid-area: 1 / 2}
-
-  .editor[data-split] > .editor-status {grid-area: 2 / 2}
+.editor[data-split] > .options {
+  grid-area: 1 / 2 / 4;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-evenly;  /* [DOC: split-layout] the panel spans the page height */
 }
+
+.editor[data-split] > .editor-status {grid-area: 1 / 2 / 4; align-self: end; pointer-events: none}
+
+.editor-bar[data-inline] {display: grid; grid-template-rows: 1fr; position: static; padding: 4px 0 8px; background: none}
+
+.editor-bar[data-inline] > * {min-height: 0}
+
+.editor-bar[data-inline] .editor-submit {max-width: none}

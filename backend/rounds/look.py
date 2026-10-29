@@ -13,6 +13,7 @@ FLOOR = 2.0**-10
 CLIP = 0.93, 0.985
 # [DOC: look-curve]
 PIVOT, LIFT, DARK = math.log2(0.18), 0.75, (math.log2(0.0005), math.log2(0.008))
+SHADE, EV_LIFT = (math.log2(0.004), math.log2(0.125)), 0.25
 KNEE, WHITE, TARGET, SOFT = math.log2(0.3), 0.0, math.log2(0.8), 0.5
 DETAIL = 0.2
 SHOULDER = 0.9
@@ -77,8 +78,8 @@ def rebuild(x, ratio, t: float):
 
 # [DOC: look-curve]
 def curve(base, top: float, t: float, ev: float):
-    b = base + ev
-    b = b + t * LIFT * (PIVOT - b).clamp(min=0) * smoothstep(*DARK, b)
+    b = base + ev * (smoothstep(*SHADE, base) if ev < 0 else 1.0)
+    b = b + max(t, EV_LIFT * max(ev, 0.0)) * LIFT * (PIVOT - b).clamp(min=0) * smoothstep(*DARK, b)
     peak = top + ev
     cap = min(peak, max(top, WHITE))
     cap += t * (min(cap, TARGET) - cap)
