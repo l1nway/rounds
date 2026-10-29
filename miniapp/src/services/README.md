@@ -1,6 +1,12 @@
 # services
 
-`api.js`: the backend calls (`getJob`, `postRender`, for Lift `warmLift`, `segment`, and `lookFrame` for the HDR preview) (`Authorization` from Auth header, errors as `{detail}`, FastAPI validation lists read through `detail[0].msg`). `telegram.js`: the `Telegram.WebApp` integration. No mock code here (`miniapp/README.md`, Dev plugin).
+`api.js`: the backend calls (`getJob`, `postRender`, for Lift `warmLift`, `segment`, and `lookFrame` for the HDR preview) (`Authorization` from Auth header, errors as `{detail}`, FastAPI validation lists read through `detail[0].msg`). `telegram.js`: the `Telegram.WebApp` integration. `stale.js`: the reload after a redeploy (Stale chunks). No mock code here (`miniapp/README.md`, Dev plugin).
+
+## Stale chunks
+
+Every deploy to Pages replaces `assets/` with new hashed file names, and the old ones are gone. A page loaded before the deploy (an open tab, a Mini App kept in memory, or an `index.html` from the HTTP cache: Pages sends `max-age=600`) still asks for the old names on its first lazy `import()`, gets 404, and Safari reports it as "Importing a module script failed." (found 2026-10-29 on an iPhone XR, iOS 18: picking a video failed on `probe-<old hash>.js` one minute after a deploy; reproduced in Playwright WebKit by answering `probe-*.js` with 404).
+
+`reloadOnStaleChunk()` runs first in both entries (`main.jsx`, `web.jsx`) and listens for `vite:preloadError`, which Vite's preload wrapper fires when a lazy chunk, its dependencies or its CSS fail to load (vite.dev, Load error handling). It reloads the page, which revalidates `index.html` and brings the new names; the error still goes on to the caller, so the notice may flash before the reload. The picked file is lost and has to be chosen again. No reload when the browser is offline (the failure is the network, and a reload would leave a blank page), and at most one per 30 s per tab (`sessionStorage`), so a chunk that is really broken shows its error instead of a reload loop. A missing entry chunk (`web-*.js` from a cached `index.html`) is not covered: nothing of the app runs then; reload by hand.
 
 ## Auth header
 
