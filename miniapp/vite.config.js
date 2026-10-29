@@ -37,7 +37,7 @@ const inlineCss = {
       const link = new RegExp(`<link rel="stylesheet"[^>]*href="\\./${name.replaceAll('.', '\\.')}"[^>]*>`)
       if (!link.test(page.source)) continue
       page.source = page.source.replace(link, () => `<style>${bundle[name].source}</style>`)
-      delete bundle[name]
+      // keep the file: dynamic-import preload maps still reference it (deleting it made them 404)
     }
   }
 }
