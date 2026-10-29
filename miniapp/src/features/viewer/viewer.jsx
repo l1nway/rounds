@@ -57,10 +57,7 @@ function useLift(job, dispatch, readOnly) {
     }
     wake()
     document.addEventListener('visibilitychange', wake)
-    const isBlob = Boolean(job?.proxy_url?.startsWith('blob:'))
-  const src = job ? isBlob ? job.proxy_url : `${job.proxy_url}#t=0.001` : ''
-
-  return () => document.removeEventListener('visibilitychange', wake)
+    return () => document.removeEventListener('visibilitychange', wake)
   }, [id, readOnly])
 
   // [DOC: single-flight]
@@ -111,9 +108,6 @@ function useLook(loaded, on) {
 // [DOC: selection-frame]
 const Marks = memo(function Marks({time, points, box, pending, follow}) {
   const away = useAway(time)
-  const isBlob = Boolean(job?.proxy_url?.startsWith('blob:'))
-  const src = job ? isBlob ? job.proxy_url : `${job.proxy_url}#t=0.001` : ''
-
   return (
     <div ref={follow} className='viewer-marks' data-away={away || undefined} data-pending={pending || undefined} aria-hidden='true'>
       {box && <div className='viewer-box' style={boxStyle(box)}>{CORNERS.map(c => <i key={c} className='viewer-corner' data-corner={c}/>)}</div>}
@@ -158,10 +152,7 @@ function Compare({show, held, set}) {
     const away = event => {if (event.type === 'scroll' || !el?.contains(event.target)) el?.blur()}
     const events = ['pointerdown', 'scroll']
     events.forEach(t => addEventListener(t, away, true))
-    const isBlob = Boolean(job?.proxy_url?.startsWith('blob:'))
-  const src = job ? isBlob ? job.proxy_url : `${job.proxy_url}#t=0.001` : ''
-
-  return () => events.forEach(t => removeEventListener(t, away, true))
+    return () => events.forEach(t => removeEventListener(t, away, true))
   }, [held, button])
   const down = event => {
     const el = event.currentTarget
@@ -221,9 +212,6 @@ export default memo(function Viewer({job, notice, aspect, selection, start, end,
 
   const isBlob = Boolean(job?.proxy_url?.startsWith('blob:'))
   const src = job ? (isBlob ? job.proxy_url : `${job.proxy_url}#t=0.001`) : ''
-
-  const isBlob = Boolean(job?.proxy_url?.startsWith('blob:'))
-  const src = job ? isBlob ? job.proxy_url : `${job.proxy_url}#t=0.001` : ''
 
   return (
     <section ref={viewer} className='viewer enter' aria-label='Video' style={{'--aspect': aspect}}>
