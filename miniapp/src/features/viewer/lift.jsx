@@ -4,6 +4,9 @@ import {useAway} from '../../hooks/player.js'
 import {useLeave, usePresence} from '../../hooks/state.js'
 import './lift.css'
 
+// [DOC: lift-canvas]
+const MAX_SIDE = 1920
+
 function Layer({n, mask, sweep, on, refs, done}) {
   const canvas = useRef(null)
   const [gone] = useState(() => () => done.gone(n))
@@ -12,10 +15,11 @@ function Layer({n, mask, sweep, on, refs, done}) {
   useLayoutEffect(() => {
     const {video, stage} = refs.current
     const paint = source => {
-      const c = canvas.current
-      if (!c || !video || !video.videoWidth || !video.videoHeight) return
-      if (c.width !== video.videoWidth || c.height !== video.videoHeight) Object.assign(c, {width: video.videoWidth, height: video.videoHeight})
-      c.getContext('2d').drawImage(source ?? video, 0, 0, c.width, c.height)
+      const c = canvas.current, w = video?.videoWidth, h = video?.videoHeight
+      if (!c || !w || !h) return
+      const k = Math.min(1, MAX_SIDE / Math.max(w, h)), width = Math.round(w * k), height = Math.round(h * k)
+      if (c.width !== width || c.height !== height) Object.assign(c, {width, height})
+      c.getContext('2d').drawImage(source ?? video, 0, 0, width, height)
     }
     // [DOC: lift-source]
     const fresh = () => {paint(); stage?.dispatchEvent(new Event(STAGE_EVENTS.ask))}

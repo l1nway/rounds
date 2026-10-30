@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
 
-from . import media, smooth
+from . import media
 from .config import FPS
 
 # [DOC: stabilization]
@@ -50,6 +50,8 @@ def flows(src, meta: dict, start: float, n: int, rate: float, timed: bool) -> di
     k = min(1.0, SIDE / min(w, h))
     sw, sh = media.even(w * k), media.even(h * k)
     vf = f'scale={sw}:{sh}:flags=area'
+    if timed:  # [DOC: free-stabilization]
+        from . import smooth
     for slow in (False, True):
         if timed:
             proc, stamps = smooth.decode(src, meta, start, n / rate + 2 / fps, 'gray', slow, vf)

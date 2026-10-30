@@ -1,3 +1,4 @@
+import hashlib
 import hmac
 import time
 from functools import partial
@@ -9,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field, model_validator
 
-from . import auth, bot, files
+from . import auth, bot, files, transfer
 from .config import MAX_DURATION, env
 
 # [DOC: look-cors]
@@ -18,24 +19,25 @@ PUBLIC = ('id', 'status', 'stage', 'progress', 'error', 'meta', 'filmstrip', 're
 MASK = r'^data:image/png;base64,[A-Za-z0-9+/]+=*$'
 MASK_CHARS = 90_000
 # [DOC: tiers]
-PRO_OPTIONS, PRO_LEVELS = ('interpolate', 'upscale'), ('look', 'exposure', 'stabilize')
+PRO_OPTIONS, PRO_LEVELS = ('interpolate', 'upscale'), ()
 FREE_DEBLUR = 0  # [DOC: deblur]
 PRO_ONLY = 'This needs the full version of the bot'
 
 
 class Prompt(BaseModel):
-    time: float | None = None
+    time: float | None = Field(None, ge=0)
     points: list[tuple[float, float, int]] = []
     box: tuple[float, float, float, float] | None = None
     mask: str | None = Field(None, max_length=MASK_CHARS, pattern=MASK)
+    crop: bool = False  # [DOC: crop-mode]
 
     # [DOC: square-source]
     @model_validator(mode='after')
     def check(self):
         coords = [v for x, y, _ in self.points for v in (x, y)] + list(self.box or ())
-        if self.time is None and not coords and not self.mask:
+        if self.time is None and not coords and not self.mask and not self.crop:
             return self
-        if self.time is None or self.time < 0 or not coords or any(not 0 <= v <= 1 for v in coords):
+        if self.time is None or not coords or any(not 0 <= v <= 1 for v in coords) or (self.crop and not self.box):
             raise ValueError('Select the object')
         return self
 
@@ -85,7 +87,7 @@ def free_render(body: RenderRequest) -> bool:
     return not any(body.options.get(k) for k in PRO_OPTIONS) and not levels
 
 
-def create(jobs, volume, spawn, tier: str = 'pro') -> FastAPI:
+def create(jobs, state, volume, spawn, tier: str = 'pro') -> FastAPI:
     origin = '{0.scheme}://{0.netloc}'.format(urlsplit(env('MINIAPP_URL')))
     api = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=bot.session)  # [DOC: bot-session]
     api.add_middleware(CORSMiddleware, allow_origins=[origin], **CORS)
@@ -117,7 +119,8 @@ def create(jobs, volume, spawn, tier: str = 'pro') -> FastAPI:
     async def webhook(request: Request, token: str = Header('', alias='X-Telegram-Bot-Api-Secret-Token')):
         if not hmac.compare_digest(token, env('TELEGRAM_WEBHOOK_SECRET')):
             raise HTTPException(403)
-        await bot.feed(await request.json(), jobs, spawn, volume)
+        update = await request.json()  # [DOC: webhook-dedupe]
+        await transfer.once(state, update.get('update_id'), partial(bot.feed, update, jobs, spawn, volume))
         return {}
 
     # [DOC: telegram-login]
@@ -138,9 +141,17 @@ def create(jobs, volume, spawn, tier: str = 'pro') -> FastAPI:
         urls = {f'{n.split(".")[0]}_url': job.get('proxy') and url(n) for n in files.FILES}
         return {**{k: job.get(k) for k in PUBLIC}, **urls, 'max_duration': MAX_DURATION, 'tier': tier}
 
+    # [DOC: render-dedupe]
     @api.post('/api/jobs/{job_id}/render', status_code=202)
     async def render(job_id: str, body: RenderRequest, authorization: str = Header('')):
-        job = await own_job(job_id, authorization)
+        await own_job(job_id, authorization)
+        key = hashlib.sha256(body.model_dump_json().encode()).hexdigest()
+        async with transfer.held(state, f'submit:{job_id}'):
+            return await submit(job_id, body, key, await own_job(job_id, authorization))
+
+    async def submit(job_id: str, body: RenderRequest, key: str, job: dict):
+        if job.get('request_key') == key and job['status'] in ('rendering', 'done'):
+            return {'status': job['status'], 'duplicate': True}
         if job['status'] not in ('ready', 'done', 'failed'):
             raise HTTPException(409, 'The video is busy, wait for it to finish')
         if body.end > job['meta']['duration'] + 1e-3:
@@ -154,7 +165,7 @@ def create(jobs, volume, spawn, tier: str = 'pro') -> FastAPI:
         )
         update = {
             'status': 'rendering', 'stage': 'queued', 'progress': 0, 'error': None, 'request': body.model_dump(),
-            'status_message_id': reply.message_id, 'queued_at': time.time(), 'held': None,
+            'request_key': key, 'status_message_id': reply.message_id, 'queued_at': time.time(), 'held': None,
         }  # fmt: skip
         await jobs.put.aio(job_id, {**job, **update})
         await spawn['render'](job_id)

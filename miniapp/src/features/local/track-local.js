@@ -1,94 +1,73 @@
 import {CanvasSink} from 'mediabunny'
+import {call, deviceOf, ready} from './models.js'
+import {identity, stage} from './stage-cache.js'
 import {open} from './render.js'
-import {deviceOf, loadModels} from './models.js'
 
 const SIDE = 512
 const FPS = 30
-const RATES = [10, 6, 5]
-const STEPS = 360
-const PREVIEW_RATES = [3, 2, 1]
-const PREVIEW_STEPS = 45
-const MODEL_KEYS = ['sam2.1-video-encoder', 'sam2.1-video-decoder', 'sam2.1-video-mem-enc', 'sam2.1-video-mem-attn', 'sam2.1-video-pointer']
+const RATES = [3, 2, 1]
+const STEPS = 45
+const CPU_STEPS = 12
+const CPU_RATE = 2
+const CHUNK = 30
+const PROGRESS_EVERY = 10
+const GROUP = 'track'
+const NAMES = ['sam2.1-video-encoder', 'sam2.1-video-decoder', 'sam2.1-video-mem-enc', 'sam2.1-video-mem-attn', 'sam2.1-video-pointer']
 
-let worker = null
-let ready = null
-let seq = 0
-let activeRun = 0
-const pending = new Map()
+let active = 0
+let turn = Promise.resolve()
+let preview = null
 
-const callWorker = (payload, transfer = []) => new Promise((resolve, reject) => {
-  const id = ++seq
-  pending.set(id, {resolve, reject})
-  worker.postMessage({...payload, id}, transfer)
-})
+// [DOC: local-follow]
+export const stopFollow = () => {++active}
 
-const resetWorker = error => {
-  if (worker) worker.terminate()
-  worker = null
-  ready = null
-  for (const item of pending.values()) item.reject(error)
-  pending.clear()
+// [DOC: track-serial]
+const exclusive = fn => {
+  const run = turn.then(fn)
+  turn = run.catch(() => {})
+  return run
 }
 
-const ensureWorker = options => {
-  if (ready) return ready
-  ready = (async () => {
-    const [{gpu}, loaded] = await Promise.all([deviceOf(), loadModels(MODEL_KEYS, options)])
-    const bufs = MODEL_KEYS.map(k => loaded[k])
-    worker = new Worker(new URL('./track-worker.js', import.meta.url), {type: 'module'})
-    worker.onmessage = ({data: {id, result, ok, error}}) => {
-      const item = pending.get(id)
-      if (!item) return
-      pending.delete(id)
-      if (error) item.reject(new Error(error))
-      else item.resolve(result ?? ok)
-    }
-    worker.onerror = event => resetWorker(new Error(event.message || 'Track worker failed'))
-    const [encBuf, decBuf, memEncBuf, memAttnBuf, ptrBuf] = bufs
-    await callWorker({type: 'init', encBuf, decBuf, memEncBuf, memAttnBuf, ptrBuf, gpu}, bufs)
-  })().catch(error => {
-    resetWorker(error)
-    throw error
-  })
-  return ready
-}
-
-export const grid = (time, start, end, rates = RATES, steps = STEPS) => {
-  const dur = end - start
-  const rate = rates.find(r => dur * r <= steps) ?? rates[rates.length - 1]
+const grid = (time, start, end, steps) => {
+  const rate = RATES.find(r => (end - start) * r <= steps) ?? RATES[RATES.length - 1]
   const anchor = Math.floor(time * FPS + 1e-3) / FPS
   const before = Math.floor((anchor - start) * rate + 1e-6)
   const after = Math.floor((end - anchor) * rate + 1e-6)
   return {rate, t0: anchor - before / rate, index: before, n: before + after + 1}
 }
 
-const decodeFrames = async (file, times) => {
-  const input = open(file)
-  const track = await input.getPrimaryVideoTrack()
-  const sink = new CanvasSink(track, {width: SIDE, height: SIDE, fit: 'fill'})
-  const frames = []
-  for await (const frame of sink.canvasesAtTimestamps(times)) {
-    if (!frame) {
-      frames.push(frames.length ? frames[frames.length - 1].slice() : new Uint8Array(SIDE * SIDE * 4))
-      continue
-    }
-    const ctx = frame.canvas.getContext('2d')
-    frames.push(ctx.getImageData(0, 0, SIDE, SIDE).data)
+// [DOC: track-frames]
+async function* frames(file, times, index) {
+  const sink = new CanvasSink(await open(file).getPrimaryVideoTrack(), {width: SIDE, height: SIDE, fit: 'fill', poolSize: 1})
+  const read = frame => frame ? frame.canvas.getContext('2d').getImageData(0, 0, SIDE, SIDE).data : new Uint8ClampedArray(SIDE * SIDE * 4)
+  let k = index
+  for await (const frame of sink.canvasesAtTimestamps(times.slice(index))) yield [k++, read(frame)]
+  for (let hi = index; hi > 0; hi -= CHUNK) {
+    const lo = Math.max(0, hi - CHUNK), chunk = []
+    for await (const frame of sink.canvasesAtTimestamps(times.slice(lo, hi))) chunk.push(read(frame))
+    for (let i = chunk.length - 1; i >= 0; i--) yield [lo + i, chunk[i]]
   }
-  return frames
 }
 
-export const changes = hists => {
-  const n = hists.length, d = new Float64Array(n)
-  d[0] = 0
-  for (let k = 1; k < n; k++) {
-    const a = hists[k - 1], b = hists[k]
-    let sum = 0
-    for (let i = 0; i < 512; i++) sum += Math.abs(b[i] - a[i])
-    d[k] = sum / 2
+const send = (type, rgba, extra) => call({group: GROUP, type, rgba: rgba.buffer, ...extra}, [rgba.buffer])
+
+const pass = async (file, times, index, prompt, record, live) => {
+  let first = null
+  for await (const [k, rgba] of frames(file, times, index)) {
+    if (!live()) return false
+    if (k === index) {
+      if (index > 0) first = rgba.slice()
+      record(k, await send('seed', rgba, {prompt, total: times.length - index}))
+      continue
+    }
+    if (k === index - 1) await send('seed', first, {prompt, total: index + 1})
+    record(k, await send('step', rgba))
   }
-  return d
+  await call({group: GROUP, type: 'reset'})
+  return true
 }
+
+const changes = hists => hists.map((b, k) => k ? b.reduce((sum, v, i) => sum + Math.abs(v - hists[k - 1][i]), 0) / 2 : 0)
 
 const median = arr => {
   if (!arr.length) return 0
@@ -96,88 +75,98 @@ const median = arr => {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2
 }
 
-export const sceneCuts = (d, window = 15, floor = 0.3, ratio = 3.0, minShot = 6) => {
+// [DOC: local-track]
+const sceneCuts = (d, window = 15, floor = 0.3, ratio = 3.0, minShot = 6) => {
   const cuts = []
   for (let k = 1; k < d.length; k++) {
-    const left = d.subarray(Math.max(1, k - window), k)
-    const right = d.subarray(k + 1, Math.min(d.length, k + window + 1))
-    const merged = new Float64Array(left.length + right.length)
-    merged.set(left); merged.set(right, left.length)
-    const local = d.length > 2 ? median(merged) : 0
-    if (d[k] > floor && d[k] > ratio * local + 0.05 && k - (cuts.length ? cuts[cuts.length - 1] : 0) >= minShot) cuts.push(k)
+    const local = d.length > 2 ? median([...d.slice(Math.max(1, k - window), k), ...d.slice(k + 1, k + window + 1)]) : 0
+    if (d[k] > floor && d[k] > ratio * local + 0.05 && k - (cuts.at(-1) ?? 0) >= minShot) cuts.push(k)
   }
   return cuts
 }
 
-const toSource = (found, meta) => {
-  const sx = meta.width / SIDE, sy = meta.height / SIDE, sMax = Math.max(sx, sy)
-  return {
-    ...found,
-    cx: found.cx.map(v => v * sx),
-    cy: found.cy.map(v => v * sy),
-    r: found.r.map(v => v * sMax)
+// [DOC: track-reuse]
+const promptKey = (file, prompt) => JSON.stringify([...identity(file), prompt.time, prompt.points, prompt.box])
+const anchorOf = time => Math.floor(time * FPS + 1e-3) / FPS
+
+const reused = (file, {start, end, prompt}) => preview?.key !== promptKey(file, prompt) ? []
+  : preview.samples.filter(({t}) => t >= start - 1e-3 && t <= end + 1e-3)
+
+const plan = (start, end, rate, known, time) => {
+  const n = rate === FPS ? Math.max(1, Math.round((end - start) * FPS)) : Math.max(2, Math.floor((end - start) * rate) + 1)
+  const ts = known.map(({t}) => t), lo = Math.min(...ts), hi = Math.max(...ts), half = 0.5 / rate + 1e-3
+  const covered = t => ts.some(k => Math.abs(k - t) <= half) || (t < lo && lo - t <= 1 / rate) || (t > hi && t - hi <= 1 / rate)
+  const times = Array.from({length: n}, (_, i) => start + i / rate).filter(t => !covered(t))
+  const anchor = anchorOf(time), near = times.findIndex(t => Math.abs(t - anchor) <= half)
+  if (near >= 0) times[near] = anchor
+  else times.splice(times.filter(t => t < anchor).length, 0, anchor)
+  return {times, index: times.indexOf(anchor)}
+}
+
+// [DOC: track-cpu-rate]
+const merge = (samples, meta, start, end, cpu) => {
+  const list = samples.filter(s => s.found).sort((a, b) => a.t - b.t).filter((s, i, all) => !i || s.t - all[i - 1].t > 1e-6)
+  const total = Math.max(1, Math.round((end - start) * FPS))
+  const sx = meta.width / SIDE, sy = meta.height / SIDE
+  const scale = {cx: sx, cy: sy, r: Math.max(sx, sy), area: 1}
+  const found = {present: new Uint8Array(total), cx: new Float64Array(total), cy: new Float64Array(total), r: new Float64Array(total), area: new Float64Array(total)}
+  for (let j = 0, i = 0; j < total; j++) {
+    const t = start + j / FPS
+    while (i < list.length - 2 && list[i + 1].t <= t) i++
+    const a = list[i].found, b = list[Math.min(i + 1, list.length - 1)].found, span = list[Math.min(i + 1, list.length - 1)].t - list[i].t
+    const w = span > 0 ? Math.min(1, Math.max(0, (t - list[i].t) / span)) : 0
+    const both = a.present && b.present, near = w < 0.5 ? a : b
+    found.present[j] = both || near.present ? 1 : 0
+    for (const key of ['cx', 'cy', 'r', 'area']) found[key][j] = (both ? a[key] * (1 - w) + b[key] * w : near[key]) * scale[key]
   }
+  const hists = list.map(s => s.found.hist)
+  const cuts = (cpu ? sceneCuts(changes(hists), 3, 0.3, 3.0, 1) : sceneCuts(changes(hists))).map(k => Math.round((list[k].t - start) * FPS))
+  return {found, cuts}
 }
 
 // [DOC: local-follow]
 export const followLocal = async (source, {start, end, prompt}, options = {}) => {
-  const runId = ++activeRun
-  await ensureWorker(options)
-  const {rate, t0, index, n} = grid(prompt.time, start, end, PREVIEW_RATES, PREVIEW_STEPS)
-  const times = Array.from({length: n}, (_, i) => t0 + i / rate)
-  const frames = await decodeFrames(source.file, times)
-  if (runId !== activeRun) return null
-  const boxes = Array.from({length: n}, () => null)
-  let done = 0
-  const report = () => options.onTrack?.(done / n)
-  const fSeed = await callWorker({type: 'seed', rgba: frames[index].slice().buffer, prompt, total: n - index, width: SIDE, height: SIDE})
-  if (fSeed?.box) boxes[index] = fSeed.box
-  done++
-  report()
-  for (let k = index + 1; k < n; k++) {
-    if (runId !== activeRun) return null
-    const res = await callWorker({type: 'step', rgba: frames[k].buffer, width: SIDE, height: SIDE})
-    if (res?.box) boxes[k] = res.box
-    done++
-    report()
-  }
-  if (index > 0) {
-    if (runId !== activeRun) return null
-    await callWorker({type: 'seed', rgba: frames[index].buffer, prompt, total: index + 1, width: SIDE, height: SIDE})
-    for (let k = index - 1; k >= 0; k--) {
-      if (runId !== activeRun) return null
-      const res = await callWorker({type: 'step', rgba: frames[k].buffer, width: SIDE, height: SIDE})
-      if (res?.box) boxes[k] = res.box
-      done++
-      report()
-    }
-  }
-  await callWorker({type: 'release'})
-  return {fps: rate, start: Math.round(t0 * 1000) / 1000, boxes}
+  const run = ++active
+  const backend = await ready(GROUP, NAMES, options)
+  return exclusive(async () => {
+    if (run !== active) return null
+    const {rate, t0, index, n} = grid(prompt.time, start, end, backend.gpu ? STEPS : CPU_STEPS)
+    const boxes = Array(n).fill(null), found = Array(n).fill(null)
+    let done = 0
+    const record = (k, item) => {boxes[k] = item.box; found[k] = item; options.onTrack?.(++done / n)}
+    const times = Array.from({length: n}, (_, i) => t0 + i / rate)
+    if (!await pass(source.file, times, index, prompt, record, () => run === active)) return null
+    preview = {key: promptKey(source.file, prompt), samples: times.map((t, k) => ({t, found: found[k]}))}
+    return {fps: rate, start: Math.round(t0 * 1000) / 1000, boxes}
+  })
 }
 
-// [DOC: local-track]
-export const trackLocal = async (file, meta, {start, end, prompt}, options = {}, onProgress = null) => {
-  await ensureWorker(options)
-  const n = Math.round((end - start) * FPS)
-  const index = Math.min(n - 1, Math.max(0, Math.round((prompt.time - start) * FPS)))
-  const times = Array.from({length: n}, (_, i) => start + i / FPS)
-  const frames = await decodeFrames(file, times)
-  const present = new Uint8Array(n), cx = new Float64Array(n), cy = new Float64Array(n), r = new Float64Array(n), area = new Float64Array(n)
-  const hists = Array.from({length: n}, () => null)
-  let done = 0
-  const record = (k, res) => {
-    present[k] = res.present ? 1 : 0; cx[k] = res.cx; cy[k] = res.cy; r[k] = res.r; area[k] = res.area; hists[k] = res.hist
-    done++; if (onProgress && (done % 10 === 0 || done === n)) onProgress(done / n)
+const runTrack = async (file, meta, {start, end, prompt}, onProgress) => {
+  const known = (await deviceOf()).gpu ? [] : reused(file, {start, end, prompt})
+  const todo = known.length ? plan(start, end, CPU_RATE, known, prompt.time) : null
+  if (todo?.times.length === 1 && known.some(({t}) => Math.abs(t - todo.times[0]) < 1e-6)) {
+    onProgress(1)
+    return merge(known, meta, start, end, true)
   }
-  const fSeed = await callWorker({type: 'seed', rgba: frames[index].slice().buffer, prompt, total: n - index, width: SIDE, height: SIDE})
-  record(index, fSeed)
-  for (let k = index + 1; k < n; k++) record(k, await callWorker({type: 'step', rgba: frames[k].buffer, width: SIDE, height: SIDE}))
-  if (index > 0) {
-    await callWorker({type: 'seed', rgba: frames[index].buffer, prompt, total: index + 1, width: SIDE, height: SIDE})
-    for (let k = index - 1; k >= 0; k--) record(k, await callWorker({type: 'step', rgba: frames[k].buffer, width: SIDE, height: SIDE}))
-  }
-  await callWorker({type: 'release'})
-  const cuts = sceneCuts(changes(hists))
-  return {found: toSource({present, cx, cy, r, area}, meta), cuts}
+  const backend = await ready(GROUP, NAMES)
+  return exclusive(async () => {
+    const cpu = !backend.gpu
+    const {times, index} = todo && cpu ? todo : plan(start, end, cpu ? CPU_RATE : FPS, [], prompt.time)
+    const found = Array(times.length)
+    let done = 0
+    const record = (k, item) => {
+      found[k] = item
+      if (++done % (cpu ? 1 : PROGRESS_EVERY) === 0 || done === times.length) onProgress(done / times.length)
+    }
+    await pass(file, times, index, prompt, record, () => true)
+    return merge([...(cpu ? known : []), ...times.map((t, k) => ({t, found: found[k]}))], meta, start, end, cpu)
+  })
+}
+
+// [DOC: stage-cache]
+export const trackLocal = async (file, meta, request, onProgress) => {
+  ++active
+  const {gpu} = await deviceOf()
+  const {start, end, prompt} = request
+  return stage(['track', ...identity(file), start, end, prompt, gpu], () => runTrack(file, meta, request, onProgress), () => onProgress(1))
 }

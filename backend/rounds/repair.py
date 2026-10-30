@@ -7,17 +7,17 @@ from functools import cache
 import torch
 import torch.nn.functional as F
 
-from . import fastdvdnet, zerodce
+from . import fastdvdnet, zerodce, zerodce_np
 from .color import GAMMA
 from .config import DCE_WEIGHTS, DVD_WEIGHTS, FPS
+from .look_np import REPAIR_EPS as EPS
+from .look_np import REPAIR_LIFT as LIFT
+from .look_np import REPAIR_SCALE as SCALE
+from .look_np import REPAIR_TAU as TAU
 
 # [DOC: repair]
 SIGMA_MAX = 15 / 255
-LIFT = 0.5
-SCALE = 12
-TAU = 0.5
 ALIGN = 4
-EPS = 1e-4
 
 
 def load() -> tuple:
@@ -68,7 +68,7 @@ def repair(seq, nets: tuple, strength: float, rate: float, pad: int = 2):
         ema = alpha if ema is None else ema + k * (alpha - ema)
         alpha = F.interpolate(ema, (h, w), mode='bilinear', align_corners=True) * (strength * LIFT)
         m = v.amax(1, keepdim=True)
-        yield (v * zerodce.curve(m, alpha) / m.clamp(min=EPS))[0].clamp(0, 1) ** GAMMA
+        yield (v * zerodce_np.curve(m, alpha) / m.clamp(min=EPS))[0].clamp(0, 1) ** GAMMA
 
 
 def frames(source, device, strength: float, rate: float):

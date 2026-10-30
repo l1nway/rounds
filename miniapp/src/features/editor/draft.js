@@ -12,15 +12,15 @@ export const OPTIONS = [
 // [DOC: level-rows]
 export const LEVELS = [
   // [DOC: hdr-slider]
-  {key: 'look', need: 'pro', local: LOOK.HONEST, label: 'HDR', min: 0, max: 1, steps: 100, zones: [
+  {key: 'look', need: 'free', local: LOOK.HONEST, label: 'HDR', min: 0, max: 1, steps: 100, zones: [
     {to: 0, hint: 'Off'}, {to: LOOK.HONEST, hint: 'Recovers highlights and shadows'}, {to: 1, hint: 'AI cleans noise, lifts the dark. Slower'}
   ]},
   // [DOC: exposure-slider]
-  {key: 'exposure', need: 'pro', local: true, label: 'Exposure', min: -2, max: 2, steps: 40, unit: 'EV', zones: [
+  {key: 'exposure', need: 'free', local: true, label: 'Exposure', min: -2, max: 2, steps: 40, unit: 'EV', zones: [
     {to: -0.05, hint: 'Darker, colours kept'}, {to: 0, hint: 'Off'}, {to: 2, hint: 'Brighter, highlights protected'}
   ]},
   // [DOC: stabilize-slider]
-  {key: 'stabilize', need: 'pro', label: 'Stabilize', min: 0, max: 1, steps: 100, zones: [
+  {key: 'stabilize', need: 'local', label: 'Stabilize', min: 0, max: 1, steps: 100, zones: [
     {to: 0, hint: 'Off'}, {to: 1, hint: 'Steadies shaky hands, fills the edges'}
   ]},
   // [DOC: deblur-slider]
@@ -59,7 +59,7 @@ export const init = job => {
   return {
     start: last?.start ?? 0, end: last?.end ?? ms(Math.min(job?.meta.duration ?? 0, job?.max_duration ?? 0)),
     time: last?.prompt.time ?? null, points: last?.prompt.points ?? [], box: last?.prompt.box ?? null,
-    mask: last?.prompt.mask ?? null, options: {...last?.options}, codec: codecOf(last?.codec, job?.meta.off),
+    mask: last?.prompt.mask ?? null, crop: last?.prompt.crop ?? false, options: {...last?.options}, codec: codecOf(last?.codec, job?.meta.off),
     ...Object.fromEntries(LEVELS.map(({key}) => [key, last?.[key] ?? 0])), posting: false, error: null
   }
 }

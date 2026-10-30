@@ -5,11 +5,22 @@ const TAP = 8
 const HIT = 24
 const MIN_BOX = 12
 const DOUBLE = 350
+const FLOOR = 0.25
 
 const round = value => Math.round(value * 1e4) / 1e4
 const norm = (x, y, rect) => [round(clamp((x - rect.left) / rect.width, 0, 1)), round(clamp((y - rect.top) / rect.height, 0, 1))]
 export const pct = value => `${value * 100}%`
 export const boxStyle = ([x0, y0, x1, y1]) => ({left: pct(x0), top: pct(y0), width: pct(x1 - x0), height: pct(y1 - y0)})
+
+// [DOC: crop-mode]
+export const squared = ([x0, y0, x1, y1], aspect) => {
+  const room = Math.min(aspect, 1)
+  const side = clamp(Math.max((x1 - x0) * aspect, y1 - y0), room * FLOOR, room)
+  const place = (mid, size) => round(clamp(mid - size / 2, 0, 1 - size))
+  const left = place((x0 + x1) / 2, side / aspect)
+  const top = place((y0 + y1) / 2, side)
+  return [left, top, round(left + side / aspect), round(top + side)]
+}
 
 const span = ([ax, ay], [bx, by], rect) => {
   const [x0, y0] = norm(ax, ay, rect)
@@ -34,7 +45,7 @@ const grab = (box, x, y, rect) => {
 }
 
 // [DOC: selection-gestures]
-export function useGestures({job, selection, dispatch, readOnly, refs, ask, cycle}) {
+export function useGestures({job, selection, dispatch, readOnly, refs, ask, cycle, locked, onMark}) {
   const {time, points, box} = selection
 
   const select = patch => {haptic.tap(); dispatch(patch); ask({...selection, ...patch})}
@@ -46,18 +57,13 @@ export function useGestures({job, selection, dispatch, readOnly, refs, ask, cycl
   const tap = ([x, y], rect) => {
     const {now, same} = frame()
     const mark = [x, y, 1]
-    if (!same) return select({time: now, points: [mark], box: null})
-    const hit = points.findIndex(([px, py]) => Math.hypot((px - x) * rect.width, (py - y) * rect.height) < HIT)
-    if (hit < 0) return select({points: [...points, mark]})
+    const hit = same && points.some(([px, py]) => Math.hypot((px - x) * rect.width, (py - y) * rect.height) < HIT)
+    if (!hit) return select({time: now, points: [mark], box: null})
     if (cycle()) return haptic.tap()
-    const rest = points.filter((_, i) => i !== hit)
-    select({points: rest, time: rest.length || box ? time : null})
+    select({points: [], box: null, time: null})
   }
 
-  const drawBox = value => {
-    const {now, same} = frame()
-    select(same ? {box: value} : {time: now, box: value, points: []})
-  }
+  const drawBox = value => select({time: frame().now, box: value, points: []})
 
   const hide = () => {
     const {draw, stage} = refs.current
@@ -66,8 +72,13 @@ export function useGestures({job, selection, dispatch, readOnly, refs, ask, cycl
     if (stage) delete stage.dataset.editing
   }
 
+  // [DOC: follow-confirm]
+  const marked = ({clientX: x, clientY: y}) => [...refs.current.stage.querySelectorAll('.viewer-marks > :is(.viewer-point, .viewer-box)')]
+    .some(el => {const r = el.getBoundingClientRect(); return x > r.left - HIT && x < r.right + HIT && y > r.top - HIT && y < r.bottom + HIT})
+
   const down = event => {
     if (readOnly || !job || !event.isPrimary || event.button > 0) return
+    if (locked) {refs.current.drag = {locked: true}; return}
     hold()
     try {event.currentTarget.setPointerCapture(event.pointerId)} catch {}
     const rect = event.currentTarget.getBoundingClientRect()
@@ -78,7 +89,7 @@ export function useGestures({job, selection, dispatch, readOnly, refs, ask, cycl
 
   const move = event => {
     const {drag, draw, stage} = refs.current
-    if (!drag || (!drag.box && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < TAP)) return
+    if (!drag || drag.locked || (!drag.box && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < TAP)) return
     const {rect, shift, from, edit} = drag
     drag.box = shift
       ? shifted(shift, (event.clientX - drag.x) / rect.width, (event.clientY - drag.y) / rect.height)
@@ -92,15 +103,16 @@ export function useGestures({job, selection, dispatch, readOnly, refs, ask, cycl
   const reset = (event, shift) => {
     const {tapped} = refs.current
     const twice = shift && tapped && event.timeStamp - tapped.at < DOUBLE && Math.hypot(event.clientX - tapped.x, event.clientY - tapped.y) < HIT
-    refs.current.tapped = !twice && shift ? {at: event.timeStamp, x: event.clientX, y: event.clientY, points} : null
-    if (twice) select({box: null, points: tapped.points, time: tapped.points.length ? time : null})
-    return twice
+    refs.current.tapped = !twice && shift ? {at: event.timeStamp, x: event.clientX, y: event.clientY} : null
+    if (twice) select({box: null, points: [], time: null})
+    return twice || Boolean(shift)
   }
 
   const up = event => {
     const {drag} = refs.current
     hide()
     if (!drag) return
+    if (drag.locked) return marked(event) && (haptic.tap(), onMark())
     if (!drag.box) return reset(event, drag.shift) || tap(norm(event.clientX, event.clientY, drag.rect), drag.rect)
     refs.current.tapped = null
     const [x0, y0, x1, y1] = drag.box

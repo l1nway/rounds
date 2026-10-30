@@ -16,6 +16,7 @@ WAIT = 1
 # [DOC: mtproto-lanes]
 PART, LANES = 512 * 1024, 4
 KEYS = 3  # [DOC: mtproto-keys]
+SEEN = 'update:'  # [DOC: webhook-dedupe]
 
 
 # [DOC: dict-lease]
@@ -40,6 +41,19 @@ async def held(state, name: str):
         holding.cancel()
         with contextlib.suppress(KeyError):
             await state.pop.aio(lease)
+
+
+# [DOC: webhook-dedupe]
+async def once(state, update_id: int | None, work: Callable) -> None:
+    name = f'{SEEN}{update_id}'
+    if not await state.put.aio(name, time.time(), skip_if_exists=True):
+        return
+    try:
+        await work()
+    except BaseException:
+        with contextlib.suppress(KeyError):
+            await state.pop.aio(name)
+        raise
 
 
 # [DOC: mtproto-sessions]

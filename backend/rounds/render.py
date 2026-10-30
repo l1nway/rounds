@@ -1,7 +1,6 @@
 import base64
 import contextlib
 import math
-import tempfile
 from functools import partial
 from pathlib import Path
 
@@ -11,11 +10,10 @@ import torch
 
 from . import camera, color, deblur, encode, fill, look, media, motion, paint, repair, smooth, source, tags, upscale
 from .config import FPS, OUT_SIZE
+from .warp_np import GUARD, OVER
+from .warp_np import weights as matrix
 
-TAPS = 3
 # [DOC: stabilization-warp]
-OVER = 2
-GUARD = 4
 BICUBIC = {'mode': 'bicubic', 'padding_mode': 'border', 'align_corners': False}
 PROGRESS_EVERY = 15
 FRAMES_SHARE = 0.6
@@ -27,15 +25,8 @@ JPEG = [cv2.IMWRITE_JPEG_QUALITY, 85]
 
 # [DOC: lanczos-matrix]
 def weights(c: float, side: float, n: int, device, size: int = OUT_SIZE) -> tuple[int, int, torch.Tensor]:
-    s = side / size
-    sc = max(s, 1.0)
-    u = c - side / 2 - 0.5 + (torch.arange(size, device=device, dtype=torch.float64) + 0.5) * s
-    idx = torch.floor(u - TAPS * sc).long()[:, None] + 1 + torch.arange(math.ceil(2 * TAPS * sc) + 1, device=device)
-    w = color.lanczos((idx - u[:, None]) / sc)
-    idx = idx.clamp(0, n - 1)  # [DOC: edge-fill]
-    lo, hi = int(idx.min()), int(idx.max()) + 1
-    m = torch.zeros(size, hi - lo, device=device, dtype=torch.float64).scatter_add_(1, idx - lo, w)
-    return lo, hi, (m / m.sum(1, keepdim=True)).float()
+    lo, hi, m = matrix(c, side, n, size)
+    return lo, hi, torch.from_numpy(m).to(device)
 
 
 def chroma_span(lo: int, hi: int, n: int) -> tuple[int, int]:
@@ -103,9 +94,8 @@ def cfr(src, meta: dict, start: float, n: int, rate: float, at, cut, raw, slow: 
 
 
 # [DOC: output-rate]
-def render(
-    src, meta: dict, start: float, end: float, path, cuts, out, options: dict, codec: str, progress=None, world=None
-) -> dict:
+def render(src, meta: dict, start: float, end: float, path, cuts, out, options: dict, codec: str, tmp: str,
+           progress=None, world=None) -> dict:  # fmt: skip
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     rate = source.out_rate(meta, options)
     n, (geo, raw) = media.frame_count(start, end, rate), layout(meta)
@@ -132,32 +122,31 @@ def render(
         frames = repair.frames(frames, device, tone.repair, rate)
     if up:
         frames = upscale.frames(frames, device)
-    with tempfile.TemporaryDirectory() as tmp:
-        first = encode.first_pass(tmp, codec, rate, n / rate, meta['has_audio'])
-        q, t = encode.writer(tmp, first)
-        noise, k, last = color.dither(OUT_SIZE, device), 0, None
-        try:
-            with torch.inference_mode(), contextlib.closing(frames):
-                for rgb in frames:
-                    last = color.encode(rgb, noise).cpu().numpy()
-                    q.put(last)
-                    k += 1
-                    if progress and k % PROGRESS_EVERY == 0:
-                        progress(FRAMES_SHARE * k / n)
-            if last is None:
-                raise source.Unreadable(media.NO_RANGE)
-        except BaseException:
-            first.kill()
-            q.put(None)
-            raise
-        for _ in range(n - k):
-            q.put(last)
+    first = encode.first_pass(tmp, codec, rate, n / rate, meta['has_audio'])
+    q, t = encode.writer(tmp, first)
+    noise, k, last = color.dither(OUT_SIZE, device), 0, None
+    try:
+        with torch.inference_mode(), contextlib.closing(frames):
+            for rgb in frames:
+                last = color.encode(rgb, noise).cpu().numpy()
+                q.put(last)
+                k += 1
+                if progress and k % PROGRESS_EVERY == 0:
+                    progress(FRAMES_SHARE * k / n)
+        if last is None:
+            raise source.Unreadable(media.NO_RANGE)
+    except BaseException:
+        first.kill()
         q.put(None)
-        t.join()
-        if first.wait():
-            raise RuntimeError(f'first pass failed (ffmpeg exit {first.returncode})')
-        tail = progress and (lambda f: progress(FRAMES_SHARE + (1 - FRAMES_SHARE) * f))
-        scale = encode.second_pass(tmp, src, meta, start, n / rate, n, rate, out, options, codec, tail)
+        raise
+    for _ in range(n - k):
+        q.put(last)
+    q.put(None)
+    t.join()
+    if first.wait():
+        raise RuntimeError(f'first pass failed (ffmpeg exit {first.returncode})')
+    tail = progress and (lambda f: progress(FRAMES_SHARE + (1 - FRAMES_SHARE) * f))
+    scale = encode.second_pass(tmp, src, meta, start, n / rate, n, rate, out, options, codec, tail)
     tags.write(out, tags.kept(meta, options))
     if progress:
         progress(1.0)

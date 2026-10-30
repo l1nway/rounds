@@ -60,7 +60,7 @@ app = modal.App('rounds')
 # [DOC: rife-weights]
 weights = tuple(c for f in ((RIFE_WEIGHTS, *RIFE), *REPAIR, (DSTNET_WEIGHTS, *DEBLUR)) for c in fetch(*f))
 voice = (*fetch(DEEP_FILTER, *VOICE), f'chmod +x {DEEP_FILTER} && {DEEP_FILTER} --version')
-cpu_image, gpu_image = image(), image('gpu', commands=(*weights, *voice))
+cpu_image, gpu_image = image(commands=voice), image('gpu', commands=(*weights, *voice))  # [DOC: cpu-image]
 data = modal.Volume.from_name('rounds-data', create_if_missing=True)
 models = modal.Volume.from_name('rounds-models', create_if_missing=True)
 jobs = modal.Dict.from_name('rounds-jobs', create_if_missing=True)

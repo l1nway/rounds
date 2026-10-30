@@ -88,7 +88,7 @@ export const attach = video => {
     },
     loadeddata: () => store.set({waiting: false, loaded: true, failed: false}),
     error: () => {
-      console.warn('Video playback error:', video.error?.code, video.error?.message)
+      if (import.meta.env.DEV) console.warn('Video playback error:', video.error?.code, video.error?.message)
       store.set({waiting: false, failed: true})
     },
     seeking: () => store.set({waiting: true}),

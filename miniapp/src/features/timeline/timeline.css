@@ -48,7 +48,7 @@
 }
 
 /* [DOC: filmstrip-cells] */
-.timeline-film {--wave: 35ms; position: absolute; inset: 0; isolation: isolate; display: flex; overflow: hidden; border-radius: 6px; background: var(--surface)}
+.timeline-film {--wave: 35ms; position: absolute; inset: 0; isolation: isolate; display: flex; overflow: hidden; border-radius: var(--radius-s); background: var(--surface)}
 
 .timeline-film i {flex: none; width: var(--strip); height: 100%; background-image: var(--film); background-repeat: no-repeat}
 
@@ -64,9 +64,9 @@
 
 .timeline-shade {position: absolute; top: 0; bottom: 0; background: rgb(0 0 0 / 0.55); pointer-events: none}
 
-.timeline-shade[data-side='start'] {border-radius: 6px 0 0 6px}
+.timeline-shade[data-side='start'] {border-radius: var(--radius-s) 0 0 var(--radius-s)}
 
-.timeline-shade[data-side='end'] {border-radius: 0 6px 6px 0}
+.timeline-shade[data-side='end'] {border-radius: 0 var(--radius-s) var(--radius-s) 0}
 
 .timeline-trim {
   position: absolute;
@@ -88,7 +88,7 @@
   to {opacity: 1; clip-path: inset(-3px calc(-1 * var(--hit)) -3px calc(-1 * var(--hit)))}
 }
 
-.timeline-scrub {position: absolute; inset: 0; border-radius: 6px; cursor: pointer}
+.timeline-scrub {position: absolute; inset: 0; border-radius: var(--radius-s); cursor: pointer}
 
 .timeline-scrub:active {cursor: grabbing}
 
@@ -111,13 +111,13 @@
 
 .timeline-handle[data-kind='start'] {right: 100%}
 
-.timeline-handle[data-kind='start']::before {right: 0; border-radius: 6px 0 0 6px}
+.timeline-handle[data-kind='start']::before {right: 0; border-radius: var(--radius-s) 0 0 var(--radius-s)}
 
 .timeline-handle[data-kind='start']::after {right: calc(var(--handle) / 2 - 1.5px)}
 
 .timeline-handle[data-kind='end'] {left: 100%}
 
-.timeline-handle[data-kind='end']::before {left: 0; border-radius: 0 6px 6px 0}
+.timeline-handle[data-kind='end']::before {left: 0; border-radius: 0 var(--radius-s) var(--radius-s) 0}
 
 .timeline-handle[data-kind='end']::after {left: calc(var(--handle) / 2 - 1.5px)}
 

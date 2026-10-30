@@ -112,7 +112,8 @@ export default memo(function Editor({job, notice, send, gate, retry}) {
   const loaded = usePlayer(state => state.loaded)
   const [draft, dispatch] = useReducer(merge, job, init)
   const form = useRef(null)
-  const {start, end, time, points, box, mask, options, codec, stabilize, deblur, denoise, look, exposure, adjusting, previewing, posting, error} = draft
+  const lock = useRef(false)
+  const {start, end, time, points, box, mask, crop, options, codec, stabilize, deblur, denoise, look, exposure, adjusting, previewing, posting, error} = draft
   // [DOC: render-boundaries]
   const selection = useMemo(() => ({time, points, box}), [time, points, box])
   const readOnly = job?.status === 'rendering'
@@ -135,17 +136,21 @@ export default memo(function Editor({job, notice, send, gate, retry}) {
     if (!document.documentElement.hasAttribute('data-enter')) form.current.dataset.early = ''
   }, [job])
 
+  // [DOC: submit-lock]
   const submit = async event => {
     event.preventDefault()
-    if (!valid || posting || !reachable || readOnly) return
+    if (!valid || lock.current || !reachable || readOnly) return
+    lock.current = true
     dispatch({posting: true, error: null})
     try {
-      await send(job, {start, end, prompt: {time, points, box, mask}, options: optionsFor(job, options), codec, ...levelsFor(job, draft)})
+      await send(job, {start, end, prompt: {time, points, box, mask, crop: Boolean(box && crop)}, options: optionsFor(job, options), codec, ...levelsFor(job, draft)})
       haptic.notify('success')
       dispatch({posting: false})
     } catch (failure) {
       haptic.notify('error')
       dispatch({posting: false, error: failure.message})
+    } finally {
+      lock.current = false
     }
   }
 
@@ -162,7 +167,7 @@ export default memo(function Editor({job, notice, send, gate, retry}) {
   return (
     <>
       <main ref={main} className='editor' aria-busy={!job || undefined} data-split={split || undefined} data-glided={glided || undefined}>
-        <Viewer job={job} notice={notice} aspect={aspect} selection={selection} start={start} end={end}
+        <Viewer job={job} notice={notice} aspect={aspect} selection={selection} crop={crop} start={start} end={end}
           look={look} exposure={exposure} adjusting={adjusting} dispatch={dispatch} readOnly={readOnly}/>
         <Timeline job={job} start={start} end={end} time={time} dispatch={dispatch} readOnly={readOnly}/>
         <form ref={form} id={FORM} className='options' onSubmit={submit} onKeyDown={noEnter}>

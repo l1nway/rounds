@@ -24,3 +24,7 @@ Two firewalls must open 80 (the ACME challenge) and 443: the VCN security list (
 ## Idle reclaim
 
 Oracle reclaims an Always Free VM whose 95th percentile of CPU, network and memory stays under 20 % for 7 days (docs.oracle.com/en-us/iaas/Content/FreeTier/resourceref.htm, read 2026-10-27). A quiet bot hits that. The same page scopes the rule to Always Free accounts; an upgrade to Pay As You Go, where Always Free resources stay free, is the usual way out (not verified here beyond that page). Do not add a fake load loop instead.
+
+## Oracle weights
+
+`setup.sh` fetches the Zero-DCE++ checkpoint (`Epoch99.pth`, the AI part of the HDR slider on the free tier, `backend/rounds/README.md`, Free look) to `/opt/repair/zerodce.pth` (`config.DCE_WEIGHTS`) and checks its sha256. URL and hash are a copy of `REPAIR` in `backend/rounds/cloud.py` (bash cannot import it): change both together. Oracle reads the same `.pth` without torch (`backend/rounds/README.md`, Zero-DCE port), so there is no conversion step. The auto-update does not rerun `setup.sh`: on a VM set up before 2026-10-30 run the `sudo curl … && sha256sum -c` line of `setup.sh` once by hand, or a render with the HDR slider above 0.4 fails with a missing file.

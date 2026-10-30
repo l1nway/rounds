@@ -12,13 +12,16 @@ export const authorize = get => {authorization = get}
 const messageOf = (status, detail) =>
   typeof detail === 'string' ? detail : detail?.[0]?.msg || `Request failed (${status})`
 
-export const request = async (path, init = {}) => {
+// [DOC: modal-fallback]
+export const respond = async (path, init = {}) => {
   const headers = {...init.headers, Authorization: authorization()}
   const response = await fetch(API + path, {...init, headers}).catch(() => {throw new Error(NETWORK)})
   const body = await response.json().catch(() => ({}))
-  if (!response.ok) throw new Error(messageOf(response.status, body.detail))
-  return body
+  if (!response.ok) throw Object.assign(new Error(messageOf(response.status, body.detail)), {status: response.status, code: body.code})
+  return {body, via: response.headers.get('X-Rounds-Via')}
 }
+
+export const request = async (path, init) => (await respond(path, init)).body
 
 export const jobId = () => new URLSearchParams(location.search).get('job')
 // [DOC: launch-aspect]

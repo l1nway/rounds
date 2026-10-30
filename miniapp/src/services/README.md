@@ -14,7 +14,7 @@ Every deploy to Pages replaces `assets/` with new hashed file names, and the old
 
 ## Telegram setup
 
-`setupTelegram()` runs in `main.jsx` before the first render: `ready()` (as early as possible, per the docs), `expand()`, header / background colour from the theme, `disableVerticalSwipes()` (7.7+) and, on `ios` / `android` only (`WebApp.platform`), `requestFullscreen()` (8.0+). Every versioned call is behind `isVersionAtLeast`, and every call is skipped outside Telegram (`initData` empty).
+`setupTelegram()` runs in `main.jsx` before the first render: the mono accent check (`src/README.md`, Mono accent), `ready()` (as early as possible, per the docs), `expand()`, header / background colour from the theme, `disableVerticalSwipes()` (7.7+) and, on `ios` / `android` only (`WebApp.platform`), `requestFullscreen()` (8.0+). Every versioned call is behind `isVersionAtLeast`, and every call is skipped outside Telegram (`initData` empty).
 
 Vertical swipes stay disabled for the whole session, not only while drawing: the viewer and the timeline are gesture surfaces from edge to edge, and a toggle on `pointerdown` would be a message to the native side racing the native swipe recognizer that has already started (reasoned, not tested on a phone). Closing still works through Telegram's own Close button. Fullscreen is limited to phones so the desktop clients keep their window; in fullscreen Telegram draws its controls over the page, which the editor pads with `--tg-content-safe-area-inset-*` (`features/editor/README.md`, Safe areas).
 
@@ -47,3 +47,7 @@ APIs used, all checked in core.telegram.org/bots/webapps (2026-10-25): `initData
 ## Browser upload
 
 The upload calls (`/api/uploads`, the parts, `/uploaded`) and the client note live in `features/local/server.js`, which only the browser entry loads: while they sat in `api.js` the shared chunk carried them into the Mini App. `api.js` exports `request`, `post` and `jobPath` for that module (`features/local/README.md`, Local server). The server side is `backend/rounds/README.md`, Browser upload and Client note.
+
+## Modal fallback
+
+[DOC: modal-fallback] `respond` is `request` that also returns the router's `X-Rounds-Via` header, and every failed request throws an `Error` with `status` and the body's `code` (`pro_unavailable` when Modal is down). Used by `features/local/server.js` (`features/local/README.md`, Modal fallback); `request` is `respond` minus the header.

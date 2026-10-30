@@ -2,7 +2,7 @@
 <html lang='en'>
   <head>
     <meta charset='UTF-8'/>
-    <meta name='viewport' content='width=device-width, initial-scale=1, viewport-fit=cover'/>
+    <meta name='viewport' content='width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover'/>
     <title>Round editor</title>
     <!-- [DOC: favicon] -->
     <link rel='icon' href='data:,'/>
@@ -14,9 +14,12 @@
         --surface: var(--tg-theme-secondary-bg-color, #efeff4);
         --text: var(--tg-theme-text-color, #000);
         --hint: var(--tg-theme-hint-color, #6d7276);
-        --link: var(--tg-theme-link-color, #2481cc);
-        --button: var(--tg-theme-button-color, #2481cc);
+        --link: var(--tg-theme-link-color, #000);
+        --button: var(--tg-theme-button-color, #000);
         --button-text: var(--tg-theme-button-text-color, #fff);
+        --toggle: var(--button);
+        --segment: var(--button);
+        --segment-text: var(--button-text);
         --danger: var(--tg-theme-destructive-text-color, #d93a3a);
         --trim: #ffd60a;
         --stage: #000;
@@ -29,11 +32,24 @@
           --surface: var(--tg-theme-secondary-bg-color, #2c2c2e);
           --text: var(--tg-theme-text-color, #fff);
           --hint: var(--tg-theme-hint-color, #a0a0a5);
-          --link: var(--tg-theme-link-color, #6ab3f3);
-          --button: var(--tg-theme-button-color, #3e88f7);
+          --link: var(--tg-theme-link-color, #fff);
+          --button: var(--tg-theme-button-color, #fff);
+          --button-text: var(--tg-theme-button-text-color, #1c1c1d);
           --danger: var(--tg-theme-destructive-text-color, #ff6b6b);
         }
       }
+
+      /* [DOC: mono-accent] */
+      :root[data-mono] {
+        --link: var(--text);
+        --button: var(--text);
+        --button-text: var(--bg);
+        --toggle: light-dark(#34c759, #30d158);
+        --segment: light-dark(#fff, #636366);
+        --segment-text: var(--text);
+      }
+
+      :root[data-mono] .viewer {--button: var(--on-stage); --button-text: var(--stage)}
 
       html {background: var(--bg); color: var(--text)}
     </style>
@@ -44,7 +60,11 @@
         try {telegram ||= sessionStorage.__telegram__initParams?.includes('tgWebAppData')} catch {}
         const web = __WEB__, add = (tag, props) => document.head.append(Object.assign(document.createElement(tag), props))
         if (telegram) document.write(__MINIAPP__)
-        else {web.preload.forEach(href => add('link', {rel: 'modulepreload', href})); add('script', {type: 'module', src: web.entry})}
+        else {
+          document.documentElement.dataset.mono = ''
+          web.preload.forEach(href => add('link', {rel: 'modulepreload', href}))
+          add('script', {type: 'module', src: web.entry})
+        }
       }
     </script>
     <!-- [DOC: telegram-script] -->

@@ -26,11 +26,21 @@ const settle = (app, fullscreen) => {
   each('onEvent')
 }
 
+// [DOC: mono-accent]
+const stock = hex => {
+  const [r, g, b] = (hex?.match(/\w\w/g) ?? []).map(part => parseInt(part, 16))
+  const hue = (g - r) / (b - r)
+  return b > g && g >= r && b - r > b * 0.4 && hue >= 1 / 3 && hue <= 0.75
+}
+const tint = app => document.documentElement.toggleAttribute('data-mono', stock(app.themeParams.button_color))
+
 // [DOC: telegram-setup]
 export const setupTelegram = () => {
   if (!inTelegram()) return enter()
   const app = tg()
   const fullscreen = since('8.0') && MOBILE.includes(app.platform)
+  tint(app)
+  app.onEvent('themeChanged', () => tint(app))
   app.ready()
   app.expand()
   if (since('6.1')) {app.setHeaderColor('bg_color'); app.setBackgroundColor('bg_color')}

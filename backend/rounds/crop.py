@@ -1,9 +1,8 @@
-import tempfile
 from pathlib import Path
 
 import numpy as np
 
-from . import encode, media, source, tags
+from . import encode, freelook, freestab, media, source, tags
 from .config import OUT_SIZE
 
 # [DOC: free-frame]
@@ -28,9 +27,9 @@ def centre(prompt: dict, w: int, h: int) -> tuple[float, float, float | None]:
 def frame(meta: dict, prompt: dict, zoom: bool) -> tuple[int, int, int]:
     w, h = meta['width'], meta['height']
     cx, cy, span = centre(prompt, w, h)
-    side = min(w, h)
-    if zoom and span:
-        side = min(side, max(span * ZOOM_MARGIN, side * ZOOM_FLOOR))
+    side, fit = min(w, h), 1 if prompt.get('crop') else zoom and ZOOM_MARGIN  # [DOC: crop-mode]
+    if fit and span:
+        side = min(side, max(span * fit, side * ZOOM_FLOOR))
     side = int(side) // 2 * 2
     return side, int(np.clip(cx - side / 2, 0, w - side)), int(np.clip(cy - side / 2, 0, h - side))
 
@@ -47,7 +46,7 @@ def frames(src, meta: dict, start: float, n: int, rate: float, vf: str):
 
 
 # [DOC: free-render]
-def render(src, meta: dict, request: dict, out, progress=None) -> dict:
+def render(src, meta: dict, request: dict, out, tmp: str, progress=None) -> dict:
     options = {**request['options'], 'denoise': request.get('denoise', 0)}
     start, end, codec = request['start'], request['end'], request.get('codec', 'av1')
     rate = source.out_rate(meta, {})
@@ -59,31 +58,37 @@ def render(src, meta: dict, request: dict, out, progress=None) -> dict:
         from . import deblur
 
         clean = deblur.cleaner(GEO, rate, step, OUT_SIZE, {})
-    with tempfile.TemporaryDirectory() as tmp:
-        first = encode.first_pass(tmp, codec, rate, n / rate, meta['has_audio'])
-        q, t = encode.writer(tmp, first)
-        k, last = 0, None
-        try:
-            for buf in clean(frames(src, meta, start, n, rate, vf)):
-                last = buf.tobytes()
-                q.put(last)
-                k += 1
-                if progress and k % PROGRESS_EVERY == 0:
-                    progress(FRAMES_SHARE * k / n)
-            if last is None:
-                raise source.Unreadable(media.NO_RANGE)
-        except BaseException:
-            first.kill()
-            q.put(None)
-            raise
-        for _ in range(n - k):
+    stream = clean(frames(src, meta, start, n, rate, vf))
+    if request.get('look') or request.get('exposure'):  # [DOC: free-look]
+        stream = freelook.frames(src, meta, start, n, rate, (side, x, y), request['look'], request['exposure'])
+    if request.get('stabilize'):  # [DOC: free-stabilization]
+        at = centre(request['prompt'], meta['width'], meta['height'])
+        if plan := freestab.plan(src, meta, request, rate, n, at, (side, x, y)):
+            stream = freestab.frames(src, meta, request, rate, n, plan)
+    first = encode.first_pass(tmp, codec, rate, n / rate, meta['has_audio'])
+    q, t = encode.writer(tmp, first)
+    k, last = 0, None
+    try:
+        for buf in stream:
+            last = buf.tobytes()
             q.put(last)
+            k += 1
+            if progress and k % PROGRESS_EVERY == 0:
+                progress(FRAMES_SHARE * k / n)
+        if last is None:
+            raise source.Unreadable(media.NO_RANGE)
+    except BaseException:
+        first.kill()
         q.put(None)
-        t.join()
-        if first.wait():
-            raise RuntimeError(f'first pass failed (ffmpeg exit {first.returncode})')
-        tail = progress and (lambda f: progress(FRAMES_SHARE + (1 - FRAMES_SHARE) * f))
-        scale = encode.second_pass(tmp, src, meta, start, n / rate, n, rate, out, options, codec, tail)
+        raise
+    for _ in range(n - k):
+        q.put(last)
+    q.put(None)
+    t.join()
+    if first.wait():
+        raise RuntimeError(f'first pass failed (ffmpeg exit {first.returncode})')
+    tail = progress and (lambda f: progress(FRAMES_SHARE + (1 - FRAMES_SHARE) * f))
+    scale = encode.second_pass(tmp, src, meta, start, n / rate, n, rate, out, options, codec, tail)
     tags.write(out, tags.kept(meta, options))
     return {'size': Path(out).stat().st_size, 'duration': n / rate, 'rate': rate, 'frames': n, 'codec': codec,
             'fit': round(scale, 2), 'frame': (side, x, y)}  # fmt: skip

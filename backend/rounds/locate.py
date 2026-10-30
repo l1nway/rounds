@@ -23,8 +23,8 @@ class Superseded(Exception):
 
 # [DOC: square-source]
 def follows(meta: dict, request: dict) -> bool:
-    square = meta['width'] == meta['height']
-    return request['prompt']['time'] is not None and (not square or request['options'].get('zoom', False))
+    square, zoom = meta['width'] == meta['height'], request['options'].get('zoom', False)
+    return request['prompt']['time'] is not None and not request['prompt'].get('crop') and (not square or zoom)
 
 
 def key(job_id: str, prompt: dict) -> str:
@@ -109,6 +109,16 @@ def flowing(src, meta: dict, request: dict):
     return asyncio.create_task(asyncio.to_thread(motion.flows, *args))
 
 
+# [DOC: crop-mode]
+def fixed(meta: dict, prompt: dict, n: int) -> np.ndarray:
+    from . import camera, crop
+
+    if not prompt.get('crop'):
+        return camera.still(n, meta['width'], meta['height'])
+    side, x, y = crop.frame(meta, prompt, False)
+    return np.tile([x + side / 2, y + side / 2, side], (n, 1)).astype(float)
+
+
 # [DOC: stabilization]
 async def frame_path(job_id: str, jobs, state, job: dict, src: str) -> tuple[dict, np.ndarray, list, dict | None]:
     from . import camera, motion
@@ -118,7 +128,7 @@ async def frame_path(job_id: str, jobs, state, job: dict, src: str) -> tuple[dic
     n, strength, tracked = media.frame_count(start, end), request.get('stabilize', 0), follows(meta, request)
     moving = flowing(src, meta, request) if strength > 0 else None
     if not tracked and not moving:
-        return job, camera.still(n, *size), [], None
+        return job, fixed(meta, request['prompt'], n), [], None
     hit = {'found': {'present': np.zeros(n, bool), **dict.fromkeys(('cx', 'cy', 'r'), np.full(n, np.nan))}, 'cuts': []}
     if tracked:
         job, hit = await tracking(job_id, jobs, state, job, src, loop)
@@ -130,8 +140,9 @@ async def frame_path(job_id: str, jobs, state, job: dict, src: str) -> tuple[dic
             world = motion.world(flow, p, strength, size, n) if len(flow['t']) > 1 else None
             facts.update(frames=len(flow['t']))
     with timed(job_id, 'render.camera'):
-        zoom = request['options'].get('zoom', False)
-        path = await asyncio.to_thread(camera.solve, hit['found'], *size, hit['cuts'], zoom=zoom, world=world)
+        zoom, crop = request['options'].get('zoom', False), request['prompt'].get('crop')
+        args = (meta, request['prompt'], n) if crop else (hit['found'], *size, hit['cuts'], FPS, zoom, world)
+        path = await asyncio.to_thread(fixed if crop else camera.solve, *args)
     if tracked:
         np.savez(f'{JOBS_DIR}/{job_id}/track.npz', **hit['found'])
     return job, path, hit['cuts'], world

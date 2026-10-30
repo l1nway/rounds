@@ -105,8 +105,10 @@ function Codec({codec, off, disabled, order, onSet}) {
     <div className='options-codec enter' role='radiogroup' aria-label='Codec' style={{'--i': order}}>
       <span>
         <span className='options-text'>Codec<Swap as='small' text={CODECS[index].hint}/></span>
-        <span className='options-segments' style={{'--n': index}}>
+        <span className='options-segments' style={{'--n': index, '--count': CODECS.length}}>
           {CODECS.map(({key, label}) => <label key={key}><input type='radio' name='codec' value={key} checked={codec === key} disabled={disabled || off?.includes(key)} onChange={() => onSet(key)}/>{label}</label>)}
+          {/* [DOC: codec-picker] */}
+          <span className='options-chosen' aria-hidden='true'>{CODECS.map(({key, label}) => <span key={key}>{label}</span>)}</span>
         </span>
       </span>
     </div>

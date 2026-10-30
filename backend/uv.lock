@@ -2083,6 +2083,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "modal" },
     { name = "numpy" },
+    { name = "opencv-python-headless" },
     { name = "scipy" },
     { name = "telethon" },
 ]
@@ -2096,7 +2097,6 @@ gpu = [
     { name = "einops" },
     { name = "gguf" },
     { name = "omegaconf" },
-    { name = "opencv-python-headless" },
     { name = "peft" },
     { name = "psutil" },
     { name = "rotary-embedding-torch" },
@@ -2112,6 +2112,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.162.0" },
     { name = "modal", specifier = ">=1.6.2" },
     { name = "numpy", specifier = ">=2.5.4" },
+    { name = "opencv-python-headless", specifier = ">=5.0.0.93" },
     { name = "scipy", specifier = ">=1.18.1" },
     { name = "telethon", specifier = ">=1.45.0" },
 ]
@@ -2123,7 +2124,6 @@ gpu = [
     { name = "einops", specifier = ">=0.8.2" },
     { name = "gguf", specifier = ">=0.19.0" },
     { name = "omegaconf", specifier = ">=2.4.0" },
-    { name = "opencv-python-headless", specifier = ">=5.0.0.93" },
     { name = "peft", specifier = ">=0.21.2" },
     { name = "psutil", specifier = ">=7.2.2" },
     { name = "rotary-embedding-torch", specifier = ">=0.9.1" },

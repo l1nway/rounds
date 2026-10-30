@@ -10,36 +10,7 @@
 
 .web[data-over] .viewer {box-shadow: inset 0 0 0 3px var(--button)}
 
-/* [DOC: web-promote] */
-.web-sync {
-  position: fixed;
-  z-index: 20;
-  bottom: calc(var(--control) + 28px);
-  left: 50%;
-  max-width: min(92vw, 420px);
-  padding: 6px 14px;
-  border-radius: var(--radius);
-  background: var(--surface);
-  color: var(--hint);
-  font-size: 13px;
-  text-align: center;
-  transform: translateX(-50%);
-}
-
 /* [DOC: web-result] */
-@keyframes web-backdrop-enter {
-  from {
-    opacity: 0;
-    backdrop-filter: blur(0px);
-    -webkit-backdrop-filter: blur(0px);
-  }
-  to {
-    opacity: 1;
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-  }
-}
-
 .web-backdrop {
   position: fixed;
   z-index: 30;
@@ -47,18 +18,20 @@
   display: grid;
   place-items: center;
   padding: 16px;
-  background: color-mix(in srgb, var(--stage) 55%, transparent);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  animation: web-backdrop-enter 300ms var(--ease);
-  transition: opacity 300ms var(--ease), backdrop-filter 300ms var(--ease), -webkit-backdrop-filter 300ms var(--ease);
 }
 
-.web-backdrop[data-leaving] {
+.web-backdrop[data-closing] {pointer-events: none}
+
+/* [DOC: web-morph-scrim] */
+.web-backdrop::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
   opacity: 0;
-  backdrop-filter: blur(0px);
-  -webkit-backdrop-filter: blur(0px);
-  pointer-events: none;
+  background: color-mix(in srgb, var(--stage) 50%, transparent);
+  backdrop-filter: blur(18px) saturate(1.4);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4);
 }
 
 .web-card {
@@ -67,20 +40,24 @@
   gap: 12px;
   width: min(100%, 360px);
   padding: 20px;
-  border-radius: var(--radius);
+  border-radius: var(--radius-l);
   background: var(--bg);
+  box-shadow: 0 24px 60px rgb(0 0 0 / 0.35);
   text-align: center;
-  animation: enter 300ms var(--ease);
+  will-change: transform, clip-path;
 }
 
-.web-backdrop[data-leaving] .web-card {
-  animation: leave 300ms var(--ease) forwards;
-}
+.web-card h2 {margin: 0; font-size: 17px}
 
-@media (prefers-reduced-motion: reduce) {
-  .web-backdrop {animation: none; transition: none}
-  .web-card {animation: none}
-}
+.web-card p {margin: 0}
+
+.web-about {color: var(--hint); font-size: 14px}
+
+.web-files {display: grid; gap: 4px; width: 100%; margin: 0; padding: 10px 12px; border-radius: var(--radius); background: var(--surface); list-style: none; font-size: 13px}
+
+.web-files li {display: flex; justify-content: space-between; gap: 12px}
+
+.web-files span {color: var(--hint); font-variant-numeric: tabular-nums}
 
 .web-card progress {width: 100%; height: 6px; accent-color: var(--button)}
 

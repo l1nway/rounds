@@ -1,4 +1,5 @@
 import {AudioSample, AudioSampleSink} from 'mediabunny'
+import {identity, stage} from './stage-cache.js'
 
 export const SAMPLE_RATE = 48_000
 const MIN_DB = 6
@@ -42,7 +43,7 @@ export const decode = async (input, start, end) => {
   })
 }
 
-export const denoise = async (input, start, end, strength) => {
+const run = async (input, start, end, strength) => {
   const channels = await decode(input, start, end)
   if (!channels) return null
   const worker = new Worker(new URL('./denoise-worker.js', import.meta.url), {type: 'module'})
@@ -54,6 +55,10 @@ export const denoise = async (input, start, end, strength) => {
     })
   } finally {worker.terminate()}
 }
+
+// [DOC: stage-cache]
+export const denoise = (input, start, end, strength, file) =>
+  stage(['denoise', ...identity(file), start, end, strength, SAMPLE_RATE], () => run(input, start, end, strength))
 
 export const replace = channels => {
   const count = channels.length, total = channels[0].length

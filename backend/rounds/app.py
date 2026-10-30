@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import importlib
 import os
 import threading
@@ -6,7 +7,7 @@ from functools import partial
 
 import modal
 
-from . import bot, locate, pipeline, retry
+from . import bot, cache, locate, pipeline, retry
 from .api import create
 from .cloud import MODELS_DIR, app, cpu_image, data, gpu_image, image, jobs, models, secrets, state  # noqa: F401
 from .config import DATA_DIR, JOBS_DIR
@@ -17,6 +18,8 @@ RENDER_GPUS = ['L40S', 'L4']
 RENDERS = 2
 LIFT_IDLE, RENDER_IDLE = 120, 240
 WATCH_MINUTES = 5
+CACHE_TTL = 30 * 60  # [DOC: render-cache]
+MARK = (b'x-rounds-origin', b'modal')  # [DOC: modal-fallback]
 SNAPSHOT_IMPORTS = '.render', '.upscale', 'transformers.models.sam2_video.modeling_sam2_video'
 
 # [DOC: warm-start]
@@ -35,7 +38,20 @@ def web():
              'prepare': studio.prepare.spawn.aio,
              'segment': lift.segment.remote.aio, 'look': lift.look.remote.aio,
              'follow': lift.follow.remote.aio}  # fmt: skip
-    return create(jobs, data, calls)
+    return marked(create(jobs, state, data, calls))
+
+
+# [DOC: modal-fallback]
+def marked(api):
+    async def asgi(scope, receive, send):
+        async def mark(message):
+            if message['type'] == 'http.response.start':
+                message = {**message, 'headers': [*message.get('headers', []), MARK]}
+            await send(message)
+
+        await api(scope, receive, mark if scope['type'] == 'http' else send)
+
+    return asgi
 
 
 # [DOC: mtproto-keys]
@@ -138,13 +154,37 @@ async def setup() -> str:
     return url
 
 
+# [DOC: render-cache]
+@app.function(image=cpu_image, secrets=secrets, volumes={DATA_DIR: data}, cpu=4, memory=4096, timeout=3600)
+async def reencode(job_id: str) -> None:
+    async with bot.session():
+        job = await jobs.get.aio(job_id)
+        if not await cache.reuse(job, jobs, data, user=job['user_id']):
+            await starter()('render', job_id)
+
+
+async def route(job_id: str):
+    job = await jobs.get.aio(job_id)
+    with contextlib.suppress(RuntimeError):
+        await data.reload.aio()
+    if not await asyncio.to_thread(cache.ready, f'{JOBS_DIR}/{job_id}', job['request']):
+        return await Render().run.spawn.aio(job_id)
+    await bot.status(job, bot.TEXTS['reusing'].format(0))
+    return await reencode.spawn.aio(job_id)
+
+
 # [DOC: stuck-jobs]
 def starter():
-    return partial(retry.start, {'ingest': ingest.spawn.aio, 'render': Render().run.spawn.aio}, state)
+    return partial(retry.start, {'ingest': ingest.spawn.aio, 'render': route}, state)
 
 
-@app.function(image=cpu_image, secrets=secrets, schedule=modal.Period(minutes=WATCH_MINUTES), scaledown_window=2)
+@app.function(image=cpu_image, secrets=secrets, volumes={DATA_DIR: data}, schedule=modal.Period(minutes=WATCH_MINUTES),
+              scaledown_window=2)  # fmt: skip
 async def watch() -> None:
+    with contextlib.suppress(RuntimeError):
+        await data.reload.aio()
+    if await asyncio.to_thread(cache.expire, CACHE_TTL):  # [DOC: render-cache]
+        await data.commit.aio()
     async with bot.session():
         await retry.watch(jobs, state, starter())
 

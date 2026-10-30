@@ -6,6 +6,9 @@ HOST=${1:?usage: setup.sh <host, e.g. 129-146-1-2.sslip.io>}
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 FFMPEG=https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-linuxarm64-gpl-9.0.tar.xz
 VOICE=https://github.com/Rikorose/DeepFilterNet/releases/download/v0.5.6/deep-filter-0.5.6-aarch64-unknown-linux-gnu
+# [DOC: oracle-weights]
+DCE=https://raw.githubusercontent.com/Li-Chongyi/Zero-DCE_extension/09f202b690f82da939b8e6ec8535960ae97ad8bd/Zero-DCE%2B%2B/snapshots_Zero_DCE%2B%2B/Epoch99.pth
+DCE_SHA=ca8855b90df9a80fa4195a831f33d3476b1964f787eb70602797c773067f3b84
 
 sudo apt-get update
 sudo apt-get install -y curl xz-utils debian-keyring debian-archive-keyring apt-transport-https netfilter-persistent
@@ -18,6 +21,7 @@ sudo tar -xJf /tmp/ffmpeg.tar.xz -C /usr/local/bin --strip-components=2 --wildca
 rm /tmp/ffmpeg.tar.xz
 sudo curl -fsSL -o /usr/local/bin/deep-filter "$VOICE" && sudo chmod +x /usr/local/bin/deep-filter
 ffmpeg -hide_banner -version | head -1 && deep-filter --version
+sudo curl -fsSL --create-dirs -o /opt/repair/zerodce.pth "$DCE" && echo "$DCE_SHA  /opt/repair/zerodce.pth" | sha256sum -c
 
 command -v uv || curl -LsSf https://astral.sh/uv/install.sh | sh
 "$HOME/.local/bin/uv" sync --project "$REPO/backend" --no-dev

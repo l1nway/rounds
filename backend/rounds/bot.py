@@ -23,6 +23,8 @@ TEXTS = {
     'not_video': 'Send a video file.',
     'too_big': 'The file is over 2000 MB: Telegram does not let bots download it.',
     'starting': 'Got it. Waking up the server…',
+    'fallback': 'Got it. The full version is unavailable right now, so this video goes through the free one. '
+    'Videos already sent to the full version wait for it to come back.',
     'connecting': 'Connecting to Telegram…',
     'downloading': 'Downloading the video… {:.0%}',
     'probing': 'Looking inside the file…',
@@ -36,6 +38,7 @@ TEXTS = {
     'cuts': 'Looking for scene cuts…',
     'framing': 'Planning a smooth camera path…',
     'rendering': 'Rendering the round… {:.0%}',
+    'reusing': 'Reusing the prepared frames… {:.0%}',
     'sending': 'Sending the round…',
     'retrying': 'The server stopped, starting again (attempt {} of {})…',
     'done': 'Done. Open the editor again to make another round from this video.',
@@ -46,13 +49,8 @@ TEXTS = {
     'expired': 'This round is no longer kept. Open the editor to render it again.',
     'failed': 'Something went wrong. {}.',
 }
-ACTION_EVERY = 4
-UPLOAD_TIMEOUT = 600
-NOTE_NAME = 'round'
-# [DOC: restricted-notes]
-HOLD = 600
-FORBIDDEN = 'VOICE_MESSAGES_FORBIDDEN'
-RESEND = 'resend:'
+ACTION_EVERY, UPLOAD_TIMEOUT, NOTE_NAME = 4, 600, 'round'
+HOLD, FORBIDDEN, RESEND = 600, 'VOICE_MESSAGES_FORBIDDEN', 'resend:'  # [DOC: restricted-notes]
 UPDATES = ['message', 'callback_query']
 VIDEO = F.video | F.video_note | F.document.mime_type.startswith('video/')
 
@@ -168,7 +166,8 @@ async def video(message: Message, jobs, spawn) -> None:
     if media.file_size and media.file_size > MAX_FILE:
         await message.reply(TEXTS['too_big'])
         return
-    reply = await message.reply(TEXTS['starting'])
+    fallback = config.PUBLIC and message.from_user.id in config.allowed_users()  # [DOC: modal-fallback]
+    reply = await message.reply(TEXTS['fallback' if fallback else 'starting'])
     job_id = secrets.token_urlsafe(8)[:10]
     job = {
         'id': job_id, 'user_id': message.from_user.id, 'chat_id': message.chat.id,

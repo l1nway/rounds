@@ -20,12 +20,18 @@ def ffmpeg(inputs: list[str], af: str, *out: str, **kw) -> subprocess.CompletedP
     return subprocess.run(cmd, check=True, capture_output=True, **kw)
 
 
+def cleaned(tmp: str) -> Path:
+    return Path(tmp, 'clean', 'voice.wav')
+
+
 def voice(inputs: list[str], k: float, tmp: str) -> list[str]:
-    wav, out = Path(tmp, 'voice.wav'), Path(tmp, 'clean')
+    out = cleaned(tmp)
+    wav = Path(tmp, out.name)
     ffmpeg(inputs, f'{GAPLESS},volume={1 / HEADROOM}', '-ac', '2', '-c:a', 'pcm_f32le', str(wav))
     atten = VOICE_DB[0] * (VOICE_DB[1] / VOICE_DB[0]) ** k
-    subprocess.run([DEEP_FILTER, '-D', '-a', f'{atten:.1f}', '-o', str(out), str(wav)], check=True, capture_output=True)
-    return ['-i', str(out / wav.name)]
+    cmd = [DEEP_FILTER, '-D', '-a', f'{atten:.1f}', '-o', str(out.parent), str(wav)]
+    subprocess.run(cmd, check=True, capture_output=True)
+    return ['-i', str(out)]
 
 
 def level(inputs: list[str], pre: str) -> str:
@@ -43,6 +49,7 @@ def chain(src, meta: dict, start: float, dur: float, options: dict, tmp: str) ->
         return [], ''
     inputs, pre = [*LENIENT, '-ss', f'{start:.3f}', '-t', f'{dur:.3f}', '-i', str(src)], GAPLESS
     if (strength := options.get('denoise', 0)) > 0:
-        inputs = voice(inputs, strength, tmp)
+        done = cleaned(tmp)  # [DOC: render-cache]
+        inputs = ['-i', str(done)] if done.exists() else voice(inputs, strength, tmp)
         pre = f'{GAPLESS},volume={HEADROOM},apad=whole_dur={dur:.3f}'
     return inputs, level(inputs, pre) if options.get('loudnorm') else pre

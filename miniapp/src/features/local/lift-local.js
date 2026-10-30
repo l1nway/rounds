@@ -1,104 +1,49 @@
-import {deviceOf, loadModels} from './models.js'
+import {call, ready} from './models.js'
 
 const SIDE = 1024
 const FPS = 30
-const EMBEDDINGS = 8
-const MODEL_KEYS = ['sam2.1-tiny-encoder', 'sam2.1-tiny-decoder']
+const SEEK_WAIT = 250
+// [DOC: lift-model]
+const LIGHT = matchMedia('(pointer: coarse)').matches
+const NAMES = LIGHT ? ['edge-sam-encoder', 'edge-sam-decoder'] : ['sam2.1-tiny-encoder', 'sam2.1-tiny-decoder']
+const PAD = 'rgb(124, 116, 104)'
 
-let worker = null
-let ready = null
-let seq = 0
-let canvas = null
 let ctx = null
-const pending = new Map()
-const knownKeys = new Set()
+const contextOf = () => ctx ??= Object.assign(document.createElement('canvas'), {width: SIDE, height: SIDE}).getContext('2d', {willReadFrequently: true})
+const pixels = (source, [w, h]) => {
+  contextOf().fillStyle = PAD
+  ctx.fillRect(0, 0, SIDE, SIDE)
+  ctx.drawImage(source, 0, 0, w, h)
+  return ctx.getImageData(0, 0, SIDE, SIDE).data.buffer
+}
 
-const callWorker = (payload, transfer = []) => new Promise((resolve, reject) => {
-  const id = ++seq
-  pending.set(id, {resolve, reject})
-  worker.postMessage({...payload, id}, transfer)
+const settled = video => video.seeking && new Promise(resolve => {
+  const done = () => {video.removeEventListener('seeked', done); clearTimeout(timer); resolve()}
+  const timer = setTimeout(done, SEEK_WAIT)
+  video.addEventListener('seeked', done)
 })
 
-const resetWorker = error => {
-  if (worker) worker.terminate()
-  worker = null
-  ready = null
-  knownKeys.clear()
-  for (const item of pending.values()) item.reject(error)
-  pending.clear()
-}
-
-const ensureWorker = options => {
-  if (ready) return ready
-  ready = (async () => {
-    const [{gpu}, loaded] = await Promise.all([deviceOf(), loadModels(MODEL_KEYS, options)])
-    const encBuf = loaded['sam2.1-tiny-encoder'], decBuf = loaded['sam2.1-tiny-decoder']
-    worker = new Worker(new URL('./lift-worker.js', import.meta.url), {type: 'module'})
-    worker.onmessage = ({data: {id, result, ok, error}}) => {
-      const item = pending.get(id)
-      if (!item) return
-      pending.delete(id)
-      if (error) item.reject(new Error(error))
-      else item.resolve(result ?? ok)
-    }
-    worker.onerror = event => resetWorker(new Error(event.message || 'Lift worker failed'))
-    await callWorker({type: 'init', encBuf, decBuf, gpu}, [encBuf, decBuf])
-  })().catch(error => {
-    resetWorker(error)
-    throw error
-  })
-  return ready
-}
-
-const getCtx = () => {
-  if (!ctx) {
-    canvas = Object.assign(document.createElement('canvas'), {width: SIDE, height: SIDE})
-    ctx = canvas.getContext('2d', {willReadFrequently: true})
-  }
-  return ctx
-}
-
-const frameRgba = async (job, time) => {
-  const context = getCtx()
-  const live = typeof document !== 'undefined' ? document.querySelector('.viewer-video') : null
-  if (live?.seeking) {
-    await new Promise(resolve => {
-      const done = () => {live.removeEventListener('seeked', done); clearTimeout(timer); resolve()}
-      const timer = setTimeout(done, 250)
-      live.addEventListener('seeked', done)
-    })
-  }
-  if (live?.readyState >= 2) {
-    context.drawImage(live, 0, 0, SIDE, SIDE)
-    return context.getImageData(0, 0, SIDE, SIDE).data.buffer
-  }
-  if (job?.file) {
-    const [{CanvasSink}, {open}] = await Promise.all([import('mediabunny'), import('./render.js')])
-    const track = await open(job.file).getPrimaryVideoTrack()
-    const sink = new CanvasSink(track, {width: SIDE, height: SIDE, fit: 'fill'})
-    for await (const frame of sink.canvasesAtTimestamps([time])) {
-      if (frame) {
-        context.drawImage(frame.canvas, 0, 0, SIDE, SIDE)
-        return context.getImageData(0, 0, SIDE, SIDE).data.buffer
-      }
-    }
-  }
+// [DOC: local-lift]
+const frameRgba = async (job, time, frame) => {
+  const live = document.querySelector('.viewer-video')
+  if (live) await settled(live)
+  if (live?.readyState >= 2) return pixels(live, frame)
+  const [{CanvasSink}, {open}] = await Promise.all([import('mediabunny'), import('./render.js')])
+  const sink = new CanvasSink(await open(job.file).getPrimaryVideoTrack(), {width: SIDE, height: SIDE, fit: 'fill'})
+  for await (const found of sink.canvasesAtTimestamps([time])) if (found) return pixels(found.canvas, frame)
   throw new Error('Video frame is not ready')
 }
 
-// [DOC: local-lift]
 export const segmentLocal = async (job, prompt, options) => {
-  await ensureWorker(options)
-  const index = Math.floor(prompt.time * FPS + 1e-3)
-  const key = `${job?.name ?? ''}:${job?.size ?? 0}:${index}`
-  const rgba = knownKeys.has(key) ? null : await frameRgba(job, prompt.time)
-  const result = await callWorker({
-    type: 'segment', key, rgba,
-    points: prompt.points, box: prompt.box,
-    width: job?.meta?.width || 360, height: job?.meta?.height || 360
-  }, rgba ? [rgba] : [])
-  knownKeys.delete(key)
-  knownKeys.add(key)
-  if (knownKeys.size > EMBEDDINGS) knownKeys.delete(knownKeys.values().next().value)
-  return result
+  await ready('lift', NAMES, options)
+  const {width, height} = job.meta
+  const frame = LIGHT ? [width, height].map(side => side * SIDE / Math.max(width, height)) : [SIDE, SIDE]
+  const ask = {
+    group: 'lift', type: 'segment', key: `${job.name}:${job.size}:${Math.floor(prompt.time * FPS + 1e-3)}`,
+    points: prompt.points, box: prompt.box, width, height, frame
+  }
+  const hit = await call(ask)
+  if (!hit.miss) return hit
+  const rgba = await frameRgba(job, prompt.time, frame)
+  return call({...ask, rgba}, [rgba])
 }

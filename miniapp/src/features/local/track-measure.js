@@ -5,7 +5,7 @@ const MIN_AREA = 1e-4
 const circle2 = (a, b) => ({cx: (a[0] + b[0]) / 2, cy: (a[1] + b[1]) / 2, r: Math.hypot(a[0] - b[0], a[1] - b[1]) / 2})
 const circle3 = (a, b, c) => {
   const d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]))
-  if (Math.abs(d) < 1e-9) return circle2(a, b)
+  if (Math.abs(d) < 1e-9) return [circle2(a, b), circle2(a, c), circle2(b, c)].reduce((big, e) => e.r > big.r ? e : big)
   const [as, bs, cs] = [a, b, c].map(p => p[0] ** 2 + p[1] ** 2)
   const cx = (as * (b[1] - c[1]) + bs * (c[1] - a[1]) + cs * (a[1] - b[1])) / d
   const cy = (as * (c[0] - b[0]) + bs * (a[0] - c[0]) + cs * (b[0] - a[0])) / d
@@ -20,12 +20,17 @@ export const minEnclosingCircle = pts => {
     p[i] = p[j]
     p[j] = t
   }
-  const welzl = (n, b) => {
-    if (!n || b.length === 3) return !b.length ? {cx: 0, cy: 0, r: 0} : b.length === 1 ? {cx: b[0][0], cy: b[0][1], r: 0} : b.length === 2 ? circle2(b[0], b[1]) : circle3(b[0], b[1], b[2])
-    const pt = p[n - 1], c = welzl(n - 1, b)
-    return inCircle(pt, c) ? c : welzl(n - 1, [...b, pt])
+  let c = null
+  for (let i = 0; i < p.length; i++) {
+    if (inCircle(p[i], c)) continue
+    c = {cx: p[i][0], cy: p[i][1], r: 0}
+    for (let j = 0; j < i; j++) {
+      if (inCircle(p[j], c)) continue
+      c = circle2(p[i], p[j])
+      for (let k = 0; k < j; k++) if (!inCircle(p[k], c)) c = circle3(p[i], p[j], p[k])
+    }
   }
-  return welzl(p.length, [])
+  return c ?? {cx: 0, cy: 0, r: 0}
 }
 
 export const measure = (logits, score, w, h) => {

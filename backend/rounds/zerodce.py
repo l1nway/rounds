@@ -3,7 +3,6 @@ import torch
 import torch.nn as nn
 
 C = 32
-STEPS = 8
 LAYERS = (3, C), (C, C), (C, C), (C, C), (2 * C, C), (2 * C, C), (2 * C, 3)
 
 
@@ -30,12 +29,6 @@ class ZeroDCE(nn.Module):
         x5 = self.e_conv5(torch.cat((x3, self.e_conv4(x3).relu()), 1)).relu()
         x6 = self.e_conv6(torch.cat((x2, x5), 1)).relu()
         return torch.tanh(self.e_conv7(torch.cat((x1, x6), 1)))
-
-
-def curve(x, alpha):
-    for _ in range(STEPS):
-        x = x + alpha * (x * x - x)
-    return x
 
 
 def load(path: str) -> ZeroDCE:

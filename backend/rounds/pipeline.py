@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import os
+import tempfile
 import time
 import traceback
 
@@ -72,6 +73,15 @@ async def stage(jobs, job: dict, name: str) -> dict:
     return await save(jobs, job, stage=name)
 
 
+async def send(jobs, job: dict, out: str, result: dict) -> dict:
+    job = await stage(jobs, job, 'sending')
+    with timed(job['id'], 'render.send') as facts:
+        held = await bot.deliver(job, out, result['duration'])  # [DOC: restricted-notes]
+        facts.update(speed=(result['size'] / MB, 'MB/s'), held=bool(held))
+    job = await save(jobs, job, status='done', stage=None, progress=1, held=held)
+    return await save(jobs, job, status_message_id=await bot.finish(job))
+
+
 # [DOC: broken-sources]
 async def fail(jobs, job: dict, error: Exception) -> None:
     traceback.print_exception(error)
@@ -120,7 +130,7 @@ async def ingest_job(job_id: str, jobs, state, volume) -> None:
 async def render_job(job_id: str, jobs, state, volume, models) -> None:
     import torch
 
-    from . import locate, render, track, upscale
+    from . import cache, locate, render, track, upscale
 
     began = time.monotonic()
     job = await jobs.get.aio(job_id)
@@ -137,27 +147,28 @@ async def render_job(job_id: str, jobs, state, volume, models) -> None:
         await volume.reload.aio()
     job_dir, request, meta = f'{JOBS_DIR}/{job_id}', job['request'], job['meta']
     start, end, loop = request['start'], request['end'], asyncio.get_running_loop()
-    try:
-        src, out = f'{job_dir}/{job["source"]}', f'{job_dir}/note.mp4'
-        async with bot.acting(job['chat_id'], 'record_video_note'), ticker.typing(job):
-            job, path, cuts, world = await locate.frame_path(job_id, jobs, state, job, src)
-            np.save(f'{job_dir}/path.npy', path)
-            job = await stage(jobs, job, 'rendering')
-            report = reporter(job, 'rendering', loop)
-            options = {**request['options'], **{k: request.get(k, 0) for k in LEVELS}}
-            args = (src, meta, start, end, path, cuts, out, options, request.get('codec', 'av1'), report, world)
-            with timed(job_id, 'render.encode') as facts:
-                result = await asyncio.to_thread(render.render, *args)
-                stats = {k: v for k, v in result.items() if k in LOGGED}
-                facts.update(fps=(result['frames'], ''), mb=round(result['size'] / MB, 1), **stats)
-            with timed(job_id, 'render.commit'):
-                await volume.commit.aio()
-        job = await stage(jobs, job, 'sending')
-        with timed(job_id, 'render.send') as facts:
-            held = await bot.deliver(job, out, result['duration'])  # [DOC: restricted-notes]
-            facts.update(speed=(result['size'] / MB, 'MB/s'), held=bool(held))
-        job = await save(jobs, job, status='done', stage=None, progress=1, held=held)
-        await save(jobs, job, status_message_id=await bot.finish(job))
-        note(job_id, 'render', time.monotonic() - began, clip=round(end - start, 2), **describe(meta))
-    except Exception as error:
-        await fail(jobs, job, error)
+    with tempfile.TemporaryDirectory() as work:
+        try:
+            src, out = f'{job_dir}/{job["source"]}', f'{job_dir}/note.mp4'
+            async with bot.acting(job['chat_id'], 'record_video_note'), ticker.typing(job):
+                job, path, cuts, world = await locate.frame_path(job_id, jobs, state, job, src)
+                np.save(f'{job_dir}/path.npy', path)
+                job = await stage(jobs, job, 'rendering')
+                report = reporter(job, 'rendering', loop)
+                options = {**request['options'], **{k: request.get(k, 0) for k in LEVELS}}
+                await asyncio.to_thread(cache.seed, job_dir, request, work)  # [DOC: render-cache]
+                args = src, meta, start, end, path, cuts, out, options, request.get('codec', 'av1'), work, report, world
+                with timed(job_id, 'render.encode') as facts:
+                    result = await asyncio.to_thread(render.render, *args)
+                    stats = {k: v for k, v in result.items() if k in LOGGED}
+                    facts.update(fps=(result['frames'], ''), mb=round(result['size'] / MB, 1), **stats)
+                with timed(job_id, 'render.commit'):
+                    await volume.commit.aio()
+            await send(jobs, job, out, result)
+            note(job_id, 'render', time.monotonic() - began, clip=round(end - start, 2), **describe(meta))
+        except Exception as error:
+            await fail(jobs, job, error)
+            return
+        with timed(job_id, 'render.cache'):  # [DOC: render-cache]
+            await asyncio.to_thread(cache.store, job_dir, request, work, result, None, job['user_id'])
+            await volume.commit.aio()

@@ -17,7 +17,15 @@
 
 /* [DOC: theme-tokens] */
 :root {
+  /* [DOC: radius-scale] */
+  --radius-s: 8px;
   --radius: 12px;
+  --radius-l: 22px;
+  --pill: 999px;
+  /* [DOC: springs] */
+  --spring: linear(0, 0.037, 0.128, 0.248, 0.377, 0.503, 0.619, 0.72, 0.804, 0.872, 0.925, 0.964, 0.991, 1.01, 1.021, 1.027, 1.028, 1.028, 1.025, 1.022, 1.018, 1.015, 1.011, 1.008, 1.006, 1.004, 1.002, 1.001, 1, 1, 0.999, 0.999, 1);
+  --spring-pop: linear(0, 0.043, 0.151, 0.294, 0.45, 0.602, 0.738, 0.853, 0.944, 1.011, 1.056, 1.082, 1.094, 1.094, 1.086, 1.074, 1.06, 1.045, 1.031, 1.019, 1.009, 1.002, 0.997, 0.993, 0.992, 0.991, 0.991, 0.992, 0.994, 0.995, 0.996, 0.998, 1);
+  --dur-spring: 560ms;
   --control: 44px;
   --dur: 200ms;
   --dur-hover: 300ms;
@@ -28,13 +36,13 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :root {--dur: 0ms; --dur-hover: 0ms; --dur-long: 0ms; --dur-enter: 0ms}
+  :root {--dur: 0ms; --dur-hover: 0ms; --dur-long: 0ms; --dur-enter: 0ms; --dur-spring: 0ms}
 }
 
 html {font: 15px/1.35 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif}
 
 /* [DOC: document-scroll] */
-html {scrollbar-gutter: stable}
+html {scrollbar-gutter: stable; touch-action: manipulation; -webkit-text-size-adjust: 100%}
 
 :focus-visible {outline: 2px solid var(--link); outline-offset: 2px}
 

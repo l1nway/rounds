@@ -1,18 +1,21 @@
 import asyncio
 import os
 import shutil
+import tempfile
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from . import bot, config, crop, pipeline, ticker
+from . import bot, cache, config, crop, freelook, pipeline, ticker, transfer
 from .api import create
 from .config import DATA_DIR, JOBS_DIR
+from .pipeline import MB
 from .store import Disk, Store
 
 # [DOC: free-server]
 INGESTS, RENDERS = 2, 1
 KEEP, SWEEP = 48 * 3600, 3600
+DISK_CAP = 30 << 30  # [DOC: render-cache]
 RESTARTED = 'The server restarted, try again'
 
 config.PUBLIC = True  # [DOC: tiers]
@@ -25,23 +28,28 @@ running = set()
 # [DOC: free-render]
 async def render_job(job_id: str) -> None:
     began, job = time.monotonic(), await jobs.get.aio(job_id)
+    if await cache.reuse(job, jobs, disk, DISK_CAP):  # [DOC: render-cache]
+        return
     pipeline.note(job_id, 'render.wait', pipeline.waited(job))
-    job_dir = f'{JOBS_DIR}/{job_id}'
-    try:
-        src, out = f'{job_dir}/{job["source"]}', f'{job_dir}/note.mp4'
-        async with bot.acting(job['chat_id'], 'record_video_note'), ticker.typing(job):
-            job = await pipeline.stage(jobs, job, 'rendering')
-            report = pipeline.reporter(job, 'rendering', asyncio.get_running_loop())
-            with pipeline.timed(job_id, 'render.encode') as facts:
-                result = await asyncio.to_thread(crop.render, src, job['meta'], job['request'], out, report)
-                facts.update(fps=(result['frames'], ''), mb=round(result['size'] / pipeline.MB, 1), fit=result['fit'])
-        job = await pipeline.stage(jobs, job, 'sending')
-        held = await bot.deliver(job, out, result['duration'])  # [DOC: restricted-notes]
-        job = await pipeline.save(jobs, job, status='done', stage=None, progress=1, held=held)
-        await pipeline.save(jobs, job, status_message_id=await bot.finish(job))
-        pipeline.note(job_id, 'render', time.monotonic() - began, **pipeline.describe(job['meta']))
-    except Exception as error:
-        await pipeline.fail(jobs, job, error)
+    job_dir, request = f'{JOBS_DIR}/{job_id}', job['request']
+    cache.folder(job_dir).mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=cache.folder(job_dir)) as work:
+        try:
+            src, out = f'{job_dir}/{job["source"]}', f'{job_dir}/note.mp4'
+            async with bot.acting(job['chat_id'], 'record_video_note'), ticker.typing(job):
+                job = await pipeline.stage(jobs, job, 'rendering')
+                report = pipeline.reporter(job, 'rendering', asyncio.get_running_loop())
+                await asyncio.to_thread(cache.seed, job_dir, request, work)
+                with pipeline.timed(job_id, 'render.encode') as facts:
+                    result = await asyncio.to_thread(crop.render, src, job['meta'], request, out, work, report)
+                    facts.update(fps=(result['frames'], ''), mb=round(result['size'] / MB, 1), fit=result['fit'])
+            await pipeline.send(jobs, job, out, result)
+            pipeline.note(job_id, 'render', time.monotonic() - began, **pipeline.describe(job['meta']))
+        except Exception as error:
+            await pipeline.fail(jobs, job, error)
+            return
+        with pipeline.timed(job_id, 'render.cache'):
+            await asyncio.to_thread(cache.store, job_dir, request, work, result, DISK_CAP)
 
 
 def queued(kind: str, work):
@@ -71,6 +79,9 @@ async def sweep() -> None:
             if job.get('queued_at', 0) < old and job['status'] not in pipeline.ACTIVE:
                 await jobs.pop.aio(job_id, None)
                 shutil.rmtree(Path(JOBS_DIR, job_id), ignore_errors=True)
+        async for key, at in state.items.aio():
+            if key.startswith(transfer.SEEN) and at < old:  # [DOC: webhook-dedupe]
+                await state.pop.aio(key, None)
         await asyncio.sleep(SWEEP)
 
 
@@ -82,8 +93,13 @@ async def idle() -> None:
     pass
 
 
-app = create(jobs, disk, {'ingest': queued('ingest', ingest), 'render': queued('render', render_job), 'warm': idle},
-             tier='free')  # fmt: skip
+# [DOC: free-look]
+async def look(job_id: str, at: float, name: str, meta: dict, value: float, ev: float, size: tuple) -> dict:
+    return await asyncio.to_thread(freelook.preview, f'{JOBS_DIR}/{job_id}/{name}', meta, at, value, ev, size)
+
+
+app = create(jobs, state, disk, {'ingest': queued('ingest', ingest), 'render': queued('render', render_job),
+                                  'warm': idle, 'look': look}, tier='free')  # fmt: skip
 inner = app.router.lifespan_context
 
 

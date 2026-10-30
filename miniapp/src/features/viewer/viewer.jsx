@@ -4,24 +4,20 @@ import Sheen from '../../components/sheen.jsx'
 import Swap from '../../components/swap.jsx'
 import {attach, useAway, usePlayer} from '../../hooks/player.js'
 import {useOnline, usePresence} from '../../hooks/state.js'
-import {segment, warmLift} from '../../services/api.js'
-import {useFollow} from './follow.js'
-import {boxStyle, pct, useGestures} from './gestures.js'
+import {haptic} from '../../services/telegram.js'
+import {useFollow, useLift} from './follow.js'
+import {boxStyle, pct, squared, useGestures} from './gestures.js'
 import Lift from './lift.jsx'
+import Tag from './tag.jsx'
 import './viewer.css'
 
 const CORNERS = ['tl', 'tr', 'bl', 'br']
 // [DOC: viewer-fit]
 const FIT = {duration: 600, easing: 'cubic-bezier(0.4, 0, 0.2, 1)'}
-const WARM_GAP = 90000
-const BROKEN ={title: 'The video did not load', text: 'Check the connection and open the editor again.'}
+const BROKEN = {title: 'The video did not load', text: 'Check the connection and open the editor again.'}
 
-const prefilled = job => {
-  const prompt = job?.request?.prompt
-  return prompt?.mask ? {time: prompt.time, candidates: [{mask: prompt.mask}], index: 0, best: 0} : null
-}
-const asks = ({points, box}) => Boolean(box) || points.some(p => p[2] === 1)
 const originOf = (points, box) => box ? [(box[0] + box[2]) / 2, (box[1] + box[3]) / 2] : points[0]
+const anchorOf = (points, box) => box ? [(box[0] + box[2]) / 2, box[3]] : points.at(-1)
 const same = (a, b) => a?.title === b?.title && a?.text === b?.text && a?.action === b?.action
 
 // [DOC: viewer-fit]
@@ -39,64 +35,6 @@ function useFit(ref, aspect) {
   }, [ref, aspect])
 }
 
-// [DOC: lift]
-function useLift(job, dispatch, readOnly) {
-  const [lift, setLift] = useState(null)
-  const [seen, setSeen] = useState(job)
-  const flight = useRef({want: null, busy: false})
-  const id = job?.lift ?? (job?.tier === 'free' ? null : job?.id)  // [DOC: tiers]
-  if (job !== seen) {setSeen(job); setLift(prefilled(job))}
-
-  useEffect(() => {
-    if (typeof id !== 'string' || readOnly) return
-    let last = 0
-    const wake = () => {
-      if (document.visibilityState !== 'visible' || Date.now() - last < WARM_GAP) return
-      last = Date.now()
-      warmLift(id).catch(() => {})
-    }
-    wake()
-    document.addEventListener('visibilitychange', wake)
-    return () => document.removeEventListener('visibilitychange', wake)
-  }, [id, readOnly])
-
-  // [DOC: single-flight]
-  const send = () => {
-    const f = flight.current, want = f.want
-    if (f.busy || !want) return
-    f.busy = true
-    ;(id.call ? id(want) : segment(id, want)).catch(() => null).then(answer => {
-      f.busy = false
-      if (f.want !== want) return send()
-      f.want = null
-      const {candidates = [], best = 0} = answer ?? {}
-      setLift(candidates.length ? {time: want.time, candidates, index: best, best} : null)
-      dispatch({mask: candidates[best]?.mask ?? null})
-    })
-  }
-
-  const ask = selection => {
-    dispatch({mask: null})
-    flight.current.want = null
-    if (!asks(selection) || !id) return setLift(null)
-    const {time, points, box} = selection
-    setLift(prev => prev?.time === time ? {...prev, pending: true} : {time, candidates: [], index: 0, best: 0, pending: true})
-    flight.current.want = {time, points, box}
-    send()
-  }
-
-  const cycle = () => {
-    const {candidates = [], index, best, pending} = lift ?? {}
-    const next = (index + 1) % candidates.length
-    if (pending || candidates.length < 2 || next === best) return false
-    setLift({...lift, index: next})
-    dispatch({mask: candidates[next].mask})
-    return true
-  }
-
-  return {lift, ask, cycle}
-}
-
 // [DOC: look-preview]
 let Look = null
 function useLook(loaded, on) {
@@ -106,12 +44,13 @@ function useLook(loaded, on) {
 }
 
 // [DOC: selection-frame]
-const Marks = memo(function Marks({time, points, box, pending, follow}) {
+const Marks = memo(function Marks({time, points, box, crop, follow, tag}) {
   const away = useAway(time)
   return (
-    <div ref={follow} className='viewer-marks' data-away={away || undefined} data-pending={pending || undefined} aria-hidden='true'>
-      {box && <div className='viewer-box' style={boxStyle(box)}>{CORNERS.map(c => <i key={c} className='viewer-corner' data-corner={c}/>)}</div>}
-      {points.map(([x, y, label]) => <i key={`${x}:${y}`} className='viewer-point' data-negative={!label || undefined} style={{left: pct(x), top: pct(y)}}/>)}
+    <div ref={follow} className='viewer-marks' data-away={away || undefined}>
+      {box && <div className='viewer-box' data-crop={crop || undefined} style={boxStyle(box)} aria-hidden='true'>{CORNERS.map(c => <i key={c} className='viewer-corner' data-corner={c}/>)}</div>}
+      {points.map(([x, y, label]) => <i key={`${x}:${y}`} className='viewer-point' data-negative={!label || undefined} style={{left: pct(x), top: pct(y)}} aria-hidden='true'/>)}
+      {tag}
     </div>
   )
 })
@@ -176,7 +115,7 @@ function Compare({show, held, set}) {
   )
 }
 
-export default memo(function Viewer({job, notice, aspect, selection, start, end, look, exposure, adjusting, dispatch, readOnly}) {
+export default memo(function Viewer({job, notice, aspect, selection, crop, start, end, look, exposure, adjusting, dispatch, readOnly}) {
   const refs = useRef({video: null, stage: null, draw: null, drag: null})
   const viewer = useRef(null)
   const [{stage, video, draw}] = useState(() => Object.fromEntries(['stage', 'video', 'draw'].map(key => [key, el => {refs.current[key] = el}])))  // [DOC: stable-refs]
@@ -191,19 +130,23 @@ export default memo(function Viewer({job, notice, aspect, selection, start, end,
   const [spinning, spinner] = usePresence(waiting && loaded)
   const {time, points, box} = selection
   const {lift, ask, cycle} = useLift(job, dispatch, readOnly)
-  const follow = useFollow(job?.follow ?? (job?.tier === 'free' ? null : job?.id), selection, lift?.candidates[lift.index]?.mask ?? null, Boolean(lift?.pending), start, end)
+  const followId = job?.follow ?? (job?.tier === 'free' ? null : job?.id)
+  const {attach: follow, phase, confirm, stop} = useFollow(followId, selection, lift?.candidates[lift.index]?.mask ?? null, Boolean(lift?.pending), start, end)
   const graded = look > 0 || exposure !== 0
   const [bypass, setBypass] = useState(false)
   const held = bypass && graded  // [DOC: compare]
   if (bypass && !graded) setBypass(false)
   const lookReady = useLook(loaded, graded)
-  const {down, move, up, hide} = useGestures({job, selection, dispatch, readOnly, refs, ask, cycle})
+  const [asking, setAsking] = useState(false)
+  const locked = phase === 'tracking' || phase === 'tracked' || crop  // [DOC: follow-confirm]
+  if (asking && !locked) setAsking(false)
+  const {down, move, up, hide} = useGestures({job, selection, dispatch, readOnly, refs, ask, cycle, locked, onMark: () => setAsking(true)})
   useFit(viewer, aspect)
 
   useEffect(() => job ? attach(refs.current.video) : undefined, [job])
 
   // [DOC: draft-box]
-  const press = event => {down(event); if (refs.current.drag) setPressed(true)}
+  const press = event => {down(event); if (refs.current.drag && !locked) setPressed(true)}
   const release = handler => event => {
     if (!refs.current.drag) return
     handler(event)
@@ -219,11 +162,14 @@ export default memo(function Viewer({job, notice, aspect, selection, start, end,
         onPointerDown={press} onPointerMove={move} onPointerUp={release(up)} onPointerCancel={release(hide)}>
         <Sheen on={Boolean(job) && !loaded && !failed}/>
         {/* [DOC: video-source] */}
-        {job && <video key={job.proxy_url} ref={video} className='viewer-video' src={src} crossOrigin={isBlob ? undefined : 'anonymous'} playsInline preload='auto'
+        {job && <video key={job.proxy_url} ref={video} className='viewer-video' src={src} crossOrigin={isBlob ? undefined : 'anonymous'} playsInline preload={isBlob ? 'metadata' : 'auto'}
           disablePictureInPicture onAnimationEnd={() => setRevealed(true)}/>}
         {loaded && graded && lookReady && (job.id || job.local) && <Look job={job} look={held ? 0 : look} exposure={held ? 0 : exposure} adjusting={adjusting} refs={refs} dispatch={dispatch}/>}
         {loaded && <Lift lift={lift} refs={refs} origin={originOf(points, box)}/>}
-        {loaded && (points.length > 0 || box) && <Marks time={time} points={points} box={box} pending={lift?.pending} follow={follow}/>}
+        {loaded && (points.length > 0 || box) && <Marks time={time} points={points} box={box} crop={crop} follow={follow}
+          tag={!readOnly && <Tag anchor={anchorOf(points, box)} box={box} asking={asking} phase={phase} offer={Boolean(followId) && !lift?.pending}
+            crop={crop} onFollow={confirm} onCrop={() => {haptic.tap(); dispatch({crop: true, box: squared(box, aspect)})}}
+            onAsk={setAsking} onStop={() => {setAsking(false); if (crop) dispatch({crop: false}); else stop()}}/>}/>}
         {pressed && <div ref={draw} className='viewer-box' data-draft hidden/>}
       </div>
       {loaded && <Compare show={graded} held={held} set={setBypass}/>}

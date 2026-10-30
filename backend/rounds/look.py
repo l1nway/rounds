@@ -4,24 +4,7 @@ import torch
 import torch.nn.functional as F
 
 from . import color
-
-# [DOC: look-zones]
-HONEST = 0.4
-# [DOC: look-maps]
-GRID, RADIUS, EPS, SPREAD = 256, 8, 0.3, 16
-FLOOR = 2.0**-10
-CLIP = 0.93, 0.985
-# [DOC: look-curve]
-PIVOT, LIFT, DARK = math.log2(0.18), 0.75, (math.log2(0.0005), math.log2(0.008))
-SHADE, EV_LIFT = (math.log2(0.004), math.log2(0.125)), 0.25
-KNEE, WHITE, TARGET, SOFT = math.log2(0.3), 0.0, math.log2(0.8), 0.5
-DETAIL = 0.2
-SHOULDER = 0.9
-TAU = 0.3
-
-
-def split(value: float) -> tuple[float, float]:
-    return min(value / HONEST, 1.0), max(value - HONEST, 0.0) / (1 - HONEST)
+from . import look_np as lk  # [DOC: look-port]
 
 
 def smoothstep(e0: float, e1: float, x):
@@ -37,27 +20,22 @@ def lum(x, transfer: str):
     return color.luma(x, *color.KR_KB['bt709' if transfer == 'sdr' else 'bt2020']).clamp(min=0)
 
 
-def fit(w: int, h: int) -> tuple[int, int]:
-    k = GRID / max(w, h)
-    return max(1, round(w * k)), max(1, round(h * k))
-
-
 # [DOC: look-maps]
 def grid(x, transfer: str) -> tuple[torch.Tensor, float]:
     y = lum(x, transfer)
-    log = torch.log2(y + FLOOR)
-    mi, mii = box(torch.stack([log, log * log]), RADIUS)
+    log = torch.log2(y + lk.FLOOR)
+    mi, mii = box(torch.stack([log, log * log]), lk.RADIUS)
     var = (mii - mi * mi).clamp(min=0)
-    a = var / (var + EPS)
-    keep = 1 - smoothstep(*CLIP, x.clamp(0, 1).amax(0) ** (1 / color.GAMMA)) if transfer == 'sdr' else 1
-    sums = box(torch.cat([x * keep, (y * keep)[None]]), SPREAD)
+    a = var / (var + lk.EPS)
+    keep = 1 - smoothstep(*lk.CLIP, x.clamp(0, 1).amax(0) ** (1 / color.GAMMA)) if transfer == 'sdr' else 1
+    sums = box(torch.cat([x * keep, (y * keep)[None]]), lk.SPREAD)
     ratio = sums[:3] / sums[3:].clamp(min=1e-6)
-    return torch.cat([box(torch.stack([a, mi - a * mi]), RADIUS), ratio]), float(mi.max())
+    return torch.cat([box(torch.stack([a, mi - a * mi]), lk.RADIUS), ratio]), float(mi.max())
 
 
 def maps(buf, geo, device) -> tuple[torch.Tensor, float]:
     (w, h, cw, ch), (bits, full, matrix, transfer) = geo
-    size = fit(w, h)[::-1]
+    size = lk.fit(w, h)[::-1]
     y = F.adaptive_avg_pool2d(torch.from_numpy(buf[: w * h].reshape(1, h, w)).to(device).float(), size)
     uv = F.adaptive_avg_pool2d(torch.from_numpy(buf[w * h :].reshape(2, ch, cw)).to(device).float(), size)
     return grid(working(color.yuv_to_rgb(y[0], uv, matrix, bits, full), transfer), transfer)
@@ -70,7 +48,7 @@ def working(rgb, transfer: str):
 
 # [DOC: look-rebuild]
 def rebuild(x, ratio, t: float):
-    m = smoothstep(*CLIP, x.clamp(0, 1) ** (1 / color.GAMMA))
+    m = smoothstep(*lk.CLIP, x.clamp(0, 1) ** (1 / color.GAMMA))
     keep, ratio = 1 - m, ratio.clamp(min=1e-3)
     est = (keep * x).sum(0) / (keep * ratio).sum(0).clamp(min=1e-3)
     return x + m * (ratio * est - x).clamp(min=0) * (t * smoothstep(0.0, 0.5, keep.sum(0)))
@@ -78,20 +56,20 @@ def rebuild(x, ratio, t: float):
 
 # [DOC: look-curve]
 def curve(base, top: float, t: float, ev: float):
-    b = base + ev * (smoothstep(*SHADE, base) if ev < 0 else 1.0)
-    b = b + max(t, EV_LIFT * max(ev, 0.0)) * LIFT * (PIVOT - b).clamp(min=0) * smoothstep(*DARK, b)
+    b = base + ev * (smoothstep(*lk.SHADE, base) if ev < 0 else 1.0)
+    b = b + max(t, lk.EV_LIFT * max(ev, 0.0)) * lk.LIFT * (lk.PIVOT - b).clamp(min=0) * smoothstep(*lk.DARK, b)
     peak = top + ev
-    cap = min(peak, max(top, WHITE))
-    cap += t * (min(cap, TARGET) - cap)
-    if peak <= cap or peak <= KNEE:
+    cap = min(peak, max(top, lk.WHITE))
+    cap += t * (min(cap, lk.TARGET) - cap)
+    if peak <= cap or peak <= lk.KNEE:
         return b
-    d = b - KNEE
-    return b - (1 - (cap - KNEE) / (peak - KNEE)) * 0.5 * (d + torch.sqrt(d * d + SOFT * SOFT))
+    d = b - lk.KNEE
+    return b - (1 - (cap - lk.KNEE) / (peak - lk.KNEE)) * 0.5 * (d + torch.sqrt(d * d + lk.SOFT * lk.SOFT))
 
 
 def shoulder(x):
-    m = x.amax(0, keepdim=True)
-    f = torch.where(m > SHOULDER, SHOULDER + (1 - SHOULDER) * (1 - torch.exp((SHOULDER - m) / (1 - SHOULDER))), m)
+    m, s = x.amax(0, keepdim=True), lk.SHOULDER
+    f = torch.where(m > s, s + (1 - s) * (1 - torch.exp((s - m) / (1 - s))), m)
     return (x * f / m.clamp(min=color.EPS)).clamp(0, 1)
 
 
@@ -99,9 +77,9 @@ def apply(x, m, top: float, at, t: float, ev: float, transfer: str):
     s = F.grid_sample(m[None], at[None], mode='bilinear', padding_mode='border', align_corners=False)[0]
     if transfer == 'sdr' and t > 0:
         x = rebuild(x, s[2:5], t)
-    log = torch.log2(lum(x, transfer) + FLOOR)
+    log = torch.log2(lum(x, transfer) + lk.FLOOR)
     base = s[0] * log + s[1]
-    return x * torch.exp2(curve(base, top, t, ev) + (log - base) * (1 + t * DETAIL) - log)
+    return x * torch.exp2(curve(base, top, t, ev) + (log - base) * (1 + t * lk.DETAIL) - log)
 
 
 def coords(box, w: int, h: int, out: tuple[int, int], device) -> torch.Tensor:
@@ -112,8 +90,8 @@ def coords(box, w: int, h: int, out: tuple[int, int], device) -> torch.Tensor:
 
 class Look:
     def __init__(self, value: float, ev: float, transfer: str, rate: float):
-        (self.t, self.repair), self.ev, self.transfer = split(value), ev, transfer
-        self.alpha, self.top = 1 - math.exp(-1 / (rate * TAU)), None
+        (self.t, self.repair), self.ev, self.transfer = lk.split(value), ev, transfer
+        self.alpha, self.top = 1 - math.exp(-1 / (rate * lk.TAU)), None
 
     @property
     def on(self) -> bool:

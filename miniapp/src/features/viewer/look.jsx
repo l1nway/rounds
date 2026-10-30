@@ -12,7 +12,7 @@ const HDR = ['hlg', 'pq']
 const gpu = {canvas: null, draw: null, broken: false, shot: null, notify: null}
 
 const make = () => {
-  try {gpu.draw = createLook(gpu.canvas)} catch (error) {gpu.draw = null; console.warn('Look preview off:', error.message)}
+  try {gpu.draw = createLook(gpu.canvas)} catch (error) {gpu.draw = null; if (import.meta.env.DEV) console.warn('Look preview off:', error.message)}
   gpu.notify?.()
 }
 

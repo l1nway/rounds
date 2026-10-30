@@ -79,6 +79,12 @@ def run(cmd: list[str], n: int, progress) -> None:
         raise RuntimeError(f'encoder failed (ffmpeg exit {proc.returncode})')
 
 
+# [DOC: render-cache]
+def replay(tmp: str, codec: str, rate: float, dur: float, n: int, has_audio: bool, progress=None) -> None:
+    cmd = [*FFMPEG, *raw(rate, f'{tmp}/{RAW}'), *video(codec, target(dur, has_audio), 1, tmp), '-an']
+    run([*cmd, '-progress', 'pipe:1', '-nostats', '-f', 'null', '-'], n, progress)
+
+
 # [DOC: note-size]
 def second_pass(tmp: str, src, meta: dict, start: float, dur: float, n: int, rate: float, out, options: dict,
                 codec: str, progress=None) -> float:  # fmt: skip

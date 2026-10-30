@@ -52,7 +52,7 @@ label.options-row:not([data-pro]):not(:has(.options-pro)):not(:has(:disabled)) .
 /* [DOC: tiers] */
 .options-label {display: inline-flex; align-items: center; gap: 6px}
 
-.options-pro {padding: 1px 6px; border: 1px solid currentColor; border-radius: 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em}
+.options-pro {padding: 1px 6px; border: 1px solid currentColor; border-radius: var(--pill); font-size: 11px; font-weight: 600; letter-spacing: 0.04em}
 
 .options-switch {position: relative; width: 51px; aspect-ratio: 51 / 31}
 
@@ -62,7 +62,7 @@ label.options-row:not([data-pro]):not(:has(.options-pro)):not(:has(:disabled)) .
   inset: 0;
   width: 100%;
   height: 100%;
-  border-radius: 15.5px;
+  border-radius: var(--pill);
   background: var(--track);
   touch-action: none;
   transition: --on var(--move-dur) var(--move), --held var(--press-dur) var(--press);
@@ -77,7 +77,7 @@ label.options-row:not([data-pro]):not(:has(.options-pro)):not(:has(:disabled)) .
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background: var(--button);
+  background: var(--toggle);
   opacity: 0;
   transition: opacity var(--move-dur) cubic-bezier(0.3333, 0, 0.6667, 1);
 }
@@ -91,7 +91,7 @@ label.options-row:not([data-pro]):not(:has(.options-pro)):not(:has(:disabled)) .
   left: calc(2px + var(--on) * (20px - 8px * var(--held)));
   width: calc(27px + 8px * var(--held));
   height: 27px;
-  border-radius: 13.5px;
+  border-radius: var(--pill);
   background: var(--on-stage);
   box-shadow: var(--knob);
   transition: background-color var(--dur-hover, 300ms) var(--ease);
@@ -115,43 +115,62 @@ label.options-row:not([data-pro]):not(:has(.options-pro)):not(:has(:disabled)) .
 
 .options-codec :is(.options-text, [data-swap]) {justify-items: center; text-align: center}
 
+@property --n {syntax: '<number>'; inherits: true; initial-value: 0}
+
 .options-segments {
+  --at: clamp(0, var(--n), var(--count) - 1);
+  --inner: calc(var(--radius) - 2px);
   position: relative;
   isolation: isolate;
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: 1fr;
   padding: 2px;
-  border-radius: 9px;
+  border-radius: var(--radius);
   background: var(--surface);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hint) 40%, transparent);
+  transition: --n var(--dur-spring) var(--spring);
 }
 
 .options-segments::before {
   content: '';
   position: absolute;
-  grid-area: 1 / 1 / 2 / 2;
-  inset: 0;
-  z-index: 0;
-  border-radius: 7px;
-  background: var(--button);
-  translate: calc(var(--n) * 100%);
-  transition: translate var(--dur-long) var(--ease);
+  top: 2px;
+  bottom: 2px;
+  left: calc(2px + (100% - 4px) * var(--at) / var(--count));
+  width: calc((100% - 4px) / var(--count));
+  border-radius: var(--inner);
+  background: var(--segment);
+  z-index: 1;
+  box-shadow: 0 2px 6px rgb(0 0 0 / 0.18);
+  pointer-events: none;
+  transition: scale var(--dur-spring) var(--spring);
 }
 
-.options-segments label {
-  position: relative;
-  z-index: 1;
+.options-segments:has(label:active input:checked:enabled)::before {scale: 0.95}
+
+.options-segments label, .options-chosen > span {
   display: grid;
   place-items: center;
   min-height: 32px;
-  border-radius: 7px;
+  border-radius: var(--inner);
   font-size: 13px;
   font-weight: 600;
-  transition: color var(--dur) var(--ease), background-color var(--dur-hover, 300ms) var(--ease);
 }
 
-.options-segments label:has(:checked) {color: var(--button-text)}
+.options-segments label {position: relative; transition: background-color var(--dur-hover, 300ms) var(--ease)}
+
+.options-chosen {
+  position: absolute;
+  inset: 2px;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  z-index: 2;
+  color: var(--segment-text);
+  pointer-events: none;
+  clip-path: inset(0 calc(100% - 100% * (var(--at) + 1) / var(--count)) 0 calc(100% * var(--at) / var(--count)) round var(--inner));
+}
 
 .options-codec:has(input:enabled) label:has(:disabled) {opacity: 0.4}
 

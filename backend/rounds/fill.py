@@ -6,13 +6,8 @@ import torch.nn.functional as F
 
 from . import motion
 from .config import FPS
+from .fill_np import CANVAS, COVER, FEATHER, REACH, RIM  # [DOC: edge-fill]
 
-# [DOC: edge-fill]
-REACH = 0.5
-FEATHER = 8
-RIM = 1.0
-COVER = 0.999
-CANVAS = 4096
 SAMPLE = {'mode': 'bilinear', 'padding_mode': 'zeros', 'align_corners': False}
 
 

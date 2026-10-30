@@ -1,29 +1,19 @@
+import {lp} from './camera-lp.js'
+import {CubicSpline, gaussianFilter1d, roundEven} from './spline.js'
+
+export {sampler} from './spline.js'
+
 const HAMPEL = 11
+const STEP = 2
 const JUMP = 2
 const JUMP_SIZE = 2
 const SPIKE = 1
 const FILL = 0.55
 const OUT_SIZE = 640
 const FPS = 30
-
-// [DOC: camera-smooth]
-export const gaussianFilter1d = (v, sigma, truncate = 4.0) => {
-  const radius = Math.round(truncate * sigma), n = v.length
-  const kernel = new Float64Array(2 * radius + 1)
-  let sum = 0
-  for (let i = 0; i <= 2 * radius; i++) {
-    const x = i - radius, val = Math.exp(-(x * x) / (2 * sigma * sigma))
-    kernel[i] = val; sum += val
-  }
-  for (let i = 0; i <= 2 * radius; i++) kernel[i] /= sum
-  const out = new Float64Array(n)
-  for (let i = 0; i < n; i++) {
-    let acc = 0
-    for (let k = -radius; k <= radius; k++) acc += v[Math.max(0, Math.min(n - 1, i + k))] * kernel[k + radius]
-    out[i] = acc
-  }
-  return out
-}
+// [DOC: local-stabilization]
+const STAB_CROP = 0.2
+const EDGE_EXIT = [300, 0.3]
 
 // [DOC: camera-hampel]
 export const hampel = v => {
@@ -105,95 +95,61 @@ export const fallback = (on, px, py, r, centre, box, lo, fps = FPS) => {
   return clamp(Array.from({length: n}, (_, i) => [sx[i], sy[i], z]), box, lo)
 }
 
-// [DOC: camera-spline]
-export class CubicSpline {
-  constructor(xs, ys) {
-    const n = xs.length, dim = Array.isArray(ys[0]) ? ys[0].length : 0
-    this.xs = Float64Array.from(xs); this.n = n; this.dim = dim
-    if (dim) {this.splines = Array.from({length: dim}, (_, d) => new CubicSpline(xs, ys.map(y => y[d]))); return}
-    const y = Float64Array.from(ys); this.ys = y
-    if (n < 2) return
-    const dx = new Float64Array(n - 1), slope = new Float64Array(n - 1)
-    for (let i = 0; i < n - 1; i++) {dx[i] = xs[i + 1] - xs[i]; slope[i] = (y[i + 1] - y[i]) / dx[i]}
-    const s = new Float64Array(n)
-    if (n === 2) {
-      s[0] = slope[0]; s[1] = slope[0]
-    } else if (n === 3) {
-      const a10 = dx[1], a11 = 2 * (dx[0] + dx[1]), a12 = dx[0], b0 = 2 * slope[0], b1 = 3 * (dx[0] * slope[1] + dx[1] * slope[0]), b2 = 2 * slope[1], det = a11 - a12 - a10
-      s[0] = (b0 * (a11 - a12) - (b1 - a12 * b2)) / det; s[1] = (b1 - a12 * b2 - b0 * a10) / det; s[2] = b2 - s[1]
-    } else {
-      const D = new Float64Array(n), U = new Float64Array(n - 1), L = new Float64Array(n - 1), B = new Float64Array(n)
-      for (let i = 1; i < n - 1; i++) {
-        L[i - 1] = dx[i]; D[i] = 2 * (dx[i - 1] + dx[i]); U[i] = dx[i - 1]
-        B[i] = 3 * (dx[i] * slope[i - 1] + dx[i - 1] * slope[i])
-      }
-      const d0 = xs[2] - xs[0], dn = xs[n - 1] - xs[n - 3]
-      D[0] = dx[1]; U[0] = d0; B[0] = ((dx[0] + 2 * d0) * dx[1] * slope[0] + dx[0] ** 2 * slope[1]) / d0
-      D[n - 1] = dx[n - 2]; L[n - 2] = dn; B[n - 1] = (dx[n - 2] ** 2 * slope[n - 3] + (2 * dn + dx[n - 2]) * dx[n - 3] * slope[n - 2]) / dn
-      for (let i = 1; i < n; i++) {const m = L[i - 1] / D[i - 1]; D[i] -= m * U[i - 1]; B[i] -= m * B[i - 1]}
-      s[n - 1] = B[n - 1] / D[n - 1]
-      for (let i = n - 2; i >= 0; i--) s[i] = (B[i] - U[i] * s[i + 1]) / D[i]
-    }
-    this.b = s.subarray(0, n - 1); this.c = new Float64Array(n - 1); this.d = new Float64Array(n - 1)
-    for (let i = 0; i < n - 1; i++) {
-      this.c[i] = (3 * slope[i] - 2 * s[i] - s[i + 1]) / dx[i]
-      this.d[i] = (s[i] + s[i + 1] - 2 * slope[i]) / (dx[i] ** 2)
-    }
-  }
-  at(x) {
-    if (this.dim) return this.splines.map(s => s.at(x))
-    if (this.n === 1) return this.ys[0]
-    let lo = 0, hi = this.n - 1
-    if (x <= this.xs[0]) lo = 0
-    else if (x >= this.xs[hi]) lo = hi - 1
-    else while (hi - lo > 1) {const mid = (lo + hi) >> 1; if (this.xs[mid] <= x) lo = mid; else hi = mid}
-    const dx = x - this.xs[lo]
-    return this.ys[lo] + this.b[lo] * dx + this.c[lo] * dx * dx + this.d[lo] * dx * dx * dx
-  }
+const edgeOf = (bound, last) => {
+  if (!bound) return null
+  const {ft, nrm, off, sides, cost} = bound, j = [], nx = [], ny = [], c = []
+  ft.forEach((f, k) => {
+    const at = Math.min(Math.max(roundEven(f / STEP), 0), last)
+    for (let e = 0; e < sides; e++) {j.push(at); nx.push(nrm[2 * (k * sides + e)]); ny.push(nrm[2 * (k * sides + e) + 1]); c.push(off[k * sides + e])}
+  })
+  return {j, nx, ny, c, cost}
 }
 
-// [DOC: square-source]
-export const still = (n, width, height) => {
-  const row = [width / 2, height / 2, Math.min(width, height)]
-  return Array.from({length: n}, () => row.slice())
+const shot = async (on, px, py, r, centre, box, lo, fps, zoom, bound) => {
+  const n = on.length, cleaned = clean(on, px, py, r, fps), t = []
+  for (let k = 0; k < n + STEP - 1; k += STEP) t.push(k)
+  const idx = t.map(k => Math.min(k, n - 1)), pick = v => idx.map(i => v[i])
+  const edge = edgeOf(bound, t.length - 1)
+  const go = t.length > 7 && (idx.some(i => cleaned[i]) || Boolean(edge))
+  const p = go ? await lp(pick(cleaned), pick(px), pick(py), pick(r), box, lo, fps / STEP, zoom, edge) : null
+  if (!p) return fallback(cleaned, px, py, r, centre, box, lo, fps)
+  const spline = new CubicSpline(t, p)
+  return clamp(Array.from({length: n}, (_, i) => spline.at(i)), box, lo)
+}
+
+// [DOC: local-stabilization]
+const toWorld = (world, cx, cy, r, s, half) => world.track.map(([a, b, c, d, e, f], i) => {
+  const x = cx[i], y = cy[i]
+  cx[i] = a * x + b * y + c
+  cy[i] = d * x + e * y + f
+  r[i] *= Math.hypot(a, d)
+  return [(c + a * half[0] + b * half[1]) / s, (f + d * half[0] + e * half[1]) / s]
+})
+
+const boundOf = (world, s, shot, i, a) => {
+  if (!world) return null
+  const keep = [], sides = world.sides, pick = (v, w) => keep.flatMap(k => Array.from(v.subarray(k * w, (k + 1) * w)))
+  shot.forEach((sh, k) => sh === i && keep.push(k))
+  const cost = EDGE_EXIT[0] * (EDGE_EXIT[1] / EDGE_EXIT[0]) ** world.strength
+  return {ft: keep.map(k => world.ft[k] - a), nrm: pick(world.nrm, 2 * sides), off: pick(world.off, sides).map(v => v / s), sides, cost}
 }
 
 // [DOC: camera-path]
-export const solve = (track, width, height, cuts = [], fps = FPS, zoom = false) => {
+export const solve = async (track, width, height, cuts = [], fps = FPS, zoom = false, world = null) => {
   const s = Math.min(width, height) / 2, n = track.present.length
-  const cx = Float64Array.from(track.cx, v => v / s)
-  const cy = Float64Array.from(track.cy, v => v / s)
-  const r = Float64Array.from(track.r, v => v / s)
-  const on = track.present.map((p, i) => Boolean(p) && isFinite(cx[i] + cy[i] + r[i]))
-  const box = [width / s, height / s], half = [width / (2 * s), height / (2 * s)]
-  const lo = zoom ? Math.min(OUT_SIZE / 2, s) / s : 1
+  const cx = Float64Array.from(track.cx), cy = Float64Array.from(track.cy), r = Float64Array.from(track.r)
+  const on = Array.from(track.present, (p, i) => Boolean(p) && isFinite(cx[i] + cy[i] + r[i]))
+  const half = [width / 2, height / 2], box = world ? null : [width / s, height / s]
+  const centre = world ? toWorld(world, cx, cy, r, s, half) : Array(n).fill([half[0] / s, half[1] / s])
+  for (const v of [cx, cy, r]) v.forEach((x, i) => {v[i] = x / s})
+  const stab = box || 2 * s <= OUT_SIZE ? 1 : Math.max(OUT_SIZE / (2 * s), 1 - STAB_CROP)
+  const lo = zoom ? Math.min(OUT_SIZE / 2, s) / s : stab
   const edges = Array.from(new Set([0, ...cuts.filter(c => c > 0 && c < n), n])).sort((a, b) => a - b)
+  const inner = edges.slice(1, -1), shotOf = world && Array.from(world.ft, f => inner.filter(e => e <= roundEven(f)).length)
   const shots = []
   for (let i = 0; i < edges.length - 1; i++) {
-    const a = edges[i], b = edges[i + 1], len = b - a
-    const [sOn, sX, sY, sR] = [on.slice(a, b), cx.slice(a, b), cy.slice(a, b), r.slice(a, b)]
-    const sCentre = Array.from({length: len}, () => half)
-    const cleaned = clean(sOn, sX, sY, sR, fps)
-    shots.push(...fallback(cleaned, sX, sY, sR, sCentre, box, lo, fps))
+    const a = edges[i], b = edges[i + 1], bound = boundOf(world, s, shotOf, i, a)
+    shots.push(...await shot(on.slice(a, b), cx.slice(a, b), cy.slice(a, b), r.slice(a, b), centre.slice(a, b), box, lo, fps, zoom, bound))
   }
   return shots.map(([x, y, z]) => [x * s, y * s, z * 2 * s])
-}
-
-// [DOC: path-sampler]
-export const sampler = (path, cuts = []) => {
-  const n = path.length
-  const edges = Array.from(new Set([0, ...cuts.filter(c => c > 0 && c < n), n])).sort((a, b) => a - b)
-  const shots = []
-  for (let i = 0; i < edges.length - 1; i++) {
-    const a = edges[i], b = edges[i + 1]
-    const xs = Array.from({length: b - a}, (_, k) => a + k)
-    shots.push({a, b, spline: b - a > 1 ? new CubicSpline(xs, path.slice(a, b)) : null})
-  }
-  return frame => {
-    const k = Math.round(frame)
-    let idx = 0
-    for (let i = 0; i < edges.length - 2; i++) if (k >= edges[i + 1]) idx = i + 1
-    const {a, b, spline} = shots[idx]
-    return spline ? spline.at(Math.max(a, Math.min(b - 1, frame))) : path[a]
-  }
 }

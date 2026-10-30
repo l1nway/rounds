@@ -15,4 +15,5 @@ https://creativecommons.org/licenses/by-nc/4.0/legalcode
 
 Changes: only the inference parts are kept (the network and the curve); the curve is applied with one map
 (the mean of the three) to max(R, G, B), scaled by a strength, and the maps are smoothed over time
-(rounds/README.md, Repair). Not for commercial use.
+(rounds/README.md, Repair). zerodce_np.py is the same network and curve rewritten in numpy, with a reader of
+the same weights file that needs no torch (rounds/README.md, Zero-DCE port). Not for commercial use.
