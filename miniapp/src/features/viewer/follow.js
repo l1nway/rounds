@@ -6,15 +6,22 @@ import {segment, track, warmLift} from '../../services/api.js'
 const DELAY = 600
 const SLACK = 0.2
 const WARM_GAP = 90000
+const TRACKING = 'Tracking object…'
 
 const centre = box => [(box[0] + box[2]) / 2, (box[1] + box[3]) / 2]
+const decoded = ({mask}) => {
+  const image = new Image()
+  image.src = mask
+  return image.decode().then(() => image, () => null)
+}
 
 // [DOC: follow]
 const centreAt = ({fps, start, boxes}, t) => {
   const x = (t - start) * fps, i = Math.floor(x), f = x - i
   const a = boxes[i], b = boxes[i + 1]
   if (a && b) return centre(a).map((v, k) => v + (centre(b)[k] - v) * f)
-  const near = f < 0.5 ? a : b
+  // [DOC: follow-hold]
+  const near = (f < 0.5 ? a : b) || (i >= 0 && i < boxes.length && boxes.slice(0, i + 1).findLast(Boolean))
   return near ? centre(near) : null
 }
 
@@ -48,7 +55,7 @@ export function useFollow(id, selection, mask, pending, start, end) {
     const {id: job, selection, start, end, ...prompt} = want
     setStatus({selection, phase: 'tracking'})
     // [DOC: ai-progress]
-    if (typeof job !== 'function') progress.set({follow: {label: 'Tracking object…'}})
+    if (typeof job !== 'function') progress.set({follow: {label: TRACKING}})
     const req = typeof job === 'function' ? job({start, end, prompt}, reporter('follow')) : track(job, {start, end, prompt})
     req.catch(error => {if (import.meta.env.DEV) console.warn(error); return null}).then(answer => {
       o.busy = false
@@ -73,7 +80,8 @@ export function useFollow(id, selection, mask, pending, start, end) {
     return () => clearTimeout(timer)
   }, [send, id, selection, time, points, box, mask, pending, asked, start, end, going])
 
-  const confirm = () => setStatus({selection, phase: 'tracking'})
+  // [DOC: follow-handoff]
+  const confirm = () => {progress.set({follow: {label: id?.label ?? TRACKING}}); setStatus({selection, phase: 'tracking'})}
   const stop = () => {
     const o = own.current
     if (o.busy) id?.stop?.()
@@ -107,7 +115,7 @@ const asks = ({points, box}) => Boolean(box) || points.some(p => p[2] === 1)
 export function useLift(job, dispatch, readOnly) {
   const [lift, setLift] = useState(null)
   const [seen, setSeen] = useState(job)
-  const flight = useRef({want: null, busy: false})
+  const flight = useRef({want: null, busy: false, images: []})
   const id = job?.lift ?? (job?.tier === 'free' ? null : job?.id)  // [DOC: tiers]
   if (job !== seen) {setSeen(job); setLift(prefilled(job))}
 
@@ -130,12 +138,14 @@ export function useLift(job, dispatch, readOnly) {
     if (f.busy || !want) return
     f.busy = true
     if (typeof id !== 'function') progress.set({lift: {label: 'Selecting object…'}})
-    ;(typeof id === 'function' ? id(want, reporter('lift')) : segment(id, want)).catch(() => null).then(answer => {
+    ;(typeof id === 'function' ? id(want, reporter('lift')) : segment(id, want)).catch(() => null).then(async answer => {
+      const {candidates = [], best = 0} = answer ?? {}
+      // [DOC: lift-decode]
+      if (f.want === want) f.images = await Promise.all(candidates.map(decoded))
       f.busy = false
       progress.set({lift: null})
       if (f.want !== want) return send()
       f.want = null
-      const {candidates = [], best = 0} = answer ?? {}
       setLift(candidates.length ? {time: want.time, candidates, index: best, best} : null)
       dispatch({mask: candidates[best]?.mask ?? null})
     })

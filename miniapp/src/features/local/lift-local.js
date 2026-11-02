@@ -1,4 +1,4 @@
-import {call, ready} from './models.js'
+import {call, notePace, ready} from './models.js'
 
 const SIDE = 1024
 const FPS = 30
@@ -7,6 +7,8 @@ const SEEK_WAIT = 250
 const LIGHT = matchMedia('(pointer: coarse)').matches
 const NAMES = LIGHT ? ['edge-sam-encoder', 'edge-sam-decoder'] : ['sam2.1-tiny-encoder', 'sam2.1-tiny-decoder']
 const PAD = 'rgb(124, 116, 104)'
+// [DOC: gpu-buffer-cache]
+const CACHE = 'lazyRelease'
 
 let ctx = null
 const contextOf = () => ctx ??= Object.assign(document.createElement('canvas'), {width: SIDE, height: SIDE}).getContext('2d', {willReadFrequently: true})
@@ -35,7 +37,7 @@ const frameRgba = async (job, time, frame) => {
 }
 
 export const segmentLocal = async (job, prompt, options) => {
-  await ready('lift', NAMES, options)
+  const {gpu} = await ready('lift', NAMES, {...options, cache: CACHE})
   const {width, height} = job.meta
   const frame = LIGHT ? [width, height].map(side => side * SIDE / Math.max(width, height)) : [SIDE, SIDE]
   const ask = {
@@ -45,5 +47,8 @@ export const segmentLocal = async (job, prompt, options) => {
   const hit = await call(ask)
   if (!hit.miss) return hit
   const rgba = await frameRgba(job, prompt.time, frame)
-  return call({...ask, rgba}, [rgba])
+  const start = performance.now(), found = await call({...ask, rgba}, [rgba])
+  // [DOC: speed-gate]
+  if (gpu) notePace(performance.now() - start)
+  return found
 }

@@ -17,11 +17,12 @@ INGESTS, RENDERS = 2, 1
 KEEP, SWEEP = 48 * 3600, 3600
 DISK_CAP = 30 << 30  # [DOC: render-cache]
 RESTARTED = 'The server restarted, try again'
+PREVIEWS, PREVIEW_WAIT = 1, 10  # [DOC: free-look]
 
 config.PUBLIC = True  # [DOC: tiers]
 os.makedirs(JOBS_DIR, exist_ok=True)
 jobs, state, disk = Store(f'{DATA_DIR}/rounds.db', 'jobs'), Store(f'{DATA_DIR}/rounds.db', 'state'), Disk()
-lanes = {'ingest': asyncio.Semaphore(INGESTS), 'render': asyncio.Semaphore(RENDERS)}
+lanes = {k: asyncio.Semaphore(v) for k, v in (('ingest', INGESTS), ('render', RENDERS), ('look', PREVIEWS))}
 running = set()
 
 
@@ -95,7 +96,11 @@ async def idle() -> None:
 
 # [DOC: free-look]
 async def look(job_id: str, at: float, name: str, meta: dict, value: float, ev: float, size: tuple) -> dict:
-    return await asyncio.to_thread(freelook.preview, f'{JOBS_DIR}/{job_id}/{name}', meta, at, value, ev, size)
+    await asyncio.wait_for(lanes['look'].acquire(), PREVIEW_WAIT)
+    try:
+        return await asyncio.to_thread(freelook.preview, f'{JOBS_DIR}/{job_id}/{name}', meta, at, value, ev, size)
+    finally:
+        lanes['look'].release()
 
 
 app = create(jobs, state, disk, {'ingest': queued('ingest', ingest), 'render': queued('render', render_job),

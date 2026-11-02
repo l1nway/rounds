@@ -1,4 +1,4 @@
-import {CanvasSink} from 'mediabunny'
+import {VideoSampleSink} from 'mediabunny'
 import {ensureHevc} from './hevc-decoder.js'
 import {encoders, open} from './render.js'
 
@@ -56,18 +56,29 @@ const isInterpolable = metrics => {
   return fps < 59.99 || !metrics.frameRateIsConstant
 }
 
+// [DOC: filmstrip-mips]
+const shrink = (sample, mip, width) => {
+  const levels = Math.max(0, Math.floor(Math.log2(Math.min(sample.displayWidth / width, sample.displayHeight / TILE_H))))
+  const w = width * 2 ** levels, h = TILE_H * 2 ** levels
+  if (mip.width !== w || mip.height !== h) Object.assign(mip, {width: w, height: h})
+  const ctx = mip.getContext('2d')
+  ctx.imageSmoothingQuality = 'high'
+  ctx.globalCompositeOperation = 'copy'
+  sample.drawWithFit(ctx, {fit: 'cover'})
+  for (let i = levels; i > 0; i--) ctx.drawImage(mip, 0, 0, width * 2 ** i, TILE_H * 2 ** i, 0, 0, width * 2 ** (i - 1), TILE_H * 2 ** (i - 1))
+}
+
 const sprite = async (track, duration, width) => {
-  const canvas = document.createElement('canvas')
-  canvas.width = TILES * width
-  canvas.height = TILE_H
-  const context = canvas.getContext('2d')
-  const sink = new CanvasSink(track, {width, height: TILE_H, fit: 'cover'})
+  const canvas = Object.assign(document.createElement('canvas'), {width: TILES * width, height: TILE_H}), context = canvas.getContext('2d')
+  const mip = document.createElement('canvas'), sink = new VideoSampleSink(track)
   const times = Array.from({length: TILES}, (_, i) => (i + 0.5) * duration / TILES)
   let tile = 0
-  for await (const frame of sink.canvasesAtTimestamps(times)) {
-    if (frame) context.drawImage(frame.canvas, tile * width, 0)
-    tile++
-  }
+  try {
+    for await (const sample of sink.samplesAtTimestamps(times)) {
+      if (sample) {shrink(sample, mip, width); sample.close(); context.drawImage(mip, 0, 0, width, TILE_H, tile * width, 0, width, TILE_H)}
+      tile++
+    }
+  } finally {mip.width = mip.height = 0}
   return new Promise(resolve => canvas.toBlob(blob => resolve(blob && URL.createObjectURL(blob)), 'image/jpeg', 0.7))
 }
 

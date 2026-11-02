@@ -1,3 +1,4 @@
+import contextlib
 from pathlib import Path
 
 import numpy as np
@@ -69,12 +70,13 @@ def render(src, meta: dict, request: dict, out, tmp: str, progress=None) -> dict
     q, t = encode.writer(tmp, first)
     k, last = 0, None
     try:
-        for buf in stream:
-            last = buf.tobytes()
-            q.put(last)
-            k += 1
-            if progress and k % PROGRESS_EVERY == 0:
-                progress(FRAMES_SHARE * k / n)
+        with contextlib.closing(stream):
+            for buf in stream:
+                last = buf.tobytes()
+                q.put(last)
+                k += 1
+                if progress and k % PROGRESS_EVERY == 0:
+                    progress(FRAMES_SHARE * k / n)
         if last is None:
             raise source.Unreadable(media.NO_RANGE)
     except BaseException:

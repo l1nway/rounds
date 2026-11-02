@@ -7,9 +7,10 @@ const labelOf = key => CODECS.find(codec => codec.key === key).label
 const picked = ({box, points, crop}) => Boolean(box && !crop) || points.some(point => point[2] === 1)
 // [DOC: stage-routing]
 const ROUTE = ['gpu', 'oracle', 'cpu', 'modal']
-export const STAGES = {stabilize: {gpu: true, oracle: false, cpu: true, modal: true}}
+export const STAGES = {stabilize: {gpu: true, oracle: true, cpu: true, modal: true, device: 'webgl'}}
 export const routeOf = (stage, job) => {
-  const can = {gpu: Boolean(job.gpu), oracle: true, cpu: true, modal: job.tier === 'pro'}
+  const local = !STAGES[stage]?.device || job[STAGES[stage].device] !== false
+  const can = {gpu: Boolean(job.gpu) && local, oracle: job.tier !== 'local', cpu: local, modal: job.tier === 'pro'}
   return ROUTE.find(where => STAGES[stage]?.[where] && can[where]) ?? null
 }
 const onDevice = (key, job) => ['gpu', 'cpu'].includes(routeOf(key, job))
@@ -28,14 +29,15 @@ export const droppedOf = body => [
 ]
 
 // [DOC: local-plan]
-export const needsServer = (body, job) =>
-  Object.entries(body.options).some(([key, on]) => on && !LOCAL_OPTIONS.has(key)) || LEVELS.some(level => body[level.key] && !localLevel(level, body, job))
+// [DOC: speed-gate]
+export const needsServer = (body, job) => job.tier === 'pro' && job.fast === false && picked(body.prompt)
+  || Object.entries(body.options).some(([key, on]) => on && !LOCAL_OPTIONS.has(key)) || LEVELS.some(level => body[level.key] && !localLevel(level, body, job))
   || job.meta.off.includes(body.codec) || Boolean(job.meta.hdr)
 
 // [DOC: local-modal]
 export const needsModal = (body, job) => job.tier === 'pro' && (picked(body.prompt)
   || Object.entries(body.options).some(([key, on]) => on && need(key) === 'pro')
-  || LEVELS.some(level => body[level.key] && !localLevel(level, body, job) && (level.need === 'pro' || routeOf(level.key, job) === 'modal')))
+  || LEVELS.some(level => body[level.key] && !localLevel(level, body, job) && (level.need === 'pro' || level.local < 1 || routeOf(level.key, job) === 'modal')))
 
 export const gate = (draft, job) => {
   if (!job) return {network: true}
@@ -43,7 +45,7 @@ export const gate = (draft, job) => {
   const body = {options: optionsFor(job, draft.options), prompt: draft, codec: draft.codec, ...levelsFor(job, draft)}
   if (!needsServer(body, job)) return {network: false}
   if (job.tier === 'local') {
-    if (body.stabilize && !onDevice('stabilize', job)) return {block: true, note: 'Stabilize does not run in the browser yet. Turn it off to render here.'}
+    if (body.stabilize && !onDevice('stabilize', job)) return {block: true, note: 'This browser cannot stabilize video (no WebGL2 float rendering). Turn it off, or sign in to stabilize on the server.'}
     if (job.meta.hdr) return {block: true, note: 'This video is HDR. Sign in to render it on the server with correct colours.'}
     return {block: true, note: off.length === 3 ? 'This browser cannot encode video. Sign in to render on the server.' : `This browser cannot encode ${labelOf(draft.codec)}. Pick another codec or sign in.`}
   }

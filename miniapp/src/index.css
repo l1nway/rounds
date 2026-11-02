@@ -33,6 +33,9 @@
   --dur-enter: 700ms;
   --stagger: 110ms;
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* [DOC: motion-tokens] */
+  --ease-in: cubic-bezier(0.32, 0, 0.67, 0);
+  --ease-both: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 @media (prefers-reduced-motion: reduce) {

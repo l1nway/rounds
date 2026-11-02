@@ -23,21 +23,18 @@ const hasFiles = event => event.dataTransfer?.types.includes('Files')
 const CARRY = ['start', 'end', 'time', 'points', 'box', 'mask', 'options', 'codec', ...LEVELS.map(({key}) => key)]
 const resume = job => prev => ({...init(job), ...Object.fromEntries(CARRY.map(key => [key, prev[key]]))})
 
-const mimeOf = file => {
-  if (file.type && file.type.startsWith('video/')) return file.type
-  const ext = file.name?.split('.').pop()?.toLowerCase()
-  return ext === 'mov' ? 'video/quicktime' : 'video/mp4'
-}
+const mimeOf = file => file.type?.startsWith('video/') ? file.type : file.name?.split('.').pop()?.toLowerCase() === 'mov' ? 'video/quicktime' : 'video/mp4'
 
 const base = name => name.replace(/\.[^.]+$/, '') || 'round'
 
 // [DOC: web-shell]
 export default function WebApp() {
-  const [{user, source, notice, work, result, over, consent, crash, gpu}, dispatch] = useReducer(merge, START)
+  const [{user, source, notice, work, result, over, consent, crash}, dispatch] = useReducer(merge, START)
   const [input, setInput] = useState(null)
   const latest = useRef(0)
   const pending = useRef(null)
   const last = useRef(null)
+  const device = useRef({})
   const failed = usePlayer(state => state.failed)
   const tier = tierOf(user)
   // [DOC: web-local-ai]
@@ -46,6 +43,9 @@ export default function WebApp() {
     const confirm = kind => ({bytes, models}) => new Promise(resolve => dispatch({consent: {kind, bytes, models, resolve: ok => {dispatch({consent: null}); resolve(ok)}}}))
     const local = (load, kind, route) => async (want, report) => {
       const [loading, preparing, busy] = LABELS[kind]
+      const server = () => post(`/api/jobs/${encodeURIComponent(source.id)}/${route}`, want)
+      // [DOC: speed-gate]
+      if (kind === 'follow' && source.id && tier === 'pro' && !(await import('../local/models.js')).fast()) {report({label: busy}); return server()}
       const [run, {awake}] = await Promise.all([load(), import('../local/awake.js')])
       try {
         return await awake(() => run(source, want, {
@@ -57,17 +57,20 @@ export default function WebApp() {
           onTrack: share => report({label: busy, share})
         }))
       } catch (error) {
-        if (source.id && tier === 'pro') return post(`/api/jobs/${encodeURIComponent(source.id)}/${route}`, want)
+        if (source.id && tier === 'pro') return server()
         throw error
       }
     }
     const tracker = () => import('../local/track-local.js')
     const lift = local(() => import('../local/lift-local.js').then(module => module.segmentLocal), 'lift', 'segment')
-    const follow = Object.assign(local(() => tracker().then(module => module.followLocal), 'follow', 'track'), {stop: () => tracker().then(module => module.stopFollow())})
-    return {id: null, status: 'ready', max_duration: MAX_DURATION, request: null, ...source, tier, local: true, gpu: Boolean(gpu), lift, follow}
-  }, [source, tier, gpu])
+    const follow = Object.assign(local(() => tracker().then(module => module.followLocal), 'follow', 'track'), {stop: () => tracker().then(module => module.stopFollow()), label: LABELS.follow[1]})
+    return {id: null, status: 'ready', max_duration: MAX_DURATION, request: null, ...source, tier, local: true, get gpu() {return Boolean(device.current.gpu)}, get webgl() {return device.current.webgl}, get fast() {return device.current.fast?.()}, lift, follow}
+  }, [source, tier])
   // [DOC: web-crash]
-  useEffect(() => {import('../local/models.js').then(({crashed, deviceOf}) => {if (crashed) dispatch({crash: crashed}); deviceOf().then(device => dispatch({gpu: device.gpu}))})}, [])
+  useEffect(() => {
+    import('../local/models.js').then(({crashed, deviceOf, fast}) => {device.current.fast = fast; if (crashed) dispatch({crash: crashed}); return deviceOf()}).then(found => {device.current.gpu = found.gpu}).catch(() => {})
+    import('../local/gl.js').then(({canStabilize}) => {device.current.webgl = canStabilize()}).catch(() => {device.current.webgl = false})
+  }, [])
   const choose = cpu => {
     dispatch({crash: null})
     if (cpu) import('../local/models.js').then(({preferCpu}) => preferCpu())

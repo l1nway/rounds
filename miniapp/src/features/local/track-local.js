@@ -1,5 +1,7 @@
 import {CanvasSink} from 'mediabunny'
-import {call, deviceOf, ready} from './models.js'
+import {parked} from '../../hooks/player.js'
+import {lightFrames} from './light-frames.js'
+import {call, deviceOf, fast, ready, release, roomy} from './models.js'
 import {identity, stage} from './stage-cache.js'
 import {open} from './render.js'
 
@@ -10,13 +12,17 @@ const STEPS = 45
 const CPU_STEPS = 12
 const CPU_RATE = 2
 const CHUNK = 30
-const PROGRESS_EVERY = 10
+const LOAD_SHARE = 0.1
 const GROUP = 'track'
 const NAMES = ['sam2.1-video-encoder', 'sam2.1-video-decoder', 'sam2.1-video-mem-enc', 'sam2.1-video-mem-attn', 'sam2.1-video-pointer']
+// [DOC: light-track]
+const LIGHT = {group: 'light', names: ['vit-track'], rate: 15, preview: 10, long: 640}
+const PARK = 1920 * 1080
 
 let active = 0
 let turn = Promise.resolve()
 let preview = null
+let onGpu = null
 
 // [DOC: local-follow]
 export const stopFollow = () => {++active}
@@ -28,8 +34,18 @@ const exclusive = fn => {
   return run
 }
 
-const grid = (time, start, end, steps) => {
-  const rate = RATES.find(r => (end - start) * r <= steps) ?? RATES[RATES.length - 1]
+// [DOC: speed-gate]
+const modeOf = ({width, height}) => {
+  if (fast()) return {light: false, group: GROUP, size: [SIDE, SIDE]}
+  const k = LIGHT.long / Math.max(width, height)
+  return {light: true, park: width * height > PARK, group: LIGHT.group, size: [Math.round(width * k), Math.round(height * k)]}
+}
+// [DOC: park-light]
+const lean = (mode, work) => mode.park ? parked(work) : work()
+const load = (mode, options) => mode.light ? ready(LIGHT.group, LIGHT.names, {...options, cpu: true, shared: roomy()}) : ready(GROUP, NAMES, options)
+
+const grid = (time, start, end, steps, rates = RATES) => {
+  const rate = rates.find(r => (end - start) * r <= steps) ?? rates[rates.length - 1]
   const anchor = Math.floor(time * FPS + 1e-3) / FPS
   const before = Math.floor((anchor - start) * rate + 1e-6)
   const after = Math.floor((end - anchor) * rate + 1e-6)
@@ -37,23 +53,25 @@ const grid = (time, start, end, steps) => {
 }
 
 // [DOC: track-frames]
-async function* frames(file, times, index) {
-  const sink = new CanvasSink(await open(file).getPrimaryVideoTrack(), {width: SIDE, height: SIDE, fit: 'fill', poolSize: 1})
-  const read = frame => frame ? frame.canvas.getContext('2d').getImageData(0, 0, SIDE, SIDE).data : new Uint8ClampedArray(SIDE * SIDE * 4)
+async function* frames(file, times, index, [width, height], light) {
+  const track = await open(file).getPrimaryVideoTrack()
+  const sink = light ? null : new CanvasSink(track, {width, height, fit: 'fill', poolSize: 1})
+  // [DOC: light-frames]
+  const each = light ? lightFrames(track, width, height) : async function* (list) {for await (const frame of sink.canvasesAtTimestamps(list)) yield frame?.canvas.getContext('2d').getImageData(0, 0, width, height).data}
+  const read = rgba => rgba ?? new Uint8ClampedArray(width * height * 4)
   let k = index
-  for await (const frame of sink.canvasesAtTimestamps(times.slice(index))) yield [k++, read(frame)]
+  for await (const rgba of each(times.slice(index))) yield [k++, read(rgba)]
   for (let hi = index; hi > 0; hi -= CHUNK) {
     const lo = Math.max(0, hi - CHUNK), chunk = []
-    for await (const frame of sink.canvasesAtTimestamps(times.slice(lo, hi))) chunk.push(read(frame))
+    for await (const rgba of each(times.slice(lo, hi))) chunk.push(read(rgba))
     for (let i = chunk.length - 1; i >= 0; i--) yield [lo + i, chunk[i]]
   }
 }
 
-const send = (type, rgba, extra) => call({group: GROUP, type, rgba: rgba.buffer, ...extra}, [rgba.buffer])
-
-const pass = async (file, times, index, prompt, record, live) => {
+const pass = async (file, times, index, prompt, record, live, {group, size: [width, height], light}) => {
+  const send = (type, rgba, extra) => call({group, type, rgba: rgba.buffer, width, height, ...extra}, [rgba.buffer])
   let first = null
-  for await (const [k, rgba] of frames(file, times, index)) {
+  for await (const [k, rgba] of frames(file, times, index, [width, height], light)) {
     if (!live()) return false
     if (k === index) {
       if (index > 0) first = rgba.slice()
@@ -63,7 +81,7 @@ const pass = async (file, times, index, prompt, record, live) => {
     if (k === index - 1) await send('seed', first, {prompt, total: index + 1})
     record(k, await send('step', rgba))
   }
-  await call({group: GROUP, type: 'reset'})
+  await call({group, type: 'reset'})
   return true
 }
 
@@ -124,41 +142,51 @@ const merge = (samples, meta, start, end, cpu) => {
   return {found, cuts}
 }
 
-// [DOC: local-follow]
-export const followLocal = async (source, {start, end, prompt}, options = {}) => {
-  const run = ++active
-  const backend = await ready(GROUP, NAMES, options)
+const follow = async (run, source, {start, end, prompt}, options, mode) => {
+  const backend = await load(mode, options)
+  if (!mode.light) onGpu = backend.gpu
   return exclusive(async () => {
     if (run !== active) return null
-    const {rate, t0, index, n} = grid(prompt.time, start, end, backend.gpu ? STEPS : CPU_STEPS)
+    const {rate, t0, index, n} = mode.light ? grid(prompt.time, start, end, Infinity, [LIGHT.preview]) : grid(prompt.time, start, end, backend.gpu ? STEPS : CPU_STEPS)
     const boxes = Array(n).fill(null), found = Array(n).fill(null)
     let done = 0
     const record = (k, item) => {boxes[k] = item.box; found[k] = item; options.onTrack?.(++done / n)}
     const times = Array.from({length: n}, (_, i) => t0 + i / rate)
-    if (!await pass(source.file, times, index, prompt, record, () => run === active)) return null
-    preview = {key: promptKey(source.file, prompt), samples: times.map((t, k) => ({t, found: found[k]}))}
+    if (!await pass(source.file, times, index, prompt, record, () => run === active, mode)) return null
+    if (!mode.light) preview = {key: promptKey(source.file, prompt), samples: times.map((t, k) => ({t, found: found[k]}))}
     return {fps: rate, start: Math.round(t0 * 1000) / 1000, boxes}
   })
 }
 
-const runTrack = async (file, meta, {start, end, prompt}, onProgress) => {
-  const known = (await deviceOf()).gpu ? [] : reused(file, {start, end, prompt})
+// [DOC: local-follow]
+export const followLocal = (source, request, options = {}) => {
+  const run = ++active, mode = modeOf(source.meta)
+  return lean(mode, () => follow(run, source, request, options, mode))
+}
+
+// [DOC: track-reuse]
+const gpuOf = async () => onGpu ?? (await deviceOf()).gpu
+
+const runTrack = async (file, meta, {start, end, prompt}, onProgress, mode) => {
+  const known = mode.light || await gpuOf() ? [] : reused(file, {start, end, prompt})
   const todo = known.length ? plan(start, end, CPU_RATE, known, prompt.time) : null
   if (todo?.times.length === 1 && known.some(({t}) => Math.abs(t - todo.times[0]) < 1e-6)) {
     onProgress(1)
     return merge(known, meta, start, end, true)
   }
-  const backend = await ready(GROUP, NAMES)
+  onProgress(0)
+  const backend = await load(mode, {onPrepare: share => onProgress(LOAD_SHARE * share)})
+  if (!mode.light) onGpu = backend.gpu
   return exclusive(async () => {
-    const cpu = !backend.gpu
-    const {times, index} = todo && cpu ? todo : plan(start, end, cpu ? CPU_RATE : FPS, [], prompt.time)
+    const cpu = !mode.light && !backend.gpu
+    const {times, index} = todo && cpu ? todo : plan(start, end, mode.light ? LIGHT.rate : cpu ? CPU_RATE : FPS, [], prompt.time)
     const found = Array(times.length)
     let done = 0
     const record = (k, item) => {
       found[k] = item
-      if (++done % (cpu ? 1 : PROGRESS_EVERY) === 0 || done === times.length) onProgress(done / times.length)
+      onProgress(LOAD_SHARE + (1 - LOAD_SHARE) * ++done / times.length)
     }
-    await pass(file, times, index, prompt, record, () => true)
+    await pass(file, times, index, prompt, record, () => true, mode)
     return merge([...(cpu ? known : []), ...times.map((t, k) => ({t, found: found[k]}))], meta, start, end, cpu)
   })
 }
@@ -166,7 +194,8 @@ const runTrack = async (file, meta, {start, end, prompt}, onProgress) => {
 // [DOC: stage-cache]
 export const trackLocal = async (file, meta, request, onProgress) => {
   ++active
-  const {gpu} = await deviceOf()
+  const gpu = await gpuOf(), mode = modeOf(meta)
   const {start, end, prompt} = request
-  return stage(['track', ...identity(file), start, end, prompt, gpu], () => runTrack(file, meta, request, onProgress), () => onProgress(1))
+  // [DOC: one-model]
+  return stage(['track', ...identity(file), start, end, prompt, gpu, mode.light], () => lean(mode, () => runTrack(file, meta, request, onProgress, mode)), () => onProgress(1)).finally(release)
 }

@@ -10,6 +10,7 @@ import {boxStyle, pct, squared, useGestures} from './gestures.js'
 import Lift from './lift.jsx'
 import Tag from './tag.jsx'
 import './viewer.css'
+import './overlay.css'
 
 const CORNERS = ['tl', 'tr', 'bl', 'br']
 // [DOC: viewer-fit]
@@ -122,6 +123,8 @@ export default memo(function Viewer({job, notice, aspect, selection, crop, start
   const waiting = usePlayer(state => state.waiting)
   const loaded = usePlayer(state => state.loaded)
   const failed = usePlayer(state => state.failed)
+  const parked = usePlayer(state => state.parked)
+  const hash = usePlayer(state => state.hash)
   const [revealed, setRevealed] = useState(false)
   const [shown, setShown] = useState(null)
   const source = job?.file ?? job?.id ?? null  // [DOC: loading-crossfade]
@@ -159,8 +162,10 @@ export default memo(function Viewer({job, notice, aspect, selection, crop, start
   return (
     <section ref={viewer} className='viewer enter' aria-label='Video' style={{'--aspect': aspect}}>
       <div ref={stage} className='viewer-stage' data-reveal={(loaded && !revealed) || undefined} data-off={readOnly || !job || undefined}
-        onPointerDown={press} onPointerMove={move} onPointerUp={release(up)} onPointerCancel={release(hide)}>
+        data-parked={parked || undefined} onPointerDown={press} onPointerMove={move} onPointerUp={release(up)} onPointerCancel={release(hide)}>
         <Sheen on={Boolean(job) && !loaded && !failed}/>
+        {/* [DOC: player-hash] */}
+        {hash && <img className='viewer-hash' src={hash} alt=''/>}
         {/* [DOC: video-source] */}
         {job && <video key={job.proxy_url} ref={video} className='viewer-video' src={src} crossOrigin={isBlob ? undefined : 'anonymous'} playsInline preload={isBlob ? 'metadata' : 'auto'}
           disablePictureInPicture onAnimationEnd={() => setRevealed(true)}/>}
@@ -172,7 +177,7 @@ export default memo(function Viewer({job, notice, aspect, selection, crop, start
             onAsk={setAsking} onStop={() => {setAsking(false); if (crop) dispatch({crop: false}); else stop()}}/>}/>}
         {pressed && <div ref={draw} className='viewer-box' data-draft hidden/>}
       </div>
-      {loaded && <Compare show={graded} held={held} set={setBypass}/>}
+      {loaded && <Compare show={graded && !parked} held={held} set={setBypass}/>}
       {spinning && <span ref={spinner} className='spinner viewer-spinner' aria-hidden='true'/>}
       <Notice notice={notice ?? (failed ? BROKEN : null)}/>
     </section>

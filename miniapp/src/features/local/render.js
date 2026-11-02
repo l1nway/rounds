@@ -78,19 +78,24 @@ const videoRate = (seconds, share, sound) =>
 export const encode = async (input, {crop, at, steady, start, end, codec, sound, audio, look, ev, rate, tags, onProgress}) => {
   const output = new Output({format: new Mp4OutputFormat({fastStart: 'in-memory', metadataFormat: 'mdta'}), target: new BufferTarget()})
   const fixed = () => [crop.left + crop.width / 2, crop.top + crop.height / 2, crop.width]
-  const conversion = await Conversion.init({
-    input, output, trim: {start, end}, tags: tags ? () => tags : () => ({}), showWarnings: false,
-    video: {
-      process: steady ? steady() : grade(look, ev, OUT, at ?? fixed), processedWidth: OUT, processedHeight: OUT,
-      codec, forceTranscode: true, keyFrameInterval: 2,
-      quality: new Quality({bitrate: rate, bitrateMode: 'constant'})
-    },
-    audio: sound ? {codec: sound, bitrate: AUDIO_RATE, forceTranscode: true, ...audio} : {discard: true}
-  })
-  if (!conversion.isValid) throw new Error('This browser cannot encode the round')
-  conversion.onProgress = onProgress
-  await conversion.execute()
-  return new Blob([output.target.buffer], {type: 'video/mp4'})
+  const stab = steady?.()
+  try {
+    const conversion = await Conversion.init({
+      input, output, trim: {start, end}, tags: tags ? () => tags : () => ({}), showWarnings: false,
+      video: {
+        process: stab?.process ?? grade(look, ev, OUT, at ?? fixed), processedWidth: OUT, processedHeight: OUT,
+        codec, forceTranscode: true, keyFrameInterval: 2,
+        quality: new Quality({bitrate: rate, bitrateMode: 'constant'})
+      },
+      audio: sound ? {codec: sound, bitrate: AUDIO_RATE, forceTranscode: true, ...audio} : {discard: true}
+    })
+    if (!conversion.isValid) throw new Error('This browser cannot encode the round')
+    conversion.onProgress = onProgress
+    await conversion.execute()
+    return new Blob([output.target.buffer], {type: 'video/mp4'})
+  } finally {
+    stab?.dispose()
+  }
 }
 
 // [DOC: local-track]
@@ -102,15 +107,17 @@ export const renderNote = async (file, meta, request, onProgress) => {
   let at = null, steady = null
   if (follow || shaky) {
     onProgress(0, text)
-    const done = [follow ? 0 : 1, shaky ? 0 : 1], report = i => p => {done[i] = p; onProgress(0.2 * (done[0] + done[1]), text)}
-    const [{trackLocal}, {solve, sampler}, stab] = await Promise.all([import('./track-local.js'), import('./camera.js'), shaky && import('./stabilize.js')])
-    const flow = shaky && stab.motionOf(file, input, meta, start, end, report(1))
+    // [DOC: render-progress]
+    const done = [follow, shaky].filter(Boolean).map(() => 0)
+    const report = i => p => {done[i] = Math.max(done[i], p); onProgress(0.4 * done.reduce((a, b) => a + b, 0) / done.length, text)}
+    const [{trackLocal}, {sampler}, stab] = await Promise.all([import('./track-local.js'), import('./camera.js'), import('./stabilize.js')])
+    const flow = shaky && stab.motionOf(file, input, meta, start, end, report(follow ? 1 : 0))
     if (flow) flow.catch(() => {})
     const {found, cuts} = follow ? await trackLocal(file, meta, request, report(0)) : {}
     // [DOC: local-stabilization]
     const moving = shaky && await stab.pathOf({flow: await flow, found, cuts, meta, request, crop: prompt.crop && frameOf(meta, prompt, Boolean(options.zoom))})
-    if (moving) steady = () => stab.stabilizer(moving, look, ev, OUT)
-    else if (follow) at = sampler(await solve(found, meta.width, meta.height, cuts, 30, Boolean(options.zoom)), cuts)
+    if (moving) steady = () => stab.stabilizer(moving, look, ev, OUT, end - start)
+    else if (follow) at = sampler(await stab.solveOff(found, meta.width, meta.height, cuts, 30, Boolean(options.zoom)), cuts)
   }
   const crop = at ? null : frameOf(meta, prompt, Boolean(options.zoom))
   const clean = sound && noise ? await denoise(input, start, end, noise, file) : null

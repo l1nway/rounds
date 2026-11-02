@@ -16,7 +16,7 @@
 
 .lift[data-away] {opacity: 0}
 
-.lift-layer {position: absolute; inset: 0; animation: appear var(--dur-long) var(--ease) both}
+.lift-layer {position: absolute; inset: 0; animation: appear var(--dur-long) var(--ease-both) both}
 
 .lift-layer[data-leaving] {animation: lift-out var(--dur-long) var(--ease) forwards}
 

@@ -3,13 +3,14 @@ const COMMON = `
 const float COVER = 0.999;
 uniform sampler2D params;
 uniform vec2 frame;
-uniform int disc;
+uniform int disc, pw;
 uniform float size, rim, safe;
-vec4 win(int k) {return texelFetch(params, ivec2(k, 0), 0);}
+vec4 row(int k, int r) {return texelFetch(params, ivec2(k % pw, 3 * (k / pw) + r), 0);}
+vec4 win(int k) {return row(k, 0);}
 bool good(int k, ivec2 q) {
   if (q.x < 0 || q.y < 0 || q.x >= int(size) || q.y >= int(size)) return false;
   vec4 w = win(k);
-  vec3 r0 = texelFetch(params, ivec2(k, 1), 0).xyz, r1 = texelFetch(params, ivec2(k, 2), 0).xyz;
+  vec3 r0 = row(k, 1).xyz, r1 = row(k, 2).xyz;
   vec2 pt = ((vec2(q) + 0.5) / size - 0.5) * w.z + w.xy;
   vec2 p = vec2(dot(r0.xy, pt) + r0.z, dot(r1.xy, pt) + r1.z);
   if (disc == 1) return length(p - frame * 0.5) <= safe * min(frame.x, frame.y) * 0.5;

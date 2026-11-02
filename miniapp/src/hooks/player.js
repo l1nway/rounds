@@ -14,7 +14,7 @@ export const formatTime = t => {
   return `${Math.floor(total / 60000)}:${pad(Math.floor(total / 1000) % 60, 2)}.${pad(total % 1000, 3)}`
 }
 
-const store = createStore({time: 0, paused: true, waiting: true, loaded: false, failed: false})
+const store = createStore({time: 0, paused: true, waiting: true, loaded: false, failed: false, parked: false, hash: null})
 const live = {video: null, target: null, busy: false, loop: 0, frame: 0, start: 0, end: Infinity}
 
 export const usePlayer = store.use
@@ -75,6 +75,80 @@ export const toggle = () => {
   if (!video.paused) return video.pause()
   if (getTime() >= live.end - 1 / FPS || getTime() < live.start) seek(live.start)
   video.play().catch(() => store.set({paused: true}))
+}
+
+// [DOC: player-park]
+const HASH = {from: 256, side: 8, out: 32}
+const SETTLE = 1500
+const RELOAD = 10000
+const rest = {count: 0, nap: null, waking: Promise.resolve(), video: null, src: null, time: 0}
+
+const canvasOf = ([width, height]) => Object.assign(document.createElement('canvas'), {width, height})
+
+// [DOC: player-hash]
+const hashOf = video => {
+  const {videoWidth: w, videoHeight: h} = video
+  const fit = side => [w, h].map(v => Math.max(1, Math.round(v * side / Math.max(w, h))))
+  const mip = canvasOf(fit(HASH.from)), out = canvasOf(fit(HASH.out)), a = mip.getContext('2d'), b = out.getContext('2d')
+  a.imageSmoothingQuality = b.imageSmoothingQuality = 'high'
+  a.drawImage(video, 0, 0, mip.width, mip.height)
+  a.globalCompositeOperation = 'copy'
+  let side = HASH.from
+  for (; side > HASH.side; side /= 2) a.drawImage(mip, 0, 0, ...fit(side), 0, 0, ...fit(side / 2))
+  b.drawImage(mip, 0, 0, ...fit(side), 0, 0, out.width, out.height)
+  try {return out.toDataURL('image/png')} finally {mip.width = mip.height = out.width = out.height = 0}
+}
+
+const within = (promise, limit) => Promise.race([promise, new Promise(resolve => setTimeout(resolve, limit))])
+// [DOC: park-lull]
+const lull = () => new Promise(resolve => setTimeout(resolve, parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--dur-long')) || 0))
+const settle = video => within(new Promise(resolve => setTimeout(resolve)).then(() => Promise.all(video.getAnimations().map(a => a.finished.catch(() => {})))), SETTLE)
+
+const shown = video => new Promise(resolve => {
+  const events = ['seeked', 'loadeddata', 'error']
+  const done = event => {
+    if (event.type !== 'error' && (video.readyState < 2 || video.seeking)) return
+    events.forEach(type => video.removeEventListener(type, done))
+    resolve()
+  }
+  events.forEach(type => video.addEventListener(type, done))
+})
+
+const sleep = async () => {
+  await lull()
+  const {video} = live
+  if (!video || video.readyState < 2) return
+  video.pause()
+  let hash
+  try {hash = hashOf(video)} catch {return}
+  store.set({hash, parked: true})
+  await settle(video)
+  if (live.video !== video) return store.set({hash: null, parked: false})
+  Object.assign(rest, {video, src: video.getAttribute('src'), time: getTime()})
+  video.removeAttribute('src')
+  video.load()
+}
+
+const wake = async () => {
+  const {video, src, time} = rest
+  rest.video = null
+  if (video && live.video === video) {
+    if (live.target === null) live.target = time
+    video.setAttribute('src', src)
+    await within(shown(video), RELOAD)
+  }
+  if (!store.get().parked) return
+  store.set({parked: false})
+  if (live.video) await settle(live.video)
+  if (!rest.count) store.set({hash: null})
+}
+
+export const parked = async work => {
+  try {
+    if (!rest.count++) rest.nap = rest.waking.then(sleep)
+    await rest.nap
+    return await work()
+  } finally {if (!--rest.count) rest.waking = wake()}
 }
 
 export const attach = video => {

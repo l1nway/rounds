@@ -1,51 +1,60 @@
 /* [DOC: ai-progress] */
 @property --share {syntax: '<number>'; inherits: true; initial-value: 0}
 
+/* [DOC: ring-exit] */
+@property --cap {syntax: '<color>'; inherits: true; initial-value: transparent}
+
 .viewer-ring {
   --w: 3px;
   --ink: var(--on-stage);
+  --cap: var(--ink);
+  --band: radial-gradient(farthest-side, transparent calc(100% - var(--w)), #000 calc(100% - var(--w) + 0.5px));
   position: absolute;
   width: 40px;
   height: 40px;
   margin: -20px 0 0 -20px;
   border-radius: 50%;
-  background: radial-gradient(circle at 50% calc(var(--w) / 2), var(--ink) calc(var(--w) / 2), transparent calc(var(--w) / 2 + 0.5px));
+  background: radial-gradient(circle at 50% calc(var(--w) / 2), var(--cap) calc(var(--w) / 2), transparent calc(var(--w) / 2 + 0.5px));
   pointer-events: none;
   filter: drop-shadow(0 0 3px rgb(0 0 0 / 0.45));
-  transition: --share 600ms var(--ease), opacity var(--dur) var(--ease), scale var(--dur-spring) var(--spring-pop);
+  transition: --share 600ms var(--ease), --cap var(--dur-long) var(--ease), opacity var(--dur) var(--ease), scale var(--dur-spring) var(--spring-pop);
 }
 
-.viewer-ring::before, .viewer-ring::after {content: ''; position: absolute; border-radius: 50%}
+.viewer-ring[data-spin] {--cap: transparent}
 
-.viewer-ring::before {
+.viewer-ring::before, .viewer-ring::after, .viewer-ring > i::after, .viewer-scan::before {content: ''}
+
+.viewer-ring::before, .viewer-ring > i {
+  position: absolute;
   inset: 0;
-  background:
-    conic-gradient(var(--ink) calc(var(--share) * 1turn), transparent 0),
-    rgb(255 255 255 / 0.24);
-  mask: radial-gradient(farthest-side, transparent calc(100% - var(--w)), #000 calc(100% - var(--w) + 0.5px));
+  border-radius: 50%;
+  background: conic-gradient(var(--ink) calc(var(--share) * 1turn), transparent 0), rgb(255 255 255 / 0.24);
+  mask: var(--band);
 }
 
-.viewer-ring::after {
+.viewer-ring::after, .viewer-ring > i::after {
+  position: absolute;
   top: 0;
   left: calc(50% - var(--w) / 2);
   width: var(--w);
   height: var(--w);
-  background: var(--ink);
+  border-radius: 50%;
+  background: var(--cap);
   transform-origin: 50% 20px;
   rotate: calc(var(--share) * 1turn);
 }
 
-.viewer-ring[data-spin] {background: none; animation: ring-spin 1000ms linear infinite}
-
-.viewer-ring[data-spin]::before {
-  background:
-    conic-gradient(transparent 0 0.12turn, color-mix(in srgb, var(--ink) 20%, transparent) 0.3turn, var(--ink) 1turn),
-    rgb(255 255 255 / 0.18);
+.viewer-ring > i {
+  background: conic-gradient(transparent 0 0.12turn, color-mix(in srgb, var(--ink) 20%, transparent) 0.3turn, var(--ink) 1turn);
+  animation: ring-spin 1000ms linear infinite;
+  transition: opacity var(--dur-long) var(--ease-both);
 }
 
-.viewer-ring[data-spin]::after {rotate: 0turn}
+.viewer-ring > i::after {background: var(--ink); rotate: none}
 
-.viewer-ring[data-leaving] {opacity: 0; scale: 1.35; transition-timing-function: var(--ease)}
+.viewer-ring > i[data-leaving] {opacity: 0}
+
+.viewer-ring[data-leaving] {opacity: 0; scale: 1.35; transition-duration: 600ms, var(--dur-long), var(--dur-long), var(--dur-long); transition-timing-function: var(--ease-both)}
 
 /* [DOC: box-scan] */
 @property --turn {syntax: '<angle>'; inherits: false; initial-value: 0turn}
@@ -54,11 +63,10 @@
   position: absolute;
   pointer-events: none;
   filter: drop-shadow(0 0 2px #fff) drop-shadow(0 0 6px rgb(255 255 255 / 0.7));
-  transition: --share 600ms var(--ease), opacity var(--dur) var(--ease);
+  transition: --share 600ms var(--ease), opacity var(--dur-long) var(--ease-both);
 }
 
-.viewer-scan::before {
-  content: '';
+.viewer-scan::before, .viewer-scan > i {
   position: absolute;
   inset: -4px;
   padding: 3px;
@@ -67,82 +75,123 @@
   mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
 }
 
-.viewer-scan[data-spin]::before {
+.viewer-scan > i {
   background: conic-gradient(from var(--turn), transparent 0 0.55turn, rgb(255 255 255 / 0.15) 0.7turn, var(--on-stage) 1turn);
   animation: scan-spin 1400ms linear infinite;
+  transition: opacity var(--dur-long) var(--ease-both);
 }
 
-.viewer-scan[data-leaving] {opacity: 0}
+:is(.viewer-scan, .viewer-scan > i)[data-leaving] {opacity: 0}
 
 /* [DOC: point-busy] */
-.viewer-point:has(+ .viewer-ring:not([data-leaving])) {animation: point-busy 1600ms ease-in-out infinite alternate}
+@property --pulse {syntax: '<number>'; inherits: false; initial-value: 0}
 
-.viewer-tag {
+@property --busy {syntax: '<number>'; inherits: false; initial-value: 0}
+
+.viewer-point:has(+ .viewer-ring) {
+  --glow: calc(var(--pulse) * var(--busy));
+  box-shadow: 0 0 0 calc(var(--glow) * 4px) color-mix(in srgb, var(--button) 35%, transparent), 0 1px 4px rgb(0 0 0 / 0.5);
+  animation: point-busy 1600ms ease-in-out infinite alternate;
+  transition: scale var(--dur-spring) var(--spring-pop), opacity var(--dur) var(--ease), --busy var(--dur-long) var(--ease-both);
+}
+
+.viewer-point:has(+ .viewer-ring)::before {content: ''; position: absolute; inset: 0; border-radius: 50%; background: #fff; opacity: calc(var(--glow) * 0.45)}
+
+.viewer-point:has(+ .viewer-ring:not([data-leaving])) {--busy: 1}
+
+.viewer-tag, .viewer-memo {
   position: absolute;
-  translate: -50% 22px;
-  transform-origin: top center;
-  pointer-events: auto;
-  border-radius: var(--pill);
-  background: rgb(0 0 0 / 0.55);
+  background-color: rgb(0 0 0 / 0.55);
   backdrop-filter: blur(16px) saturate(1.6);
   -webkit-backdrop-filter: blur(16px) saturate(1.6);
   box-shadow: 0 4px 16px rgb(0 0 0 / 0.3), inset 0 0 0 0.5px rgb(255 255 255 / 0.12);
   color: #fff;
+  transition: opacity var(--dur) var(--ease), scale var(--dur-spring) var(--spring-pop), filter var(--dur-long) var(--ease-both), background-color var(--dur-long) var(--ease-both), color var(--dur-long) var(--ease-both);
+}
+
+.viewer-tag {
+  translate: -50% 22px;
+  transform-origin: top center;
+  pointer-events: auto;
+  border-radius: var(--pill);
   font-size: 13px;
   line-height: 18px;
   white-space: nowrap;
-  transition: opacity var(--dur) var(--ease), scale var(--dur-spring) var(--spring-pop), filter var(--dur-long) var(--ease);
 }
 
 .viewer-tag[data-above] {translate: -50% calc(-100% - 22px); transform-origin: bottom center}
 
-.viewer-tag[data-leaving] {opacity: 0; scale: 0.6; filter: blur(6px); pointer-events: none; transition-timing-function: var(--ease)}
+/* [DOC: tag-morph] */
+.viewer-tag[data-solid] {background-color: var(--button); color: var(--button-text)}
+
+.viewer-tag:has(button[data-lone]:active) {scale: 0.96}
+
+:is(.viewer-tag, .viewer-memo)[data-leaving] {opacity: 0; scale: 0.8; filter: blur(8px); pointer-events: none; transition-duration: var(--dur-long); transition-timing-function: var(--ease-both)}
 
 @starting-style {
-  .viewer-tag {opacity: 0; scale: 0; filter: blur(6px)}
-  .viewer-ring {opacity: 0; scale: 0}
-  .viewer-scan {opacity: 0}
+  .viewer-tag, .viewer-memo {opacity: 0; scale: 0; filter: blur(6px)}
+  .viewer-ring, .viewer-ring > i {opacity: 0}
+  .viewer-ring {scale: 0}
+  .viewer-scan, .viewer-scan > i {opacity: 0}
 }
 
-.viewer-tag-body {overflow-x: clip}
+/* [DOC: park-memo] */
+.viewer-memo {
+  width: max-content;
+  max-width: 24ch;
+  padding: 4px 10px;
+  translate: -50% calc(-100% - 22px);
+  border-radius: 10px;
+  color: rgb(255 255 255 / 0.8);
+  font-size: 12px;
+  line-height: 16px;
+  text-align: center;
+  text-wrap: balance;
+  pointer-events: none;
+}
 
-.viewer-tag-body > .swap {display: flex; align-items: center; gap: 8px; padding: 6px 12px}
+.viewer-memo[data-side='below'] {translate: -50% 22px}
+
+.viewer-memo[data-side='under'] {translate: -50% 58px}
+
+.viewer-tag-body {overflow: clip; place-items: center; place-content: center}
+
+.viewer-tag-body > .swap {display: flex; align-items: center; gap: 8px; padding: 6px 12px; animation-timing-function: var(--ease-both)}
+
+.viewer-tag-body > .swap[data-leaving] {animation-duration: var(--dur-long); animation-timing-function: var(--ease-both)}
 
 .viewer-tag-body > .swap:has(> button:only-child) {padding: 4px}
 
-.viewer-tag b {margin-left: 6px; font-weight: 600; font-variant-numeric: tabular-nums}
+.viewer-tag-body > .swap:has(> button[data-lone]) {padding: 0}
+
+.viewer-tag b {display: inline-block; margin-left: 6px; font-weight: 600; font-variant-numeric: tabular-nums; animation: enter var(--dur-long) var(--ease-both)}
 
 .viewer-tag button {
   padding: 4px 12px;
-  border: 0;
   border-radius: var(--pill);
-  background: var(--button);
+  background-color: var(--button);
   color: var(--button-text);
-  font: inherit;
   font-weight: 600;
   cursor: pointer;
   transition: background-color var(--dur-hover) var(--ease), scale var(--dur-spring) var(--spring);
 }
 
-.viewer-tag button[data-danger] {background: var(--danger)}
+.viewer-tag button[data-lone] {padding: 6px 12px; background-color: transparent; color: inherit}
+
+.viewer-tag button[data-danger] {background-color: var(--danger)}
 
 /* [DOC: crop-mode] */
-.viewer-tag-body > .swap:has(> button + button) {flex-direction: column; align-items: stretch; gap: 2px}
+.viewer-tag-body > .swap:has(> button + button) {flex-direction: column; align-items: stretch; gap: 2px; padding: 4px}
 
-.viewer-tag button[data-quiet] {background: none; color: inherit; font-weight: 500}
+.viewer-tag button[data-quiet] {background-color: transparent; color: inherit; font-weight: 500}
 
-.viewer-box[data-crop] {
-  box-shadow: 0 0 0 100vmax rgb(0 0 0 / 0.55), inset 0 0 0 1px rgb(0 0 0 / 0.45);
-  transition: left var(--dur-spring) var(--spring), top var(--dur-spring) var(--spring), width var(--dur-spring) var(--spring), height var(--dur-spring) var(--spring), box-shadow var(--dur) var(--ease);
-}
-
-.viewer-marks[data-away]:has(> [data-crop]) {opacity: 1}
-
-.viewer-tag button:active {scale: 0.94}
+.viewer-tag button:not([data-lone]):active {scale: 0.94}
 
 /* [DOC: tag-hover] */
 @media (hover: hover) and (pointer: fine) {
   .viewer-tag button:hover {background-color: color-mix(in srgb, var(--button), #fff 14%)}
+
+  .viewer-tag button[data-lone]:hover {background-color: color-mix(in srgb, var(--button-text) 8%, transparent)}
 
   .viewer-tag button[data-quiet]:hover {background-color: rgb(255 255 255 / 0.12)}
 
@@ -153,10 +202,8 @@
 
 @keyframes scan-spin {to {--turn: 1turn}}
 
-@keyframes point-busy {
-  to {background-color: color-mix(in srgb, var(--button), #fff 45%); box-shadow: 0 0 0 4px color-mix(in srgb, var(--button) 35%, transparent), 0 1px 4px rgb(0 0 0 / 0.5)}
-}
+@keyframes point-busy {to {--pulse: 1}}
 
 @media (prefers-reduced-motion: reduce) {
-  .viewer-ring[data-spin], .viewer-scan[data-spin]::before, .viewer-point {animation: none}
+  .viewer-ring > i, .viewer-scan > i, .viewer-point {animation: none}
 }

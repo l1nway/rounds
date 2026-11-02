@@ -56,6 +56,21 @@
   from {opacity: 0; filter: blur(10px); scale: 1.06}
 }
 
+/* [DOC: player-hash] */
+.viewer-hash {position: absolute; inset: 0; z-index: -1; width: 100%; height: 100%; opacity: 0; pointer-events: none; transition: opacity var(--dur-enter) var(--ease)}
+
+.viewer-stage[data-parked] > .viewer-hash {opacity: 1}
+
+.viewer-stage > :is(.viewer-video, .viewer-look) {transition: filter var(--dur-enter) var(--ease)}
+
+.viewer-stage[data-parked] > :is(.viewer-video, .viewer-look) {filter: blur(24px); transition-timing-function: var(--ease-in)}
+
+.viewer-hash ~ :is(.viewer-video, .viewer-look) {clip-path: inset(0)}
+
+@starting-style {
+  .viewer-stage[data-parked] > .viewer-hash {opacity: 0}
+}
+
 /* [DOC: look-preview] */
 .viewer-look {position: absolute; inset: 0; z-index: -2; pointer-events: none}
 
@@ -87,46 +102,6 @@
   .viewer-look > .viewer-ai {animation: none; color: #fff}
 }
 
-/* [DOC: compare] the corner of the picture, not of the letterbox */
-.viewer-compare {
-  position: absolute;
-  z-index: 1;
-  bottom: 8px;
-  right: 8px;
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: rgb(0 0 0 / 0.5);
-  color: #fff;
-  backdrop-filter: blur(8px);
-  touch-action: manipulation;
-  user-select: none;
-  -webkit-user-select: none;
-  -webkit-touch-callout: none;
-  transition: opacity var(--dur-long) var(--ease), filter var(--dur-hover, 300ms) var(--ease), scale var(--dur-long) var(--ease), background-color var(--dur-hover, 300ms) var(--ease);
-  cursor: pointer;
-}
-
-@supports (width: 1cqw) {
-  .viewer-compare {
-    bottom: calc(50cqh - min(50cqh, 50cqw / var(--aspect)) + 8px);
-    right: calc(50cqw - min(50cqw, 50cqh * var(--aspect)) + 8px);
-  }
-}
-
-.viewer-compare[aria-pressed='true'] {background: var(--button)}
-
-.viewer-compare:active {cursor: grabbing}
-
-.viewer-compare[data-leaving] {opacity: 0; filter: blur(8px); scale: 0.4}
-
-@starting-style {
-  .viewer-compare {opacity: 0; filter: blur(8px); scale: 0.4}
-}
-
-.viewer-compare svg {width: 20px; height: 20px; fill: currentColor; pointer-events: none}
 .viewer-marks {position: absolute; inset: 0; pointer-events: none; transition: opacity var(--dur) var(--ease)}
 
 .viewer-marks[data-away] {opacity: 0.3}
@@ -164,6 +139,14 @@
 
 .viewer-box[data-draft] {border-style: dashed}
 
+/* [DOC: crop-mode] */
+.viewer-box[data-crop] {
+  box-shadow: 0 0 0 100vmax rgb(0 0 0 / 0.55), inset 0 0 0 1px rgb(0 0 0 / 0.45);
+  transition: left var(--dur-spring) var(--spring), top var(--dur-spring) var(--spring), width var(--dur-spring) var(--spring), height var(--dur-spring) var(--spring), box-shadow var(--dur) var(--ease);
+}
+
+.viewer-marks[data-away]:has(> [data-crop]) {opacity: 1}
+
 /* [DOC: box-edit] */
 .viewer-corner {
   position: absolute;
@@ -192,71 +175,4 @@
   .viewer-point {scale: 0; opacity: 0}
   .viewer-box {opacity: 0}
   .viewer-spinner {opacity: 0}
-}
-
-.viewer-notice {
-  position: absolute;
-  inset: 0;
-  isolation: isolate;
-  display: grid;
-  place-content: center;
-  padding: 24px;
-  background: var(--stage);
-  text-align: center;
-  animation: appear var(--dur-long) var(--ease);
-  transition: opacity var(--dur-long) var(--ease), color var(--dur-long) var(--ease);
-}
-
-.viewer-notice[data-still] {animation: none}
-
-.viewer-notice[data-leaving] {opacity: 0}
-
-/* [DOC: notice-unveil] */
-@media (prefers-reduced-motion: no-preference) {
-  .viewer-notice[data-leaving] {animation: unveil 600ms cubic-bezier(0.4, 0, 0.2, 1) forwards; transition-delay: 600ms}
-}
-
-@keyframes unveil {
-  from {clip-path: inset(0)}
-  to {clip-path: inset(calc(50cqh - min(50cqw / var(--aspect), 50cqh)) calc(50cqw - min(50cqw, 50cqh * var(--aspect))))}
-}
-
-.viewer-notice[data-busy] {color: var(--text)}
-
-.viewer-notice-body {place-items: center; transition: opacity var(--dur-long) var(--ease)}
-
-.viewer-notice[data-leaving] .viewer-notice-body {opacity: 0}
-
-.viewer-notice-body > .swap {display: grid; justify-items: center; gap: 8px}
-
-.viewer-notice h2 {font-size: 17px}
-
-.viewer-notice p {max-width: 32ch; color: color-mix(in srgb, var(--on-stage) 72%, transparent); transition: color var(--dur-long) var(--ease)}
-
-.viewer-notice[data-busy] p {color: var(--hint)}
-
-.viewer-action {
-  min-height: var(--control);
-  margin-top: 8px;
-  padding: 0 20px;
-  border-radius: var(--radius);
-  background: var(--button);
-  color: var(--button-text);
-  transition: opacity var(--dur) var(--ease), background-color var(--dur-hover, 300ms) var(--ease);
-  cursor: pointer;
-}
-
-.viewer-action:enabled:active {cursor: grabbing}
-
-.viewer-action:disabled {opacity: 0.45; cursor: not-allowed}
-
-@media (hover: hover) and (pointer: fine) {
-  .viewer-compare:hover {
-    background-color: rgb(0 0 0 / 0.65);
-    filter: brightness(1.15);
-  }
-
-  .viewer-action:enabled:hover {
-    background-color: color-mix(in srgb, var(--button), #fff 12%);
-  }
 }

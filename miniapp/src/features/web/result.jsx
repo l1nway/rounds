@@ -43,6 +43,45 @@ function Card({title, host, origin, open, children}) {
   return <section ref={el => {card.current = el; host(el)}} className='web-card' role='dialog' aria-modal='true' aria-label={title}>{children}</section>
 }
 
+// [DOC: web-progress]
+const EASE = 180
+const CREEP = 0.03
+const quiet = () => matchMedia('(prefers-reduced-motion: reduce)').matches
+
+function Bar({share}) {
+  const bar = useRef(null), text = useRef(null), [first] = useState(share)
+  const state = useRef({shown: share, target: share, step: 0, rate: 0, at: 0, last: 0, frame: 0, tick: null})
+  const paint = value => {bar.current.value = value; text.current.textContent = percent.format(value)}
+
+  useLayoutEffect(() => {
+    const s = state.current
+    paint(s.shown)
+    s.tick = now => {
+      s.frame = 0
+      const cap = s.target >= 1 ? 0 : Math.min(s.step * 0.9, CREEP), creep = Math.min(s.rate * (now - s.at), cap), goal = s.target + creep
+      s.shown = Math.max(s.shown, s.shown + (goal - s.shown) * (1 - Math.exp(-(now - s.last) / EASE)))
+      s.last = now
+      paint(s.shown)
+      if (goal - s.shown > 0.0005 || creep < cap) s.frame = requestAnimationFrame(s.tick)
+    }
+    return () => cancelAnimationFrame(s.frame)
+  }, [])
+
+  useLayoutEffect(() => {
+    const s = state.current, now = performance.now()
+    if (share < s.target - 0.3) Object.assign(s, {shown: share, target: share, step: 0, rate: 0})
+    if (share > s.target) {
+      const rate = (share - s.target) / Math.max(1, now - s.at)
+      Object.assign(s, {step: share - s.target, rate: s.rate ? (s.rate + rate) / 2 : rate, target: share})
+    }
+    s.at = now
+    if (quiet()) {s.shown = s.target; paint(s.shown); return}
+    if (!s.frame) {s.last = now; s.frame = requestAnimationFrame(s.tick)}
+  }, [share])
+
+  return <><progress ref={bar} value={first} max={1}/><p ref={text} className='web-size'/></>
+}
+
 function Done({result: {blob, url, name, silent, remote, again, dropped = []}, user, onClose, onAnother, host, open}) {
   const online = useOnline()
   const [{sending, sent, held, error}, dispatch] = useReducer(merge, {sending: false, sent: false, held: false, error: null})
@@ -115,7 +154,7 @@ const keyOf = active => {
   if (!active) return null
   if (active.kind === 'crash') return `crash:${active.crash}`
   if (active.kind === 'consent') return `consent:${active.consent.kind}:${active.consent.bytes}`
-  if (active.kind === 'work') return `work:${active.work.text}:${active.work.share}`
+  if (active.kind === 'work') return `work:${active.work.text}`
   if (active.kind === 'done') return `done:${active.result.url ?? 'remote'}`
   return null
 }
@@ -139,7 +178,7 @@ export default function Result({work, result, consent, crash, user, onClose, onA
     work: () => (
       <Card host={host} origin='work' open={open} title='Working'>
         <p role='status'>{item.work.text}</p>
-        {item.work.share !== undefined && <><progress value={item.work.share} max={1}/><p className='web-size'>{percent.format(item.work.share)}</p></>}
+        {item.work.share !== undefined && <Bar share={item.work.share}/>}
       </Card>
     ),
     done: () => <Done host={host} open={open} key={item.result.url ?? 'server'} result={item.result} user={user} onClose={onClose} onAnother={onAnother}/>

@@ -6,7 +6,7 @@ const FEATHER = 8
 const RIM = 1
 const DISC_SAFE = 0.98
 // [DOC: motion-budget]
-export const BUDGET = {reach: 0.5, canvas: 4096}
+export const BUDGET = {reach: 0.5, frames: 30, canvas: 4096}
 
 const inverse = ([a, b, c, d, e, f]) => {
   const det = a * e - b * d
@@ -26,27 +26,29 @@ const nearest = (t, s) => {
 }
 
 // [DOC: local-fill]
-export const createFill = (g, {size, rate, n, world, base, start = 0, times = Array.from({length: n}, (_, i) => (start + i) / rate)}) => {
+export const createFill = (g, {size, rate, n, world, base, start = 0, times = Array.from({length: n}, (_, i) => (start + i) / rate), columns = g.max}) => {
   const {gl} = g, run = Object.fromEntries(Object.entries(SHADERS).map(([key, text]) => [key, g.program(text)]))
-  const fps = rate ?? (n - 1) / Math.max(times[n - 1] - times[0], 1e-6), reach = Math.max(1, Math.ceil(BUDGET.reach * fps)), slots = 2 * reach + 1, [fw, fh] = world.size
+  const fps = rate ?? (n - 1) / Math.max(times[n - 1] - times[0], 1e-6), [fw, fh] = world.size
+  const reach = Math.min(Math.max(1, Math.ceil(BUDGET.reach * fps)), BUDGET.frames), slots = 2 * reach + 1
   const rows = times.map(s => base(s * FPS))
   const inv = times.map(s => inverse(matrix(world.p[nearest(world.t, s)], world.size)))
-  const table = new Float32Array(n * 12)
+  const pw = Math.min(n, columns), blocks = Math.ceil(n / pw), table = new Float32Array(pw * 3 * blocks * 4)
   rows.forEach((row, i) => {
-    table.set([row[0], row[1], row[2], 0], 4 * i)
-    table.set([...inv[i].slice(0, 3), 0], 4 * (n + i))
-    table.set([...inv[i].slice(3), 0], 4 * (2 * n + i))
+    const at = r => 4 * ((3 * Math.floor(i / pw) + r) * pw + i % pw)
+    table.set([row[0], row[1], row[2], 0], at(0))
+    table.set([...inv[i].slice(0, 3), 0], at(1))
+    table.set([...inv[i].slice(3), 0], at(2))
   })
-  const params = g.texture(n, 3, gl.RGBA32F)
-  g.upload(params, {data: table}, n, 3)
+  const params = g.texture(pw, 3 * blocks, gl.RGBA32F)
+  g.upload(params, {data: table}, pw, 3 * blocks)
   const lo = [0, 1].map(a => Math.min(...rows.map(r => r[a] - r[2] / 2))), hi = [0, 1].map(a => Math.max(...rows.map(r => r[a] + r[2] / 2)))
-  const scale = Math.min(size / median(rows.map(r => r[2])), BUDGET.canvas / Math.max(hi[0] - lo[0], hi[1] - lo[1]))
+  const scale = Math.min(size / median(rows.map(r => r[2])), Math.min(BUDGET.canvas, g.max - 1) / Math.max(hi[0] - lo[0], hi[1] - lo[1]))
   const csize = [0, 1].map(a => Math.ceil((hi[a] - lo[a]) * scale) + 1)
   const canvas = g.texture(...csize, gl.RGBA16F), ring = g.texture(size, size, g.format, slots)
   const [good, boxed, keep, out, a, b] = Array.from({length: 6}, () => g.texture(size, size))
   const donors = g.texture(2 * reach, 1, gl.RGBA32F), levels = [a], rests = [null]
   for (let s = size; s > 2;) {s = Math.ceil(s / 2); levels.push(g.texture(s, s)); rests.push(g.texture(s, s))}
-  const common = {frame: ['2f', fw, fh], disc: ['1i', world.disc ? 1 : 0], size: ['1f', size], rim: ['1f', RIM], safe: ['1f', DISC_SAFE]}
+  const common = {pw: ['1i', pw], frame: ['2f', fw, fh], disc: ['1i', world.disc ? 1 : 0], size: ['1f', size], rim: ['1f', RIM], safe: ['1f', DISC_SAFE]}
   const inputs = extra => ({params, ...extra})
   const bad = i => [0, size - 1].some(qx => [0, size - 1].some(qy => {
     const [x, y, side] = rows[i], v = [(qx + 0.5) / size - 0.5, (qy + 0.5) / size - 0.5], m = inv[i]

@@ -59,8 +59,9 @@ export const flows = async (track, {width: w, height: h}, start, end, onProgress
   let first = null, last = null, mask = null
   try {
     for await (const sample of new VideoSampleSink(track).samples(start, end)) {
-      const i = t.length
-      t.push(sample.timestamp - start)
+      const from = Math.max(start, sample.timestamp), to = Math.min(end, sample.timestamp + sample.duration), i = t.length
+      if (from >= to) {sample.close(); continue}
+      t.push(from - start)
       sample.drawWithFit(ctx, {fit: 'fill'})
       sample.close()
       const rgba = ctx.getImageData(0, 0, sw, sh).data, img = new Uint8Array(sw * sh)

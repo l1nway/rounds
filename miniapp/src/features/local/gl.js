@@ -10,11 +10,18 @@ layout(location = 0) out vec4 color;
 const OPTIONS = {alpha: false, depth: false, stencil: false, antialias: false, premultipliedAlpha: false, preserveDrawingBuffer: true}
 
 // [DOC: local-gl]
+export const canStabilize = () => {
+  const gl = new OffscreenCanvas(1, 1).getContext('webgl2', OPTIONS)
+  const ok = Boolean(gl?.getExtension('EXT_color_buffer_float') || gl?.getExtension('EXT_color_buffer_half_float'))
+  gl?.getExtension('WEBGL_lose_context')?.loseContext()
+  return ok
+}
+
 export const glOf = (canvas, half = true) => {
   const gl = canvas.getContext('webgl2', OPTIONS)
   const full = gl?.getExtension('EXT_color_buffer_float'), halfOk = full || gl?.getExtension('EXT_color_buffer_half_float')
   if (!gl || !(half ? halfOk : full) || gl.isContextLost()) return null
-  const T = gl.TEXTURE_2D, format = half ? gl.RGBA16F : gl.RGBA32F
+  const T = gl.TEXTURE_2D, format = half ? gl.RGBA16F : gl.RGBA32F, max = gl.getParameter(gl.MAX_TEXTURE_SIZE)
   const SIZES = {[gl.RGBA16F]: 8, [gl.RGBA32F]: 16, [gl.R32F]: 4, [gl.RGBA8]: 4}
   let bytes = 0
 
@@ -33,10 +40,12 @@ export const glOf = (canvas, half = true) => {
   }
 
   const texture = (w, h, kind = format, layers = 0) => {
+    if (w > max || h > max) throw new Error(`This video is too large for the graphics card (${Math.max(w, h)} px, limit ${max})`)
     const tex = gl.createTexture(), target = layers ? gl.TEXTURE_2D_ARRAY : T
     gl.bindTexture(target, tex)
     if (layers) gl.texStorage3D(target, 1, kind, w, h, layers)
     else gl.texStorage2D(T, 1, kind, w, h)
+    if (gl.getError() !== gl.NO_ERROR) {gl.deleteTexture(tex); throw new Error('The graphics card ran out of memory for stabilization')}
     for (const key of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(target, key, gl.NEAREST)
     for (const key of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(target, key, gl.CLAMP_TO_EDGE)
     bytes += w * h * SIZES[kind] * (layers || 1)
@@ -91,5 +100,5 @@ export const glOf = (canvas, half = true) => {
     return out
   }
 
-  return {gl, format, program, texture, grow, free, pass, upload, read, bytes: () => bytes}
+  return {gl, format, max, program, texture, grow, free, pass, upload, read, bytes: () => bytes}
 }

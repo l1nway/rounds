@@ -6,8 +6,13 @@ const READ = 0.25
 
 const GUARD = 'rounds.track-guard'
 const NO_GPU = 'rounds.no-gpu'
+// [DOC: speed-gate]
+const FAST_LIFT = 800
+// [DOC: light-memory]
+const ROOMY_GB = 8
 
 let device = null
+let pace = Infinity
 
 // [DOC: local-device]
 const tabStore = () => {try {return sessionStorage} catch {return null}}
@@ -31,6 +36,12 @@ if (typeof document === 'object') {
 
 export const preferCpu = () => {tabStore()?.setItem(NO_GPU, '1'); device = null}
 
+// [DOC: speed-gate]
+export const notePace = ms => {pace = Math.min(pace, ms)}
+export const fast = () => !matchMedia(TOUCH).matches || pace <= FAST_LIFT
+// [DOC: light-memory]
+export const roomy = () => (navigator.deviceMemory ?? 0) >= ROOMY_GB
+
 export const deviceOf = () => device ??= (async () => {
   const adapter = tabStore()?.getItem(NO_GPU) ? null : await navigator.gpu?.requestAdapter().catch(() => null)
   return {gpu: Boolean(adapter && !adapter.info?.isFallbackAdapter), wasm: typeof WebAssembly === 'object'}
@@ -38,17 +49,20 @@ export const deviceOf = () => device ??= (async () => {
 
 // [DOC: model-worker]
 let worker = null
+let touched = false
 let seq = 0
 const calls = new Map()
 const groups = new Map()
 
+// [DOC: gpu-teardown]
 const fail = error => {
-  worker?.terminate()
-  worker = null
+  if (touched) worker?.postMessage({type: 'drop'})
+  else {worker?.terminate(); worker = null}
   groups.clear()
   calls.forEach(({reject}) => reject(error))
   calls.clear()
 }
+const restart = () => fail(new Error('Model is not loaded'))
 
 const spawn = () => {
   worker = new Worker(new URL('./model-worker.js', import.meta.url), {type: 'module'})
@@ -71,17 +85,24 @@ export const call = (payload, transfer = [], onShare) => new Promise((resolve, r
 })
 
 // [DOC: one-model]
+export const release = () => {if (matchMedia(TOUCH).matches) restart()}
+
 export const ready = (group, names, options = {}) => {
   if (groups.has(group)) {options.onLoaded?.(); return groups.get(group)}
   const prepare = (from, to) => share => options.onPrepare?.(from + share * (to - from))
   const task = (async () => {
-    const [{gpu}, loaded] = await Promise.all([deviceOf(), loadModels(names, {...options, onRead: prepare(0, READ)})])
+    const [found, loaded] = await Promise.all([deviceOf(), loadModels(names, {...options, onRead: prepare(0, READ)})])
+    const touch = matchMedia(TOUCH).matches, gpu = found.gpu && !options.cpu, solo = touch && !options.shared
+    const others = [...groups.keys()].filter(other => other !== group)
+    // [DOC: gpu-teardown]
+    if (solo && others.length) {if (touched) others.forEach(other => groups.delete(other)); else restart(); groups.set(group, task)}
     if (!worker) spawn()
-    const touch = matchMedia(TOUCH).matches
-    if (touch) for (const other of groups.keys()) if (other !== group) {groups.delete(other); call({type: 'drop', group: other}).catch(() => {})}
     const bufs = names.map(name => loaded[name])
     backend = gpu ? 'gpu' : 'wasm'
-    const result = await call({type: 'load', group, bufs, gpu, keep: !touch}, bufs, prepare(READ, 1))
+    touched ||= gpu
+    const result = await call({type: 'load', group, bufs, gpu, keep: !touch, solo, cache: touch ? options.cache : undefined}, bufs, prepare(READ, 1))
+    backend = result.gpu ? 'gpu' : 'wasm'
+    if (result.reason && import.meta.env.DEV) console.warn('WebGPU failed, running on the processor:', result.reason)
     options.onLoaded?.()
     return result
   })()

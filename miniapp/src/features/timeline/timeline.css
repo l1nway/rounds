@@ -8,7 +8,11 @@
   grid-template-rows: calc((var(--clock) + var(--label)) * 1.35) auto auto;
   gap: 6px;
   padding: 8px 16px 0;
+  transition: opacity var(--dur-enter) var(--ease);
 }
+
+/* [DOC: timeline-parked] */
+.timeline[inert] {opacity: 0.45}
 
 .timeline-track {grid-row: 2}
 

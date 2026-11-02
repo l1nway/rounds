@@ -116,9 +116,10 @@ export default memo(function Timeline({job, start, end, time, dispatch, readOnly
   }
 
   const loaded = usePlayer(state => state.loaded)  // [DOC: trim-reveal]
+  const parked = usePlayer(state => state.parked)  // [DOC: timeline-parked]
   const film = job?.filmstrip ?? {}
   return (
-    <section className='timeline' aria-label='Trim' style={{'--strip': `${STRIP}px`}}>
+    <section className='timeline' aria-label='Trim' inert={parked || undefined} style={{'--strip': `${STRIP}px`}}>
       {/* [DOC: timeline-loading] */}
       {job && (
         <div className='timeline-head enter'>

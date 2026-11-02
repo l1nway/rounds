@@ -1,7 +1,7 @@
 import {useLayoutEffect, useRef, useState} from 'react'
 import {useLeave} from '../hooks/state.js'
 
-const RESIZE = {duration: 400, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)'}
+const RESIZE = {duration: 400, easing: 'cubic-bezier(0.4, 0, 0.2, 1)'}
 
 function Item({n, text, on, still, onGone, as: Tag, render}) {
   const [done] = useState(() => () => onGone(n))
@@ -18,16 +18,23 @@ export default function Swap({as: Tag = 'span', item = 'span', text, children, r
   }
   const [gone] = useState(() => n => setState(prev => ({...prev, items: prev.items.filter(entry => entry.n !== n)})))
   const box = useRef(null)
-  const width = useRef(0)
+  const size = useRef(null)
   // [DOC: swap-resize]
   useLayoutEffect(() => {
     const el = box.current
     if (!resize || !el) return
-    const running = el.getAnimations()
-    const from = running.length ? el.offsetWidth : width.current
-    running.forEach(animation => animation.cancel())
-    const to = width.current = el.offsetWidth
-    if (from && from !== to && !matchMedia('(prefers-reduced-motion: reduce)').matches) el.animate({width: [`${from}px`, `${to}px`]}, RESIZE)
+    const fit = () => {
+      const running = el.getAnimations()
+      const from = running.length ? [el.offsetWidth, el.offsetHeight] : size.current
+      running.forEach(animation => animation.cancel())
+      const to = size.current = [el.offsetWidth, el.offsetHeight]
+      if (!from || (from[0] === to[0] && from[1] === to[1]) || matchMedia('(prefers-reduced-motion: reduce)').matches) return
+      el.animate({width: [`${from[0]}px`, `${to[0]}px`], height: [`${from[1]}px`, `${to[1]}px`]}, RESIZE)
+    }
+    fit()
+    const watch = new ResizeObserver(fit)
+    for (const child of el.children) watch.observe(child)
+    return () => watch.disconnect()
   }, [resize, state.items])
   const last = state.items.at(-1)
   if (!last) return null

@@ -6,6 +6,9 @@ const V_BASE = `https://huggingface.co/diffusionstudio/sam2.1-tiny-video-onnx-fp
 const E_BASE = 'https://huggingface.co/chongzhou/EdgeSAM/resolve/e0564124628944e1622973d4e0f68158b46f035a'
 const SAM = 'SAM 2.1 Tiny (Meta Segment Anything 2.1)'
 const EDGE_SAM = 'EdgeSAM (S-Lab, Nanyang Technological University, non-commercial licence)'
+const QUIET = 1_000_000
+// [DOC: light-track]
+const ZOO = 'https://huggingface.co/opencv/opencv_zoo/resolve/39a1451d0f9b23fc4ebaed06a277127efa0374d0/models'
 
 // [DOC: edge-sam-cast]
 const INT16_CAST = [0x0a, 0x02, 0x74, 0x6f, 0x18, 0x05]
@@ -70,6 +73,12 @@ export const MODELS = {
     url: `${V_BASE}/pointer_tpos.onnx`,
     bytes: 34_228,
     sha256: '3ab5bfce40ed01208301b2d8f596b9c9f7f493dcd7e09ef01ec22e5be3694bd7'
+  },
+  'vit-track': {
+    name: 'vit-track', credit: 'VitTrack (OpenCV Zoo, Apache 2.0)',
+    url: `${ZOO}/object_tracking_vittrack/object_tracking_vittrack_2023sep.onnx`,
+    bytes: 714_726,
+    sha256: '2990f0b7cd44d92afa48cd97db6de7be113fc1d9594fddb74e2725c10478e91d'
   }
 }
 
@@ -111,7 +120,7 @@ export const loadModels = (names, {confirm, onProgress, onReady, onRead} = {}) =
   const run = async () => {
     const cache = await openCache()
     // [DOC: model-ready]
-    const stored = await Promise.all(names.map(name => memory.has(name) || cache?.match(MODELS[name].url).then(Boolean, () => false)))
+    const stored = await Promise.all(names.map(name => memory.has(name) || cache?.keys(MODELS[name].url).then(list => list.length > 0, () => false)))
     if (stored.every(Boolean)) onReady?.()
     const loaded = {}
     const missing = []
@@ -126,7 +135,8 @@ export const loadModels = (names, {confirm, onProgress, onReady, onRead} = {}) =
     if (!missing.length) return patched()
     if (!navigator.onLine) throw new Error('Offline: model download needs a connection')
     const total = missing.reduce((sum, item) => sum + item.bytes, 0)
-    if (confirm && missing.some(item => !approved.has(item.name))) {
+    // [DOC: quiet-download]
+    if (confirm && total >= QUIET && missing.some(item => !approved.has(item.name))) {
       if (!await confirm({bytes: total, models: missing})) throw new Error('Model download declined')
       missing.forEach(item => approved.add(item.name))
     }
