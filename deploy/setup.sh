@@ -9,6 +9,8 @@ VOICE=https://github.com/Rikorose/DeepFilterNet/releases/download/v0.5.6/deep-fi
 # [DOC: oracle-weights]
 DCE=https://raw.githubusercontent.com/Li-Chongyi/Zero-DCE_extension/09f202b690f82da939b8e6ec8535960ae97ad8bd/Zero-DCE%2B%2B/snapshots_Zero_DCE%2B%2B/Epoch99.pth
 DCE_SHA=ca8855b90df9a80fa4195a831f33d3476b1964f787eb70602797c773067f3b84
+VIT=https://huggingface.co/opencv/opencv_zoo/resolve/39a1451d0f9b23fc4ebaed06a277127efa0374d0/models/object_tracking_vittrack/object_tracking_vittrack_2023sep.onnx
+VIT_SHA=2990f0b7cd44d92afa48cd97db6de7be113fc1d9594fddb74e2725c10478e91d
 
 sudo apt-get update
 sudo apt-get install -y curl xz-utils debian-keyring debian-archive-keyring apt-transport-https netfilter-persistent
@@ -22,6 +24,7 @@ rm /tmp/ffmpeg.tar.xz
 sudo curl -fsSL -o /usr/local/bin/deep-filter "$VOICE" && sudo chmod +x /usr/local/bin/deep-filter
 ffmpeg -hide_banner -version | head -1 && deep-filter --version
 sudo curl -fsSL --create-dirs -o /opt/repair/zerodce.pth "$DCE" && echo "$DCE_SHA  /opt/repair/zerodce.pth" | sha256sum -c
+sudo curl -fsSL --create-dirs -o /opt/track/vittrack.onnx "$VIT" && echo "$VIT_SHA  /opt/track/vittrack.onnx" | sha256sum -c
 
 command -v uv || curl -LsSf https://astral.sh/uv/install.sh | sh
 "$HOME/.local/bin/uv" sync --project "$REPO/backend" --no-dev

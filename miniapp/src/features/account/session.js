@@ -4,14 +4,14 @@ const SESSION = 'rounds-session'
 export const REDIRECT = location.origin + location.pathname
 export const RETURNED = /[?&](code|error)=/.test(location.search)
 const MESSAGE = 'rounds-login'
-const WINDOW = 'rounds-telegram-login'
+export const WINDOW = 'rounds-telegram-login'
 const SIZE = {width: 550, height: 650}
 const TEXTS = {
   cancelled: 'Telegram did not sign you in. Try again.',
   stale: 'This sign-in expired. Try again.',
-  blocked: 'Your browser blocked the Telegram window. Allow pop-ups for this site and try again.',
+  blocked: 'Your browser blocked the Telegram window.',
   failed: 'Could not open Telegram. Try again.',
-  done: 'Signed in. You can close this window.'
+  done: 'Signed in. You can close this tab and go back to Rounds.'
 }
 
 const base64url = bytes => btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
@@ -28,26 +28,31 @@ export const tierOf = user => user ? user.tier ?? 'free' : 'local'
 authorize(() => `web ${session()?.token}`)
 
 // [DOC: popup-login]
-let pending = null
+let pending = null, ready = null
 
 const features = () => {
+  if (matchMedia('(pointer: coarse)').matches) return ''
   const left = Math.max(0, (screen.width - SIZE.width) / 2) + (screen.availLeft | 0)
   const top = Math.max(0, (screen.height - SIZE.height) / 2) + (screen.availTop | 0)
   return `popup,width=${SIZE.width},height=${SIZE.height},left=${left},top=${top}`
 }
 
-const url = async () => {
+const prepare = async () => {
   const verifier = random(32), state = random(16)
   const challenge = base64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)))
-  pending = {verifier, state}
-  return `${API}/api/auth/start?${new URLSearchParams({redirect: REDIRECT, challenge, state})}`
+  ready = {verifier, state, url: `${API}/api/auth/start?${new URLSearchParams({redirect: REDIRECT, challenge, state})}`}
 }
 
+if (API && !RETURNED) prepare()
+
+export const link = () => pending?.url
+
 export const begin = () => {
-  if (!API) throw new Error(TEXTS.failed)
-  const popup = open('about:blank', WINDOW, features())
+  if (!ready) throw new Error(TEXTS.failed)
+  pending = ready
+  prepare()
+  const popup = open(pending.url, WINDOW, features())
   if (!popup) throw new Error(TEXTS.blocked)
-  url().then(next => popup.location.replace(next), () => popup.close())
   return popup
 }
 

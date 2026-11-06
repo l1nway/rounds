@@ -117,7 +117,10 @@ export const step = async ([net], {rgba, width, height}) => {
   if (score < MIN_SCORE) {Object.assign(state, {lost: true, hit: null}); return {...found(rect, width, height, rgba, false), score}}
   const x0 = rect.x + Math.trunc((rect.w - crop) / 2), y0 = rect.y + Math.trunc((rect.h - crop) / 2)
   const px = (best % GRID + offset[best]) / GRID * crop + x0, py = (Math.trunc(best / GRID) + offset[plane + best]) / GRID * crop + y0
-  if (state.lost) return {...found(state.rect, width, height, rgba, relock(rect, px, py, score, width, height)), score}
+  if (state.lost) {
+    const back = relock(rect, px, py, score, width, height)
+    return {...found(state.rect, width, height, rgba, back), score}
+  }
   const w = grow(rect.w, size[best] * crop), h = grow(rect.h, size[plane + best] * crop)
   state.rect = clip({x: Math.floor(px - w / 2), y: Math.floor(py - h / 2), w: Math.floor(w), h: Math.floor(h)}, width, height)
   if (state.scores.length < REF_STEPS) {state.scores.push(score); state.ref = median(state.scores)}

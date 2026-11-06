@@ -76,17 +76,18 @@ html {scrollbar-gutter: stable; touch-action: manipulation; -webkit-text-size-ad
 
 .icon-button svg {width: 22px; height: 22px; fill: currentColor}
 
+/* [DOC: spinner] */
 .spinner {
+  display: block;
   width: 34px;
   height: 34px;
-  border: 3px solid currentColor;
-  border-right-color: transparent;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+  background: currentColor;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' stroke='%23000' stroke-width='10' stroke-linecap='round'%3E%3Cpath d='M50 9v17'/%3E%3Cpath d='M50 9v17' opacity='.27' transform='rotate(45 50 50)'/%3E%3Cpath d='M50 9v17' opacity='.32' transform='rotate(90 50 50)'/%3E%3Cpath d='M50 9v17' opacity='.38' transform='rotate(135 50 50)'/%3E%3Cpath d='M50 9v17' opacity='.47' transform='rotate(180 50 50)'/%3E%3Cpath d='M50 9v17' opacity='.58' transform='rotate(225 50 50)'/%3E%3Cpath d='M50 9v17' opacity='.7' transform='rotate(270 50 50)'/%3E%3Cpath d='M50 9v17' opacity='.85' transform='rotate(315 50 50)'/%3E%3C/svg%3E") center / contain no-repeat;
+  animation: spin 1s steps(8) infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .spinner {animation-duration: 2.4s}
+  .spinner {animation-duration: 3s}
 }
 
 @keyframes spin {

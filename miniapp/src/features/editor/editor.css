@@ -104,7 +104,7 @@
 
 .editor-submit[aria-busy] > :first-child {visibility: hidden}
 
-.editor-submit .spinner {width: 24px; height: 24px; border-width: 2px}
+.editor-submit .spinner {width: 24px; height: 24px}
 
 /* [DOC: split-layout] */
 .editor[data-split] {grid-template: auto 1fr auto / minmax(0, 1fr) 380px; max-width: none; padding-bottom: var(--safe-bottom)}

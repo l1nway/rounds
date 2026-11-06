@@ -11,15 +11,17 @@
   place-items: center;
   width: var(--control);
   height: var(--control);
-  overflow: hidden;
   border-radius: 50%;
-  background: var(--button);
   color: var(--button-text);
   font-weight: 600;
   text-transform: uppercase;
-  transition: opacity var(--dur) var(--ease), scale var(--dur) var(--ease), background-color var(--dur-hover, 300ms) var(--ease);
+  transition: opacity var(--dur) var(--ease), scale var(--dur) var(--ease), color var(--dur-long) var(--ease-both);
   cursor: pointer;
 }
+
+.account-button[data-user] {color: var(--text)}
+
+.account-button > * {grid-area: 1 / 1}
 
 .account-button:disabled {opacity: 0.4; cursor: not-allowed}
 
@@ -27,51 +29,100 @@
 
 .account-button svg {width: 22px; height: 22px; fill: currentColor}
 
-.account-button img {width: 100%; height: 100%; object-fit: cover}
+.account-button .spinner {width: 22px; height: 22px}
 
-.account-panel {
+/* [DOC: account-faces] */
+.account-disc, .account-photo {width: 100%; height: 100%; border-radius: 50%}
+
+.account-disc {
+  background: var(--button);
+  animation: enter var(--dur-long) var(--ease);
+  transition: background-color var(--dur-long) var(--ease-both);
+}
+
+.account-disc[data-still] {animation: none}
+
+.account-button[data-user] .account-disc {background: var(--surface)}
+
+.account-disc[data-leaving] {animation: account-dissolve var(--dur-long) var(--ease-both) forwards}
+
+.account-photo {object-fit: cover; opacity: 0}
+
+.account-photo[data-shown] {opacity: 1; animation: account-bloom var(--dur-spring) var(--spring)}
+
+.account-photo[data-leaving] {animation: leave var(--dur-long) var(--ease-both) forwards}
+
+@keyframes account-dissolve {
+  to {opacity: 0; filter: blur(6px); scale: 1.4}
+}
+
+@keyframes account-bloom {
+  from {opacity: 0; filter: blur(8px); scale: 0.5}
+}
+
+/* [DOC: account-panel] */
+.account-holder {
   position: absolute;
   top: calc(var(--control) + 8px);
   left: 0;
+  filter: drop-shadow(0 8px 16px color-mix(in srgb, var(--stage) 35%, transparent));
+}
+
+.account-panel {
   display: grid;
   justify-items: center;
   align-content: center;
-  overflow: hidden;
+  margin: 0;
   border-radius: var(--radius);
   background: var(--surface);
-  box-shadow: 0 8px 32px color-mix(in srgb, var(--stage) 35%, transparent);
-  animation: enter var(--dur-long) var(--ease);
+  animation: account-open var(--dur-spring) var(--spring);
 }
 
-.account-button .spinner {width: 22px; height: 22px}
+.account-panel > * {animation: enter var(--dur-long) var(--ease) 80ms backwards}
 
-.account-error {width: min(280px, calc(100vw - 24px)); gap: 8px; margin: 0; padding: 16px; color: var(--danger); text-align: center}
+.account-panel[data-leaving] {animation: account-close var(--dur-long) var(--ease-both) forwards; pointer-events: none}
 
-.account-error button, .account-menu button {
+.account-panel[data-leaving] > * {animation: leave var(--dur) var(--ease) forwards}
+
+@keyframes account-open {
+  from {clip-path: inset(0 100% 100% 0 round var(--radius)); opacity: 0}
+  to {clip-path: inset(0 round var(--radius))}
+}
+
+@keyframes account-close {
+  from {clip-path: inset(0 round var(--radius))}
+  to {clip-path: inset(0 100% 100% 0 round var(--radius)); opacity: 0}
+}
+
+.account-panel[data-error] {width: min(280px, calc(100vw - 24px)); gap: 8px; padding: 16px; color: var(--danger); text-align: center}
+
+:is(.account-panel[data-error], .account-panel[role='menu']) :is(button, a) {
+  display: grid;
+  align-items: center;
   min-height: var(--control);
   padding: 0 16px;
   color: var(--link);
+  text-decoration: none;
   cursor: pointer;
   transition: background-color var(--dur-hover, 300ms) var(--ease);
 }
 
-.account-error button:active, .account-menu button:active {cursor: grabbing}
+.account-panel :is(button, a):active {cursor: grabbing}
 
-.account-menu {gap: 2px; min-width: 180px; padding: 12px 8px 4px; justify-items: stretch}
+.account-panel[role='menu'] {gap: 2px; min-width: 180px; padding: 12px 8px 4px; justify-items: stretch}
 
-.account-menu strong, .account-menu small {padding-inline: 8px}
+.account-panel[role='menu'] :is(strong, small) {padding-inline: 8px}
 
-.account-menu small {color: var(--hint)}
+.account-panel[role='menu'] small {color: var(--hint)}
 
-.account-menu button {text-align: left}
+.account-panel[role='menu'] button {text-align: left}
 
 @media (hover: hover) and (pointer: fine) {
-  .account-button:enabled:hover {
+  .account-button:enabled:not([data-user]):hover .account-disc {
     background-color: color-mix(in srgb, var(--button), #fff 12%);
   }
 
-  .account-error button:hover,
-  .account-menu button:hover {
+  .account-panel :is(button, a):hover {
     background-color: color-mix(in srgb, var(--link) 12%, transparent);
     border-radius: var(--radius);
   }

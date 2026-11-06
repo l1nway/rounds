@@ -12,6 +12,8 @@ DSTNET_WEIGHTS = '/opt/deblur/dstnetplus_l_gopro.pth'
 FLASHVSR_CODE = '/opt/flashvsr'
 DEEP_FILTER = '/usr/local/bin/deep-filter'
 SAM_MODEL = 'facebook/sam2.1-hiera-large'
+VIT_WEIGHTS = '/opt/track/vittrack.onnx'  # [DOC: vit-track]
+VIT_SHA = '2990f0b7cd44d92afa48cd97db6de7be113fc1d9594fddb74e2725c10478e91d'
 
 
 def env(name: str, default: str = '') -> str:
