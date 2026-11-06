@@ -60,8 +60,8 @@ Known bugs and open questions that are not being worked on right now. Each entry
 
 ## Browser version: unverified paths
 
-- Open (2026-10-28, the editor in the browser): only the local render was run end to end (headless Edge, software AV1, hardware hint stripped). Not run: the sign-in in an iframe against the real Telegram, a local render on a real browser with its own encoders (software AV1 speed, Firefox's codecs), the server path (upload, ingest, render from the browser), sending a local round to the chat (`POST /api/notes`) and the Mini App on a device after the editor moved into a shared chunk.
-- Known: details and what each depends on are in `miniapp/src/features/account/README.md` (Frame login: Telegram may refuse framing, then the sign-in goes back to a redirect), `features/local/README.md` (Local encoders, Local size, Local server) and `features/web/README.md` (Web shell: signing in resets the draft).
+- Open (2026-10-28, the editor in the browser): only the local render was run end to end (headless Edge, software AV1, hardware hint stripped). Not run: the sign-in popup against the real Telegram, a local render on a real browser with its own encoders (software AV1 speed, Firefox's codecs), the server path (upload, ingest, render from the browser), sending a local round to the chat (`POST /api/notes`) and the Mini App on a device after the editor moved into a shared chunk.
+- Known: details and what each depends on are in `miniapp/src/features/account/README.md` (Popup login: the round trip on a device), `features/local/README.md` (Local encoders, Local size, Local server) and `features/web/README.md` (Web shell: signing in resets the draft).
 - Also unverified (2026-10-28): the pro promote (background upload to Modal, job swap with the draft kept), the Oracle-first render for an allowed user (`?via=oracle` in the router, a second upload), HDR detection (`hasHighDynamicRange()` on a real iPhone HLG clip) and the Retry buttons. Nothing of this ran against a real server; the router change is not deployed (paste `router/worker.js` in the dashboard).
 - Also open: the Oracle VM's `.env` must carry the same `ALLOWED_USER_IDS` as Modal's, or an allowed user signs in as `free`; an older stored session has no tier (reads `free`) until the user signs in again.
 - Closes when: the owner opens the deployed page, signs in (anonymous, a normal user and an allowed one), renders a round locally with a GPU encoder, one through the server path, and sends one to the chat.
@@ -77,6 +77,11 @@ Known bugs and open questions that are not being worked on right now. Each entry
 
 - Open (2026-10-30): when a render fails, `crop.render` and `render.render` call `first.kill()` on the first-pass FFmpeg without `wait()`. On Windows the dying process can still hold `pass-0.log`, so cleaning up the temp directory raised `PermissionError` once, and one test that reused a temp directory hung for 300 s (not reproduced in two reruns). Linux (Oracle, Modal) deletes open files, so production is probably unaffected; reasoned, not checked.
 - Closes when: `kill()` is followed by `wait()` in both places, or a Windows run shows no hang.
+
+## Mock loader in headless Edge
+
+- Open (2026-11-06): the dev plugin's inline loader (`miniapp/dev/README.md`, Dev plugin) is in the served page, but in a headless Edge started over `puppeteer.connect` it never ran: no `history.replaceState` and no `document.write` (both wrapped in an init script), so the launch router chose the browser branch, with `npm run dev` and with `vite preview` of a mock build alike. The router script right after it did run. Cause not traced; `npm run perf` (raw CDP) was not rerun to see whether it breaks too. Worked around by mounting the component under test straight from the dev server (`miniapp/src/features/check/README.md`, Device check).
+- Closes when: a headless run of `/?job=ready` shows the editor, or the cause is found.
 
 ## Unmeasured
 

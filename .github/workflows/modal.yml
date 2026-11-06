@@ -1,0 +1,37 @@
+name: Backend to Modal
+
+on:
+  push:
+    branches: [main]
+    paths: [backend/**, .github/workflows/modal.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: modal
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+      PYTHONUTF8: 1
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          working-directory: backend
+          enable-cache: true
+      - name: Require the Modal token
+        run: test -n "$MODAL_TOKEN_ID" -a -n "$MODAL_TOKEN_SECRET" || { echo 'Set the secrets MODAL_TOKEN_ID and MODAL_TOKEN_SECRET'; exit 1; }
+      - run: uv sync --frozen
+      - run: uv run --frozen ruff check
+      - run: uv run --frozen ruff format --check
+      - run: uv run --frozen modal deploy -m rounds.app

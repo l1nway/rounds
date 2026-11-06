@@ -1,11 +1,11 @@
 import {useEffect, useReducer, useRef} from 'react'
 import {merge, useOnline} from '../../hooks/state.js'
-import {begin, complete, heard, save} from './session.js'
+import {begin, complete, listen, save} from './session.js'
 
 const PLANE = 'M21 4 3 11l5.5 2L19 6.5 10 14.5V20l3.2-3.6L18 20z'
 const TIERS = {free: 'Free version', pro: 'Full version'}
-const FAILED = 'Could not open Telegram. Try again.'
-const START = {open: false, src: null, busy: false, error: null, menu: false, broken: false}
+const POLL = 500
+const START = {phase: null, error: null, menu: false, broken: false}
 
 function Avatar({user, broken, onBroken}) {
   if (!user.photo || broken) return <span className='account-initial' aria-hidden='true'>{(user.name || 'U')[0]}</span>
@@ -15,30 +15,39 @@ function Avatar({user, broken, onBroken}) {
 // [DOC: account-widget]
 export default function Account({user, onUser}) {
   const online = useOnline()
-  const frame = useRef(null)
-  const [{open, src, busy, error, menu, broken}, dispatch] = useReducer(merge, START)
+  const refs = useRef({popup: null, poll: null})
+  const [{phase, error, menu, broken}, dispatch] = useReducer(merge, START)
+
+  useEffect(() => () => clearInterval(refs.current.poll), [])
+
+  useEffect(() => listen(() => refs.current.popup, search => {
+    clearInterval(refs.current.poll)
+    refs.current.popup?.close()
+    dispatch({phase: 'busy', error: null})
+    complete(search).then(next => {save(next); onUser(next.user); dispatch(START)}, failure => dispatch({phase: null, error: failure.message}))
+  }), [onUser])
 
   useEffect(() => {
-    const listen = event => {
-      const search = heard(event, frame.current?.contentWindow)
-      if (search === null) return
-      dispatch({busy: true})
-      complete(search).then(next => {save(next); onUser(next.user); dispatch(START)}, failure => dispatch({busy: false, error: failure.message}))
-    }
-    addEventListener('message', listen)
-    return () => removeEventListener('message', listen)
-  }, [onUser])
-
-  useEffect(() => {
-    if (!open && !menu) return
-    const escape = event => event.key === 'Escape' && dispatch({open: false, menu: false})
+    if (!error && !menu) return
+    const escape = event => event.key === 'Escape' && dispatch({error: null, menu: false})
     addEventListener('keydown', escape)
     return () => removeEventListener('keydown', escape)
-  }, [open, menu])
+  }, [error, menu])
 
+  // [DOC: popup-login]
   const signIn = () => {
-    dispatch({open: true, src: null, error: null})
-    begin().then(url => dispatch({src: url}), () => dispatch({error: FAILED}))
+    const open = refs.current.popup
+    if (open && !open.closed) return open.focus()
+    try {
+      const popup = refs.current.popup = begin()
+      dispatch({phase: 'popup', error: null})
+      clearInterval(refs.current.poll)
+      refs.current.poll = setInterval(() => {
+        if (!popup.closed) return
+        clearInterval(refs.current.poll)
+        dispatch(prev => prev.phase === 'popup' ? {phase: null} : {})
+      }, POLL)
+    } catch (failure) {dispatch({error: failure.message})}
   }
 
   const signOut = () => {
@@ -47,12 +56,12 @@ export default function Account({user, onUser}) {
     dispatch(START)
   }
 
-  const press = () => user ? dispatch({menu: !menu}) : open ? dispatch({open: false}) : signIn()
+  const icon = phase ? <span className='spinner' aria-hidden='true'/> : <svg viewBox='0 0 24 24' aria-hidden='true'><path d={PLANE}/></svg>
 
   return (
     <aside className='account enter' aria-label='Account'>
-      <button className='account-button' type='button' disabled={!user && !online} aria-expanded={open || menu} aria-label={user ? user.name || 'Account' : 'Sign in with Telegram'} onClick={press}>
-        {user ? <Avatar user={user} broken={broken} onBroken={() => dispatch({broken: true})}/> : <svg viewBox='0 0 24 24' aria-hidden='true'><path d={PLANE}/></svg>}
+      <button className='account-button' type='button' disabled={!user && !online} aria-busy={!!phase || undefined} aria-expanded={user ? menu : undefined} aria-label={user ? user.name || 'Account' : 'Sign in with Telegram'} onClick={() => user ? dispatch({menu: !menu}) : signIn()}>
+        {user ? <Avatar user={user} broken={broken} onBroken={() => dispatch({broken: true})}/> : icon}
       </button>
       {menu && user && (
         <div className='account-panel account-menu' role='menu'>
@@ -61,13 +70,7 @@ export default function Account({user, onUser}) {
           <button type='button' role='menuitem' onClick={signOut}>Sign out</button>
         </div>
       )}
-      {open && (
-        <div className='account-panel account-login' role='dialog' aria-label='Sign in with Telegram'>
-          {src && <iframe ref={frame} title='Telegram sign-in' src={src} referrerPolicy='origin' data-busy={busy || undefined}/>}
-          {(!src || busy) && !error && <span className='spinner' aria-hidden='true'/>}
-          {error && <p role='alert'>{error}<button type='button' onClick={signIn}>Try again</button></p>}
-        </div>
-      )}
+      {error && !user && <p className='account-panel account-error' role='alert'>{error}<button type='button' onClick={signIn}>Try again</button></p>}
     </aside>
   )
 }

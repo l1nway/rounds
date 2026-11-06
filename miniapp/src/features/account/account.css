@@ -43,17 +43,11 @@
   animation: enter var(--dur-long) var(--ease);
 }
 
-.account-login {width: min(340px, calc(100vw - 24px)); height: min(460px, calc(100dvh - 80px))}
+.account-button .spinner {width: 22px; height: 22px}
 
-.account-login iframe {grid-area: 1 / 1; width: 100%; height: 100%; border: 0; transition: opacity var(--dur) var(--ease)}
+.account-error {width: min(280px, calc(100vw - 24px)); gap: 8px; margin: 0; padding: 16px; color: var(--danger); text-align: center}
 
-.account-login iframe[data-busy] {opacity: 0.2}
-
-.account-login .spinner {grid-area: 1 / 1; width: 28px; height: 28px; color: var(--hint)}
-
-.account-login p {grid-area: 1 / 1; display: grid; gap: 8px; padding: 16px; color: var(--danger); text-align: center}
-
-.account-login p button, .account-menu button {
+.account-error button, .account-menu button {
   min-height: var(--control);
   padding: 0 16px;
   color: var(--link);
@@ -61,7 +55,7 @@
   transition: background-color var(--dur-hover, 300ms) var(--ease);
 }
 
-.account-login p button:active, .account-menu button:active {cursor: grabbing}
+.account-error button:active, .account-menu button:active {cursor: grabbing}
 
 .account-menu {gap: 2px; min-width: 180px; padding: 12px 8px 4px; justify-items: stretch}
 
@@ -76,7 +70,7 @@
     background-color: color-mix(in srgb, var(--button), #fff 12%);
   }
 
-  .account-login p button:hover,
+  .account-error button:hover,
   .account-menu button:hover {
     background-color: color-mix(in srgb, var(--link) 12%, transparent);
     border-radius: var(--radius);
