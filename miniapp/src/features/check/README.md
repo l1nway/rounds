@@ -4,9 +4,26 @@
 
 [DOC: device-check] A temporary panel under the editor of the Telegram Mini App, shown only to `pro` jobs (`app.jsx`, lazy chunk), that measures what the device can run for local processing in Telegram's own web view (WKWebView on iOS, not Safari). It feeds the routing decisions (`local/README.md`, Speed gate, WebGPU by platform; project `CLAUDE.md`, Server tracking): whether the Mini App gets WebGPU on iOS 26, how fast the lift and VitTrack run there, and how fast a phone decodes the proxy, which is the only copy of the video the Mini App has. Remove it once the decisions are made.
 
-- One button runs the steps in order and prints `step.key: value` lines; "Copy report" copies them (clipboard, else the text is selected for the system menu). The owner pastes the report into the chat.
+- Buttons run a list of steps in order and print `step.key: value` lines; "Copy report" copies them (clipboard, else the text is selected for the system menu). The owner pastes the report into the chat.
 - Steps: `env` (Telegram platform and version, UA, cores, screen, touch, cross-origin isolation); `pace` (frames per second of `requestAnimationFrame` over 1 s, 30 in Low Power Mode, and a fixed CPU spin, so a cold or low-charge run shows up, `web-platforms.md`); `webgpu` (adapter info, fallback flag, a device created and destroyed on the page, a few limits); `media` (WebGL2 float rendering for stabilization, codecs the device cannot encode at 640², 4K HEVC / H.264 decode); `light` (fetch of `proxy_url`, VitTrack on WASM over the first 4 s at 15 fps with the real `lightFrames` pump: decode per frame, net per step, `speed` as seconds of video per second of work: above 1× the phone tracks faster than the clip plays); `lift` (three `segmentLocal` calls at the screen centre on the live `.viewer-video` frame, the first one with the download and model load, the backend the worker really got, and `fast()` afterwards, the speed gate's verdict). The lift runs last because it is the heaviest; `release()` drops the models afterwards.
-- Crash marker: before each step its name goes to `localStorage` (`rounds.check-step`) and is removed after the run. If the web view dies mid-step (Jetsam), the next open of the panel shows "previous run stopped during: <step>".
+- The light step disposes its Mediabunny `Input` when it ends (it held an undisposed second copy of the proxy before 2026-11-06).
+
+## Check modes
+
+[DOC: check-modes] "Run all" runs every step; "Light only", "Lift on GPU" and "Lift on CPU" (the lift with `cpu: true`, so the worker never touches WebGPU and is terminated on `release()`) run one heavy step after `env` and `pace`. They exist to find which step leaves the memory that killed the SE2 page after the run: one button per fresh open of the Mini App, then 2 minutes of waiting on the report.
+
+## Check beat
+
+[DOC: check-beat] The run record (`rounds.check-run` in `localStorage`: mode, report lines, current step with a detail such as `lift run 2`, step start, end, last beat, `hiddenAt`) is saved at every step and on a 1 s beat that goes on 120 s after the finish. The next open shows a verdict line and the previous report, so a crash report needs no screen recording:
+- no `end`: the page died during the step, with the time into it;
+- a last beat ≥ 118 s after the end: it survived;
+- otherwise the last beat N s after the end: it died, or the Mini App was closed (the owner knows which).
+- Going to the background sets `hiddenAt` once and stops the saves (iOS suspends timers there), and the verdict names it, so a swipe away is not read as a crash.
+- Replaces the earlier `rounds.check-step` marker, which was removed at the end of the run and so was blind to a death after it.
 - `ready('lift', [])` after the lifts returns the group's cached load result (`{gpu, reason}`) without loading anything: `ready` answers from `groups` before it reads the names.
 - Checked 2026-11-06 in headless Edge with a touch viewport (the panel mounted on the dev server with the mock job and `proxy.mp4`; the mock loader of `miniapp/dev` did not start in that headless run, cause not traced): every step finished, copy worked. GTX 1660 Ti: VitTrack 30 ms a step, 2.07× real time; EdgeSAM lift on WebGPU 7.0 s cold with the download, then 428 and 267 ms. Not yet run in Telegram or on a phone.
+- Phones, 2026-11-06, Telegram 9.6:
+  - **iPhone XR, iOS 18.5.** No `navigator.gpu` in the Mini App, as expected for a WKWebView on iOS 18. VitTrack runs on WASM: 50 ms a step and 1.28× real time when charged, 70 ms and 0.90× in Low Power Mode on a cold phone. The lift runs on WASM: 9.1 s on the first call, then 2.6–2.9 s. The check finished and the page survived.
+  - **SE2, iOS 27.3 beta.** WebGPU works in the Mini App (`apple / apple`, a device is created). VitTrack: 64 ms a step, 1.00× real time. The lift runs on WebGPU: 9.9 s on the first call, then 2.7–4.3 s, so `fast` is false. Both runs finished every step, then the page died about 30 s later while idle on the report (screen recording `IMG_0455.MP4`). The two JetsamEvents at 03:39:14 and 03:40:46 show WebContent `highwater` at 98 304 pages (1536 MB), with the GPU process at 25 and 58 MB.
+  - **Blind spot.** The old crash marker was removed when the run ended, so a death after the run left no trace on the next open (fixed by Check beat). Which step leaves the memory behind is unknown: the run was on a low, worn battery, and only the SE2 had WebGPU.
 - The lift calls use a fake source name and distinct `time` keys so the embedding cache never answers them; every call runs the encoder. They call `notePace`, so the speed gate of that page is set by the check (harmless: the Mini App does not track on the device yet).
