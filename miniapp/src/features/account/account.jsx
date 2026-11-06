@@ -1,7 +1,7 @@
 import {useEffect, useReducer, useRef, useState} from 'react'
 import Swap from '../../components/swap.jsx'
 import {merge, useOnline, usePresence} from '../../hooks/state.js'
-import {WINDOW, begin, complete, link, listen, save} from './session.js'
+import {begin, complete, link, listen, save} from './session.js'
 
 const PLANE = 'M21 4 3 11l5.5 2L19 6.5 10 14.5V20l3.2-3.6L18 20z'
 const TIERS = {free: 'Free version', pro: 'Full version'}
@@ -113,7 +113,7 @@ export default function Account({user, onUser}) {
       <Panel on={Boolean(alert && !user)} as='p' role='alert' data-error=''>
         <span>{last.alert?.text}</span>
         {last.alert?.link
-          ? <a href={last.alert.link} target={WINDOW} rel='opener' onClick={followLink}>Open Telegram</a>
+          ? <a href={last.alert.link.url} target={last.alert.link.name} rel='opener' onClick={followLink}>Open Telegram</a>
           : <button type='button' onClick={signIn}>Try again</button>}
       </Panel>
     </aside>

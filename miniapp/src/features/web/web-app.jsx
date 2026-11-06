@@ -4,7 +4,6 @@ import {merge} from '../../hooks/state.js'
 import {post} from '../../services/api.js'
 import Account from '../account/account.jsx'
 import {session, tierOf} from '../account/session.js'
-import {LEVELS, init} from '../editor/draft.js'
 import Editor from '../editor/editor.jsx'
 import {gate, needsModal, needsServer} from '../local/plan.js'
 import Result from './result.jsx'
@@ -20,9 +19,6 @@ const LABELS = {
 }
 const hasFiles = event => event.dataTransfer?.types.includes('Files')
 
-const CARRY = ['start', 'end', 'time', 'points', 'box', 'mask', 'options', 'codec', ...LEVELS.map(({key}) => key)]
-const resume = job => prev => ({...init(job), ...Object.fromEntries(CARRY.map(key => [key, prev[key]]))})
-
 const mimeOf = file => file.type?.startsWith('video/') ? file.type : file.name?.split('.').pop()?.toLowerCase() === 'mov' ? 'video/quicktime' : 'video/mp4'
 
 const base = name => name.replace(/\.[^.]+$/, '') || 'round'
@@ -32,7 +28,6 @@ export default function WebApp() {
   const [{user, source, notice, work, result, over, consent, crash}, dispatch] = useReducer(merge, START)
   const [input, setInput] = useState(null)
   const latest = useRef(0)
-  const pending = useRef(null)
   const last = useRef(null)
   const device = useRef({})
   const failed = usePlayer(state => state.failed)
@@ -91,7 +86,6 @@ export default function WebApp() {
     const turn = ++latest.current
     consent?.resolve(false)
     if (source) [source.proxy_url, source.filmstrip_url].forEach(url => URL.revokeObjectURL(url))
-    pending.current = null
     dispatch({source: null, result: null, consent: null, notice: PREPARING})
     try {
       const {probe} = await import('../local/probe.js')
@@ -130,25 +124,6 @@ export default function WebApp() {
     if (inside) load(event.dataTransfer.files[0])
   }
 
-  // [DOC: web-promote]
-  useEffect(() => {
-    if (tier !== 'pro' || !source || source.id || source.size > MAX_BYTES || !navigator.onLine) return
-    let live = true
-    // [DOC: modal-fallback]
-    const run = import('../local/server.js').then(({prepare}) => prepare(source.file, () => {})).then(found => {
-      if (found.oracle) throw new Error('The full version is unavailable right now')
-      return found
-    })
-    pending.current = run.then(found => found.id, () => null)
-    run.then(found => {
-      if (!live) return
-      const next = {...source, ...found, meta: {...source.meta, ...found.meta, tags: {...source.meta?.tags, ...found.meta?.tags}, off: source.meta.off, hdr: source.meta.hdr}}
-      dispatch({source: {...next, resume: resume(next)}})
-      ;[source.proxy_url, source.filmstrip_url].forEach(url => URL.revokeObjectURL(url))
-    }, error => {if (import.meta.env.DEV) console.warn('The server copy failed:', error)})
-    return () => {live = false}
-  }, [tier, source])
-
   // [DOC: web-same-render]
   const send = async (current, body) => {
     const key = JSON.stringify(body)
@@ -160,7 +135,7 @@ export default function WebApp() {
       if (remote) {
         const {renderOnServer} = await import('../local/server.js')
         const modal = needsModal(body, current)
-        const id = modal ? current.id ?? await pending.current : null
+        const id = modal ? current.id : null
         const {dropped} = await renderOnServer(current.file, body, text => dispatch({work: {text}}), {id, oracle: !modal && tier === 'pro'})
         last.current = {file: current.file, key, result: {remote: true, dropped}}
         dispatch({work: null, result: {remote: true, dropped}})

@@ -29,10 +29,17 @@ export const droppedOf = body => [
 ]
 
 // [DOC: local-plan]
-// [DOC: speed-gate]
-export const needsServer = (body, job) => job.tier === 'pro' && job.fast === false && picked(body.prompt)
-  || Object.entries(body.options).some(([key, on]) => on && !LOCAL_OPTIONS.has(key)) || LEVELS.some(level => body[level.key] && !localLevel(level, body, job))
-  || job.meta.off.includes(body.codec) || Boolean(job.meta.hdr)
+const reasonOf = (body, job) => {
+  if (job.meta.hdr) return 'This video is HDR: the server renders it with correct colours.'
+  if (job.meta.off.includes(body.codec)) return `This browser cannot encode ${labelOf(body.codec)}: the server renders it.`
+  // [DOC: speed-gate]
+  if (job.tier === 'pro' && job.fast === false && picked(body.prompt)) return 'This device is slow at following the object: the server renders it.'
+  const option = OPTIONS.find(({key}) => body.options[key] && !LOCAL_OPTIONS.has(key))
+  if (option) return `${option.label} runs on the server.`
+  const level = LEVELS.find(item => body[item.key] && !localLevel(item, body, job))
+  return level ? `${level.local < 1 ? `The AI part of ${level.label}` : level.label} runs on the server.` : null
+}
+export const needsServer = (body, job) => Boolean(reasonOf(body, job))
 
 // [DOC: local-modal]
 export const needsModal = (body, job) => job.tier === 'pro' && (picked(body.prompt)
@@ -50,5 +57,5 @@ export const gate = (draft, job) => {
     return {block: true, note: off.length === 3 ? 'This browser cannot encode video. Sign in to render on the server.' : `This browser cannot encode ${labelOf(draft.codec)}. Pick another codec or sign in.`}
   }
   if (job.size > MAX_BYTES) return {block: true, note: 'The server takes files up to 2000 MB. This one is bigger.'}
-  return {network: true, note: 'The server renders this one; the round arrives in your Telegram chat.'}
+  return {network: true, note: `${reasonOf(body, job)} The round arrives in your Telegram chat.`}
 }

@@ -75,6 +75,7 @@
   margin: 0;
   border-radius: var(--radius);
   background: var(--surface);
+  line-height: 20px;  /* [DOC: panel-pixels] */
   animation: account-open var(--dur-spring) var(--spring);
 }
 

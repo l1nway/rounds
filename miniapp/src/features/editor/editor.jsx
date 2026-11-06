@@ -130,8 +130,8 @@ export default memo(function Editor({job, notice, send, gate, retry}) {
   useEffect(() => {setRange(start, end)}, [start, end])
   useLayoutEffect(() => {
     if (!job) return
-    dispatch(job.resume ?? init(job))
-    if (!job.resume) seek(job.request?.prompt.time ?? job.request?.start ?? 0)
+    dispatch(init(job))
+    seek(job.request?.prompt.time ?? job.request?.start ?? 0)
     // [DOC: late-rows]
     if (!document.documentElement.hasAttribute('data-enter')) form.current.dataset.early = ''
   }, [job])

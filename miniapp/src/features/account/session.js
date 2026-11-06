@@ -4,7 +4,7 @@ const SESSION = 'rounds-session'
 export const REDIRECT = location.origin + location.pathname
 export const RETURNED = /[?&](code|error)=/.test(location.search)
 const MESSAGE = 'rounds-login'
-export const WINDOW = 'rounds-telegram-login'
+const WINDOW = 'rounds-telegram-login'
 const SIZE = {width: 550, height: 650}
 const TEXTS = {
   cancelled: 'Telegram did not sign you in. Try again.',
@@ -40,18 +40,19 @@ const features = () => {
 const prepare = async () => {
   const verifier = random(32), state = random(16)
   const challenge = base64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)))
-  ready = {verifier, state, url: `${API}/api/auth/start?${new URLSearchParams({redirect: REDIRECT, challenge, state})}`}
+  ready = {verifier, state, name: `${WINDOW}-${random(6)}`, url: `${API}/api/auth/start?${new URLSearchParams({redirect: REDIRECT, challenge, state})}`}
 }
 
 if (API && !RETURNED) prepare()
 
-export const link = () => pending?.url
+export const link = () => pending && {url: pending.url, name: pending.name}
 
 export const begin = () => {
   if (!ready) throw new Error(TEXTS.failed)
   pending = ready
   prepare()
-  const popup = open(pending.url, WINDOW, features())
+  // [DOC: fresh-name]
+  const popup = open(pending.url, pending.name, features())
   if (!popup) throw new Error(TEXTS.blocked)
   return popup
 }
