@@ -1,4 +1,4 @@
-import {BlobSource, BufferTarget, Conversion, Input, MATROSKA, MP4, Mp4OutputFormat, Output, QTFF, Quality, WEBM, canEncodeAudio, canEncodeVideo} from 'mediabunny'
+import {BlobSource, BufferTarget, Conversion, Input, MATROSKA, MP4, Mp4OutputFormat, Output, QTFF, Quality, UrlSource, WEBM, canEncodeAudio, canEncodeVideo} from 'mediabunny'
 import './hevc-decoder.js'
 import {SAMPLE_RATE, denoise, replace} from './denoise.js'
 import {apply, levelPlanes, measure} from './loudness.js'
@@ -20,7 +20,8 @@ const CODEC_NAMES = ['av1', 'hevc', 'vp9']
 const AUDIO_CODECS = ['aac', 'opus']
 const mean = values => values.reduce((sum, value) => sum + value, 0) / values.length
 
-export const open = file => new Input({source: new BlobSource(file), formats: FORMATS})
+// [DOC: miniapp-local]
+export const open = file => new Input({source: typeof file === 'string' ? new UrlSource(file) : new BlobSource(file), formats: FORMATS})
 
 // [DOC: local-frame]
 export const frameOf = ({width: w, height: h}, {points, box, crop}, zoom) => {

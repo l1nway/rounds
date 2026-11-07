@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import math
 import time
 from functools import partial
 from typing import Literal
@@ -21,6 +22,7 @@ MASK_CHARS = 90_000
 PRO_OPTIONS, PRO_LEVELS = ('interpolate', 'upscale'), ()
 FREE_DEBLUR = 0  # [DOC: deblur]
 PRO_ONLY = 'This needs the full version of the bot'
+TRACK_SAMPLES, TRACK_CUTS = (MAX_DURATION + 1) * 60, 200  # [DOC: device-track]
 
 
 class Prompt(BaseModel):
@@ -56,7 +58,21 @@ class Span(BaseModel):
         return self
 
 
+# [DOC: device-track]
+class DeviceTrack(BaseModel):
+    fps: float = Field(gt=0, le=60)
+    samples: list[list[float]] = Field(min_length=1, max_length=TRACK_SAMPLES)
+    cuts: list[float] = Field([], max_length=TRACK_CUTS)
+
+    @model_validator(mode='after')
+    def check(self):
+        if any(len(s) not in (1, 5) or any(not math.isfinite(v) for v in s) for s in self.samples):
+            raise ValueError('Broken device track')
+        return self
+
+
 class RenderRequest(Span):
+    track: DeviceTrack | None = None
     options: dict[str, bool] = {}
     codec: Literal['av1', 'hevc', 'vp9'] = 'av1'  # [DOC: codecs]
     denoise: float = Field(0, ge=0, le=1)  # [DOC: denoise]

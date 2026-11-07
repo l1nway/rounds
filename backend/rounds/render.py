@@ -137,6 +137,7 @@ def render(src, meta: dict, start: float, end: float, path, cuts, out, options: 
             raise source.Unreadable(media.NO_RANGE)
     except BaseException:
         first.kill()
+        first.wait()  # [DOC: killed-pass]
         q.put(None)
         raise
     for _ in range(n - k):

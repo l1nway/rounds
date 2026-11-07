@@ -2,7 +2,7 @@ from pathlib import Path
 
 import modal
 
-from .config import DCE_WEIGHTS, DEEP_FILTER, DSTNET_WEIGHTS, DVD_WEIGHTS, RIFE_WEIGHTS
+from .config import DCE_WEIGHTS, DEEP_FILTER, DSTNET_WEIGHTS, DVD_WEIGHTS, RIFE_WEIGHTS, VIT_SHA, VIT_WEIGHTS
 
 PROJECT = Path(__file__).parent.parent
 FFMPEG = (
@@ -32,6 +32,12 @@ DEBLUR = (
     'https://huggingface.co/Meloo/DSTNetPlus/resolve/main/pretrained_models/DSTNetPlus_L_gopro.pth',
     '28beafbae0c2f6353d97c560d15d102b844785bab8cb16b3fb0a6f833f430f42',
 )
+# [DOC: vit-track]
+TRACK = (
+    'https://huggingface.co/opencv/opencv_zoo/resolve/39a1451d0f9b23fc4ebaed06a277127efa0374d0/'
+    'models/object_tracking_vittrack/object_tracking_vittrack_2023sep.onnx',
+    VIT_SHA,
+)
 MODELS_DIR = '/models'
 
 
@@ -58,7 +64,8 @@ def image(*groups: str, commands: tuple[str, ...] = (), base: modal.Image | None
 
 app = modal.App('rounds')
 # [DOC: rife-weights]
-weights = tuple(c for f in ((RIFE_WEIGHTS, *RIFE), *REPAIR, (DSTNET_WEIGHTS, *DEBLUR)) for c in fetch(*f))
+FILES = (RIFE_WEIGHTS, *RIFE), *REPAIR, (DSTNET_WEIGHTS, *DEBLUR), (VIT_WEIGHTS, *TRACK)
+weights = tuple(c for f in FILES for c in fetch(*f))
 voice = (*fetch(DEEP_FILTER, *VOICE), f'chmod +x {DEEP_FILTER} && {DEEP_FILTER} --version')
 cpu_image, gpu_image = image(commands=voice), image('gpu', commands=(*weights, *voice))  # [DOC: cpu-image]
 data = modal.Volume.from_name('rounds-data', create_if_missing=True)

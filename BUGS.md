@@ -51,7 +51,8 @@ Known bugs and open questions that are not being worked on right now. Each entry
 - Known: candidates for a free CPU tracker are listed in `backend/rounds/README.md`, Tiers (OpenCV CSRT / KCF, YOLO nano + ByteTrack, MobileSAM / NanoSAM in ONNX, MediaPipe, motion centroid). None is measured on the Oracle VM yet.
 - Closes when: a tracker is picked by a speed and quality test on the VM and the camera path (`camera.solve`, CPU already) consumes its track.
 - Browser version (2026-11-01): signed-in `free` users and anonymous ones now track on the device in the browser (SAM 2.1 on a fast device, VitTrack on a slow touch device, `miniapp/src/features/local/README.md`, Speed gate). VitTrack is a candidate for the VM too, but the released OpenCV (4.14, 5.0) has a normalisation bug that loses the object on our test clip; use the browser port's maths or a release with the fix (Light tracking, Normalisation trap).
-- Tracker done (2026-11-06): `backend/rounds/vittrack.py`, the browser port in Python on `cv2.dnn`, exact parity with `light-infer.js` (`backend/rounds/README.md`, Vit track). Still open: the free render does not call it (a moving crop on the camera path instead of `crop.frame`'s fixed square), the device's partial track is not sent with Render yet, and its speed on the A1 is unmeasured.
+- Tracker done (2026-11-06): `backend/rounds/vittrack.py`, the browser port in Python on `cv2.dnn`, exact parity with `light-infer.js` (`backend/rounds/README.md`, Vit track).
+- Wired (2026-11-07): the free render follows the object (`backend/rounds/README.md`, Free follow), and the Mini App sends the phone's track with Render (Device track). Following with the HDR slider or exposure on and stabilization off was added the same day (Free follow). Still open, so this entry stays: a real render on the A1 (1 OCPU, observed) and a phone's real samples.
 
 ## Stabilization and deblur on the free tier
 
@@ -63,7 +64,7 @@ Known bugs and open questions that are not being worked on right now. Each entry
 
 - Open (2026-10-28, the editor in the browser): only the local render was run end to end (headless Edge, software AV1, hardware hint stripped). Not run: the sign-in on a phone (a new tab, then back; the desktop popup works, owner 2026-11-06), a local render on a real browser with its own encoders (software AV1 speed, Firefox's codecs), the server path (upload, ingest, render from the browser), sending a local round to the chat (`POST /api/notes`) and the Mini App on a device after the editor moved into a shared chunk.
 - Known: details and what each depends on are in `miniapp/src/features/account/README.md` (Tab login: the round trip on a phone), `features/local/README.md` (Local encoders, Local size, Local server) and `features/web/README.md` (Web shell: signing in resets the draft).
-- Also unverified (2026-10-28): the Oracle-first render for an allowed user (`?via=oracle` in the router, a second upload), HDR detection (`hasHighDynamicRange()` on a real iPhone HLG clip) and the Retry buttons. Nothing of this ran against a real server; the router change is not deployed (paste `router/worker.js` in the dashboard).
+- Also unverified (2026-10-28): the Oracle-first render for an allowed user (`?via=oracle` in the router, a second upload), HDR detection (`hasHighDynamicRange()` on a real iPhone HLG clip) and the Retry buttons. Nothing of this ran against a real server. The router deploys itself on a push since 2026-11-07 (`router/README.md`, Router deploy).
 - Also open: the Oracle VM's `.env` must carry the same `ALLOWED_USER_IDS` as Modal's, or an allowed user signs in as `free`; an older stored session has no tier (reads `free`) until the user signs in again.
 - Closes when: the owner opens the deployed page, signs in (anonymous, a normal user and an allowed one), renders a round locally with a GPU encoder, one through the server path, and sends one to the chat.
 
@@ -73,16 +74,6 @@ Known bugs and open questions that are not being worked on right now. Each entry
 - Known: `backend/rounds/README.md`, Repair (denoise, then curve); the weights never go to the browser (licence), `CLAUDE.md`, Owner decisions.
 - Built 2026-10-30 (`backend/rounds/README.md`, Free look): the free path keeps the server order and skips only the denoise. First look (owner's PC, IMG_7045, look 0.9): the dark hair shows lifted noise blocks, as expected; not yet compared side by side with Modal.
 - Closes when: the Oracle result is compared with the full Modal result on the owner's old dark noisy clips (IMG_7045, IMG_1037), and either accepted, or the Oracle path gets a cheap CPU denoise before the curve, or the slider's AI zone stays Modal-only.
-
-## Killed first pass on Windows
-
-- Open (2026-10-30): when a render fails, `crop.render` and `render.render` call `first.kill()` on the first-pass FFmpeg without `wait()`. On Windows the dying process can still hold `pass-0.log`, so cleaning up the temp directory raised `PermissionError` once, and one test that reused a temp directory hung for 300 s (not reproduced in two reruns). Linux (Oracle, Modal) deletes open files, so production is probably unaffected; reasoned, not checked.
-- Closes when: `kill()` is followed by `wait()` in both places, or a Windows run shows no hang.
-
-## Mock loader in headless Edge
-
-- Open (2026-11-06): the dev plugin's inline loader (`miniapp/dev/README.md`, Dev plugin) is in the served page, but in a headless Edge started over `puppeteer.connect` it never ran: no `history.replaceState` and no `document.write` (both wrapped in an init script), so the launch router chose the browser branch, with `npm run dev` and with `vite preview` of a mock build alike. The router script right after it did run. Cause not traced; `npm run perf` (raw CDP) was not rerun to see whether it breaks too. Worked around by mounting the component under test straight from the dev server (`miniapp/src/features/check/README.md`, Device check).
-- Closes when: a headless run of `/?job=ready` shows the editor, or the cause is found.
 
 ## Unmeasured
 

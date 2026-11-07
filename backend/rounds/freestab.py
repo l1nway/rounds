@@ -28,7 +28,7 @@ def even(lo: int, hi: int, n: int) -> tuple[int, int]:
 
 
 # [DOC: free-stabilization]
-def plan(src, meta: dict, request: dict, rate: float, n: int, centre, square: tuple) -> dict | None:
+def plan(src, meta: dict, request: dict, rate: float, n: int, centre, square: tuple, hit=None) -> dict | None:
     start, end, size, prompt = request['start'], request['end'], (meta['width'], meta['height']), request['prompt']
     flow = motion.flows(src, meta, start, n, rate, False)
     if len(flow['t']) < 2:
@@ -39,15 +39,20 @@ def plan(src, meta: dict, request: dict, rate: float, n: int, centre, square: tu
         side, x, y = square
         path = np.tile([x + side / 2, y + side / 2, side], (steps, 1)).astype(float)
     else:
-        found, zoom = track(world, prompt, centre, size, start, steps), request['options'].get('zoom', False)
-        path = camera.solve(found, *size, (), FPS, zoom, world)
+        zoom = request['options'].get('zoom', False)
+        found, cuts = (hit['found'], hit['cuts']) if hit else (track(world, prompt, centre, size, start, steps), ())
+        path = camera.solve(found, *size, cuts, FPS, zoom, world)  # [DOC: free-follow]
     base = camera.sampler(path)
-    rows = motion.placer(base, world)(np.arange(n) * FPS / rate)
+    return {'base': base, 'world': world, **framed(motion.placer(base, world)(np.arange(n) * FPS / rate), size)}
+
+
+# [DOC: free-follow]
+def framed(rows: np.ndarray, size: tuple[int, int]) -> dict:
     spans = [(warp_np.bounds(b[0], b[2], size[0], o[0]), warp_np.bounds(b[1], b[3], size[1], o[1]))
              for b, o in map(warp_np.box, rows)]  # fmt: skip
     (x0, y0), (x1, y1) = np.min([[s[0][0], s[1][0]] for s in spans], 0), np.max([[s[0][1], s[1][1]] for s in spans], 0)
     crop = (*even(int(x0), int(x1), size[0]), *even(int(y0), int(y1), size[1]))
-    return {'base': base, 'world': world, 'rows': rows, 'spans': spans, 'crop': crop}
+    return {'rows': rows, 'spans': spans, 'crop': crop}
 
 
 def warp(part, origin, row, m, top, frame: tuple, grid: tuple, value: float, ev: float) -> np.ndarray:
@@ -72,7 +77,7 @@ def frames(src, meta: dict, request: dict, rate: float, n: int, plan: dict, enco
     vf, wide, grid = freelook.graph(meta, f'crop={bw}:{bh}:{bx}:{by},', (bw, bh))
     look = lk.Look(request.get('look', 0), request.get('exposure', 0), rate)
     lift = freelook.Alpha((OUT_SIZE, OUT_SIZE), rate) if look.repair > 0 else None
-    edges = fill_np.Edges(plan['base'], plan['world'], OUT_SIZE, rate, False)
+    edges = 'world' in plan and fill_np.Edges(plan['base'], plan['world'], OUT_SIZE, rate, False)
     ahead = freelook.AHEAD * freelook.WORKERS
 
     def items():
@@ -90,6 +95,7 @@ def frames(src, meta: dict, request: dict, rate: float, n: int, plan: dict, enco
 
     with freelook.pool() as workers:
         work = partial(warp, frame=size, grid=grid, value=request.get('look', 0), ev=request.get('exposure', 0))
-        filled = fill_np.frames(freelook.ordered(workers, work, items(), ahead), edges, n)
+        warped = freelook.ordered(workers, work, items(), ahead)
+        filled = fill_np.frames(warped, edges, n) if edges else warped
         done = partial(finish, strength=look.repair, encoded=encoded)
         yield from freelook.ordered(workers, done, lifted(filled), ahead)

@@ -7,7 +7,7 @@ import threading
 
 import numpy as np
 
-from . import media
+from . import devicetrack, media
 from .config import FPS, JOBS_DIR
 from .pipeline import note, reporter, stage, timed
 from .transfer import held
@@ -164,6 +164,11 @@ async def tracking(job_id: str, jobs, state, job: dict, src: str, loop) -> tuple
         return await find(src, meta, start, end, prompt, step, lambda f: check() or report(f))
 
     job = await stage(jobs, job, 'tracking')
+    if devicetrack.usable(request.get('track')):  # [DOC: device-track]
+        with timed(job_id, 'render.device') as facts:
+            hit = await asyncio.to_thread(devicetrack.hit, src, meta, request)
+            facts.update(samples=len(request['track']['samples']), cuts=len(hit['cuts']))
+        return job, hit
     with timed(job_id, 'render.locate') as facts:
         hit, cached = await located(state, job_id, start, end, prompt, compute, cancellable=False)
         facts.update(cached=cached, cuts=len(hit['cuts']))

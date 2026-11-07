@@ -2,7 +2,8 @@ const DB = 'rounds-stage-cache-v1'
 const CAP = 400_000_000
 const VERSION = 1
 
-export const identity = file => [file.name, file.size, file.lastModified]
+// [DOC: miniapp-local]
+export const identity = file => typeof file === 'string' ? [file.split('?')[0], 0, 0] : [file.name, file.size, file.lastModified]
 
 const hexOf = buffer => Array.from(new Uint8Array(buffer), b => b.toString(16).padStart(2, '0')).join('')
 const keyOf = async parts => hexOf(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([VERSION, ...parts]))))

@@ -9,7 +9,8 @@ OLD=$(git rev-parse HEAD)
 NEW=$(git rev-parse origin/main)
 [ "$OLD" = "$NEW" ] && exit 0
 git merge --ff-only origin/main
-if ! git diff --quiet "$OLD" "$NEW" -- backend; then
+if ! git diff --quiet "$OLD" "$NEW" -- backend deploy/weights.sh; then
+  bash deploy/weights.sh
   "$HOME/.local/bin/uv" sync --project backend --no-dev
   sudo systemctl restart rounds-free
 fi

@@ -35,7 +35,7 @@ Checked on the mock build in headless Edge (2026-10-25): load, tap to add a poin
 
 ## Inline CSS
 
-The `inline-css` plugin in `vite.config.js` replaces the built `<link rel="stylesheet">` in `index.html` with a `<style>` of the same file and drops the file (web.md: no stylesheet request blocks the first paint). Only CSS linked from the page is inlined; a CSS file of a lazy chunk would stay a file, since its chunk links it at runtime. The page grows to 3 KB gzip and has the same 10-minute cache as the CSS had.
+The `inline-css` plugin in `vite.config.js` replaces the built `<link rel="stylesheet">` in `index.html` with a `<style>` of the same file and drops the file (frontend.md: no stylesheet request blocks the first paint). Only CSS linked from the page is inlined; a CSS file of a lazy chunk would stay a file, since its chunk links it at runtime. The page grows to 3 KB gzip and has the same 10-minute cache as the CSS had.
 
 The built head order is: charset, viewport, title, icon, the theme `<style>` of `index.html` (Vite minifies it in place, dev serves it as written), the launch router (it writes the Telegram script and the Mini App module, or appends the web module: Launch router), the `modulepreload` of the shared chunk, the inlined app CSS (Vite puts its `<link>` before `</head>`). The colours paint from the theme style before any app CSS or JS (`src/README.md`, Theme tokens); the app CSS needs no particular place, since the module scripts are deferred or async and `#root` is empty until they run.
 
@@ -103,6 +103,7 @@ The engine needs a git repo (`git rev-parse` for the journal row) and fails at t
 - M LCP 2.9–4.1 s: the LCP element is the `<video>` first frame of a 3.6 MB proxy over slow 4G. The video is the content.
 - D FCP 204–352 ms: the render-blocking Telegram script (above).
 - Idle 78–201 ms (mobile only, 0 style / layout): the browser's media loading while the proxy keeps downloading (`preload='auto'`); script time in that window is 1–2 ms, and blocking the proxy drops it to about 30 ms. `preload='metadata'` would cut it but make every scrub wait for range requests.
+- 2026-11-07: runs before this date that failed `Taps` (`.options-row input` not found) or showed A11y 93 measured the browser branch, not the editor: the mock loader never matched `?job` (`dev/README.md`, Dev plugin, Backspace trap). First run with the editor again (working tree on `c7541cb`, engine run directly): M FCP 1632, M LCP 2552, M TBT 239, M long 197, D FCP 540, CLS 0.005, Idle 280 (0 style / layout, the media loading above), Entry 30.7 KB, M INP 48, Page 146 KB, 12 requests, LH 99, A11y 94 (`user-scalable=no`), BP 100, no uncaught errors. Over budget: M FCP, M LCP, D FCP, Idle, A11y, the causes listed here.
 
 ## Telemetry build
 

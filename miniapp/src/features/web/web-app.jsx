@@ -5,6 +5,7 @@ import {post} from '../../services/api.js'
 import Account from '../account/account.jsx'
 import {session, tierOf} from '../account/session.js'
 import Editor from '../editor/editor.jsx'
+import {attachLocal} from '../local/attach.js'
 import {gate, needsModal, needsServer} from '../local/plan.js'
 import Result from './result.jsx'
 
@@ -12,11 +13,6 @@ const MAX_DURATION = 60
 const MAX_BYTES = 2000 * 1024 * 1024
 const PREPARING = {title: 'Preparing the video…', busy: true}
 const START = {user: session()?.user ?? null, source: null, notice: null, work: null, result: null, over: false, consent: null, crash: null}
-// [DOC: web-local-ai]
-const LABELS = {
-  lift: ['Downloading selection model…', 'Preparing selection…', 'Selecting object…'],
-  follow: ['Downloading tracking model…', 'Preparing tracking…', 'Tracking object…']
-}
 const hasFiles = event => event.dataTransfer?.types.includes('Files')
 
 const mimeOf = file => file.type?.startsWith('video/') ? file.type : file.name?.split('.').pop()?.toLowerCase() === 'mov' ? 'video/quicktime' : 'video/mp4'
@@ -36,29 +32,8 @@ export default function WebApp() {
   const job = useMemo(() => {
     if (!source) return null
     const confirm = kind => ({bytes, models}) => new Promise(resolve => dispatch({consent: {kind, bytes, models, resolve: ok => {dispatch({consent: null}); resolve(ok)}}}))
-    const local = (load, kind, route) => async (want, report) => {
-      const [loading, preparing, busy] = LABELS[kind]
-      const server = () => post(`/api/jobs/${encodeURIComponent(source.id)}/${route}`, want)
-      // [DOC: speed-gate]
-      if (kind === 'follow' && source.id && tier === 'pro' && !(await import('../local/models.js')).fast()) {report({label: busy}); return server()}
-      const [run, {awake}] = await Promise.all([load(), import('../local/awake.js')])
-      try {
-        return await awake(() => run(source, want, {
-          confirm: confirm(kind),
-          onReady: () => report({label: preparing, share: 0}),
-          onPrepare: share => report({label: preparing, share}),
-          onLoaded: () => report({label: busy, share: kind === 'follow' ? 0 : undefined}),
-          onProgress: info => report(info ? {label: loading, share: info.share} : {label: preparing, share: 0}),
-          onTrack: share => report({label: busy, share})
-        }))
-      } catch (error) {
-        if (source.id && tier === 'pro') return server()
-        throw error
-      }
-    }
-    const tracker = () => import('../local/track-local.js')
-    const lift = local(() => import('../local/lift-local.js').then(module => module.segmentLocal), 'lift', 'segment')
-    const follow = Object.assign(local(() => tracker().then(module => module.followLocal), 'follow', 'track'), {stop: () => tracker().then(module => module.stopFollow()), label: LABELS.follow[1]})
+    const server = source.id && ((route, want) => post(`/api/jobs/${encodeURIComponent(source.id)}/${route}`, want))
+    const {lift, follow} = attachLocal(source, {tier, confirm, server})
     return {id: null, status: 'ready', max_duration: MAX_DURATION, request: null, ...source, tier, local: true, get gpu() {return Boolean(device.current.gpu)}, get webgl() {return device.current.webgl}, get fast() {return device.current.fast?.()}, lift, follow}
   }, [source, tier])
   // [DOC: web-crash]

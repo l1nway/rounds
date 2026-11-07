@@ -35,11 +35,8 @@ const exclusive = fn => {
 }
 
 // [DOC: speed-gate]
-const modeOf = ({width, height}) => {
-  if (fast()) return {light: false, group: GROUP, size: [SIDE, SIDE]}
-  const k = LIGHT.long / Math.max(width, height)
-  return {light: true, park: width * height > PARK, group: LIGHT.group, size: [Math.round(width * k), Math.round(height * k)]}
-}
+const lightOf = ({width, height}, k = LIGHT.long / Math.max(width, height)) => ({light: true, park: width * height > PARK, group: LIGHT.group, size: [Math.round(width * k), Math.round(height * k)]})
+const modeOf = meta => fast() ? {light: false, group: GROUP, size: [SIDE, SIDE]} : lightOf(meta)
 // [DOC: park-light]
 const lean = (mode, work) => mode.park ? parked(work) : work()
 const load = (mode, options) => mode.light ? ready(LIGHT.group, LIGHT.names, {...options, cpu: true, shared: roomy()}) : ready(GROUP, NAMES, options)
@@ -72,7 +69,7 @@ const pass = async (file, times, index, prompt, record, live, {group, size: [wid
   const send = (type, rgba, extra) => call({group, type, rgba: rgba.buffer, width, height, ...extra}, [rgba.buffer])
   let first = null
   for await (const [k, rgba] of frames(file, times, index, [width, height], light)) {
-    if (!live()) return false
+    if (!live()) {await call({group, type: 'reset'}); return false}
     if (k === index) {
       if (index > 0) first = rgba.slice()
       record(k, await send('seed', rgba, {prompt, total: times.length - index}))
@@ -189,6 +186,19 @@ const runTrack = async (file, meta, {start, end, prompt}, onProgress, mode) => {
     await pass(file, times, index, prompt, record, () => true, mode)
     return merge([...(cpu ? known : []), ...times.map((t, k) => ({t, found: found[k]}))], meta, start, end, cpu)
   })
+}
+
+// [DOC: miniapp-track]
+export const trackSamples = async (file, meta, {start, end, prompt}, until, onProgress) => {
+  const run = ++active, mode = lightOf(meta)
+  await load(mode, {})
+  return exclusive(async () => {
+    const {times, index} = plan(start, end, LIGHT.rate, [], prompt.time), found = Array(times.length)
+    let done = 0
+    await pass(file, times, index, prompt, (k, item) => {found[k] = item; onProgress(++done / times.length)}, () => run === active && performance.now() < until, mode)
+    const got = times.map((t, k) => found[k] && {t: Math.round(t * 1000) / 1000, ...found[k]}).filter(Boolean).sort((a, b) => a.t - b.t)
+    return got.length ? {fps: LIGHT.rate, samples: got.map(({t, box}) => box ? [t, ...box] : [t]), cuts: sceneCuts(changes(got.map(s => s.hist))).map(k => got[k].t)} : null
+  }).finally(release)
 }
 
 // [DOC: stage-cache]

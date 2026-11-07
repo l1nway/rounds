@@ -5,6 +5,8 @@ import {BUILD, keep, recall, report} from '../../services/telemetry.js'
 const KEY = 'rounds.device'
 const SPIN = 5e6
 const WINDOW = 1000
+// [DOC: device-load]
+const LOAD = {spins: 3, fps: 50, weak: 1.5, bad: 2.5}
 // [DOC: gpu-bench]
 const BENCH = {n: 1024, tile: 16, reps: 8, rounds: 3}
 const SHADER = `
@@ -36,6 +38,7 @@ export const frameRate = () => new Promise(resolve => {
   let n = 0
   const tick = now => now - t0 < WINDOW ? (n++, requestAnimationFrame(tick)) : resolve(Math.round(n * 1000 / (now - t0)))
   requestAnimationFrame(tick)
+  setTimeout(() => resolve(null), 2 * WINDOW)  // hidden page guard
 })
 
 // [DOC: device-conditions]
@@ -98,12 +101,25 @@ const signature = async () => ({
   touch: matchMedia('(pointer: coarse)').matches, isolated: crossOriginIsolated, gpu: await adapterInfo(), bench: await gpuBench()
 })
 
+// [DOC: device-load]
+const loadOf = (ratio, fps, hidden) => hidden || !matchMedia('(pointer: coarse)').matches ? 'normal'
+  : ratio > LOAD.bad ? 'bad' : ratio > LOAD.weak || fps && fps < LOAD.fps ? 'weak' : 'normal'
+let measured = null
+export const conditions = () => measured ??= (async () => {
+  const fps = await frameRate(), hidden = document.hidden
+  let took = Infinity
+  for (let i = 0; i < LOAD.spins; i++) {took = Math.min(took, spin()); await new Promise(resolve => setTimeout(resolve))}  // one task each
+  const saved = recall(KEY), best = Math.min(took, saved?.best ?? Infinity)
+  keep(KEY, {...saved, best})
+  return {fps, spin: round(took), best: round(best), ratio: round(took / best, 2), hidden, load: loadOf(took / best, fps, hidden)}
+})()
+
 // [DOC: device-sample]
 export const sampleDevice = async () => {
   const stamp = `${BUILD} ${tg()?.version ?? ''}`, saved = recall(KEY)
   const same = saved?.stamp === stamp, found = same ? saved.signature : await signature()
-  const fps = await frameRate(), took = spin(), best = Math.min(took, saved?.best ?? Infinity)
-  keep(KEY, {stamp, signature: found, best})
+  const now = await conditions()
+  keep(KEY, {...recall(KEY), stamp, signature: found})
   report('device', {...found, cached: same})
-  report('conditions', {fps, spin: round(took), best: round(best), ratio: round(took / best, 2), hidden: document.hidden})
+  report('conditions', now)
 }

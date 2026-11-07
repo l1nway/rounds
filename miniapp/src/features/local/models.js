@@ -1,4 +1,6 @@
-import {busy, report} from '../../services/telemetry.js'
+import {jobId} from '../../services/api.js'
+import {BUILD, busy, keep, recall, report} from '../../services/telemetry.js'
+import {conditions} from './device.js'
 import {loadModels} from './weights.js'
 
 const TOUCH = '(pointer: coarse)'
@@ -19,19 +21,40 @@ let pace = Infinity
 
 // [DOC: local-device]
 const tabStore = () => {try {return sessionStorage} catch {return null}}
+// [DOC: crash-route]
+const OFF = 'rounds.off'
+const video = typeof location === 'object' ? jobId() : null
+const guardStore = () => {try {return video ? localStorage : sessionStorage} catch {return null}}
 
 // [DOC: track-guard]
 let armed = 0
 let backend = 'wasm'
-const mark = () => tabStore()?.setItem(GUARD, backend)
-const unmark = () => tabStore()?.removeItem(GUARD)
+let load = 'normal'
+let calm = false
+const mark = () => guardStore()?.setItem(GUARD, JSON.stringify({backend, load, video}))
+const unmark = () => guardStore()?.removeItem(GUARD)
 const guard = {
   arm: () => {if (!armed++ && !document.hidden) mark()},
   clear: () => {if (!--armed) unmark()}
 }
 
-export const crashed = tabStore()?.getItem(GUARD) || null
+const parse = text => {try {return JSON.parse(text)} catch {return text ? {backend: text} : null}}
+const last = parse(guardStore()?.getItem(GUARD))
+export const crashed = last?.backend ?? null
 unmark()
+
+// [DOC: crash-route]
+const offOf = () => {const off = recall(OFF); return video && off?.video === video && off.build === BUILD ? off : {}}
+const ours = Boolean(video && last?.video === video)
+if (ours && last.load === 'normal') keep(OFF, {...offOf(), video, build: BUILD, [last.backend === 'gpu' ? 'gpu' : 'local']: true})
+if (last) report('crash', {backend: last.backend, load: last.load ?? null, app: video ? 'miniapp' : 'web'})
+export const localOff = () => Boolean(offOf().local)
+const NOTES = {
+  gpu: 'The last try stopped the editor, so this video now runs on the processor: slower, but it needs less memory.',
+  local: 'The last try stopped the editor, so this video now leaves the heavy work to the server.',
+  load: 'The last try stopped the editor, maybe because the phone was hot, cold, low on charge or in Low Power Mode. Let it rest or charge, then try again.'
+}
+export const crashNote = () => calm || !ours ? null : NOTES[last.load !== 'normal' ? 'load' : last.backend === 'gpu' ? 'gpu' : 'local']
 if (typeof document === 'object') {
   document.addEventListener('visibilitychange', () => document.hidden ? unmark() : armed && mark())
   addEventListener('pagehide', unmark)
@@ -45,9 +68,12 @@ export const fast = () => !matchMedia(TOUCH).matches || pace <= FAST_LIFT
 // [DOC: light-memory]
 export const roomy = () => (navigator.deviceMemory ?? 0) >= ROOMY_GB
 
+// [DOC: device-load]
 export const deviceOf = () => device ??= (async () => {
-  const adapter = tabStore()?.getItem(NO_GPU) ? null : await navigator.gpu?.requestAdapter().catch(() => null)
-  return {gpu: Boolean(adapter && !adapter.info?.isFallbackAdapter), wasm: typeof WebAssembly === 'object'}
+  const off = tabStore()?.getItem(NO_GPU) || offOf().gpu
+  const [now, adapter] = await Promise.all([conditions().catch(() => null), off ? null : navigator.gpu?.requestAdapter().catch(() => null)])
+  load = now?.load ?? 'normal'
+  return {gpu: Boolean(adapter && !adapter.info?.isFallbackAdapter) && load === 'normal', wasm: typeof WebAssembly === 'object', load}
 })()
 
 // [DOC: model-worker]
@@ -98,7 +124,7 @@ const timed = (payload, t0, ok, value) => {
 export const call = (payload, transfer = [], onShare) => new Promise((resolve, reject) => {
   if (!worker) return reject(new Error('Model worker is not running'))
   const id = ++seq, t0 = performance.now(), done = busy(kindOf(payload))
-  const settle = (ok, then) => value => {guard.clear(); done(); timed(payload, t0, ok, value); then(value)}
+  const settle = (ok, then) => value => {guard.clear(); done(); timed(payload, t0, ok, value); calm ||= ok && payload.type !== 'load'; then(value)}
   guard.arm()
   calls.set(id, {resolve: settle(true, resolve), reject: settle(false, reject), onShare})
   worker.postMessage({...payload, id}, transfer)

@@ -1,6 +1,6 @@
 # deploy
 
-The free tier's server: an Oracle Cloud Always Free VM (Ampere A1, 4 OCPU, 24 GB, Ubuntu 24.04, arm64) running `rounds.free` (`backend/rounds/README.md`, Free server) behind Caddy. `setup.sh` installs everything; `Caddyfile` and `rounds-free.service` are templates it fills in. `.gitattributes` keeps them LF: a CRLF checkout on Windows breaks bash and systemd.
+The free tier's server: an Oracle Cloud Always Free VM (Ampere A1, arm64, Ubuntu; observed 2026-11-07: 1 OCPU and about 6 GB, not the 4 OCPU / 24 GB of the free allowance this README used to state) running `rounds.free` (`backend/rounds/README.md`, Free server) behind Caddy. `setup.sh` installs everything; `Caddyfile` and `rounds-free.service` are templates it fills in. `.gitattributes` keeps them LF: a CRLF checkout on Windows breaks bash and systemd.
 
 ## Oracle setup
 
@@ -31,13 +31,15 @@ Oracle reclaims an Always Free VM whose 95th percentile of CPU, network and memo
 
 ## Oracle weights
 
-`setup.sh` fetches the Zero-DCE++ checkpoint (`Epoch99.pth`, the AI part of the HDR slider on the free tier, `backend/rounds/README.md`, Free look) to `/opt/repair/zerodce.pth` (`config.DCE_WEIGHTS`) and checks its sha256. URL and hash are a copy of `REPAIR` in `backend/rounds/cloud.py` (bash cannot import it): change both together. Oracle reads the same `.pth` without torch (`backend/rounds/README.md`, Zero-DCE port), so there is no conversion step. The auto-update does not rerun `setup.sh`: on a VM set up before 2026-10-30 run the `sudo curl … && sha256sum -c` line of `setup.sh` once by hand, or a render with the HDR slider above 0.4 fails with a missing file.
+`weights.sh` fetches the weights the VM needs and checks their sha256; a file whose hash already matches is skipped, so the script is safe to run any number of times. `setup.sh` runs it, and so does `update.sh` whenever `backend/` or `weights.sh` changed, before `uv sync` and the restart (since 2026-11-07: until then a VM set up before a weight was added had to fetch it by hand, and the owner's VM had neither file, observed 2026-11-07, so the HDR slider above 0.4 and the tracker would have failed there).
 
-It also fetches the VitTrack ONNX graph (715 kB, the server tracker, `backend/rounds/README.md`, Vit track) to `/opt/track/vittrack.onnx` (`config.VIT_WEIGHTS`). URL and hash are a copy of `vit-track` in `miniapp/src/features/local/weights.js` and of `config.VIT_SHA`: change all three together. `vittrack.load` checks the hash again on load, because on a VM set up before 2026-11-06 the file comes from running the `/opt/track` line of `setup.sh` by hand.
+- The Zero-DCE++ checkpoint (`Epoch99.pth`, the AI part of the HDR slider on the free tier, `backend/rounds/README.md`, Free look) to `/opt/repair/zerodce.pth` (`config.DCE_WEIGHTS`). URL and hash are a copy of `REPAIR` in `backend/rounds/cloud.py` (bash cannot import it): change both together. Oracle reads the same `.pth` without torch (`backend/rounds/README.md`, Zero-DCE port), so there is no conversion step.
+- The VitTrack ONNX graph (715 kB, the server tracker, `backend/rounds/README.md`, Vit track) to `/opt/track/vittrack.onnx` (`config.VIT_WEIGHTS`). URL and hash are a copy of `vit-track` in `miniapp/src/features/local/weights.js`, of `cloud.TRACK` and of `config.VIT_SHA`: change them together. `vittrack.load` checks the hash again on load.
+- Trap: the push that changes `update.sh` itself runs the old copy (bash already read the small file before the merge replaced it), so a weight added in the same push is fetched only by the next backend change, or by `bash deploy/weights.sh` once on the VM.
 
 ## Telemetry queries
 
-The diagnostics live in `/data/telemetry.db` on the VM (`backend/rounds/README.md`, Telemetry). The owner allows read-only queries over SSH without asking each time (2026-11-07). `setup.sh` installs no `sqlite3` CLI, so a query goes through the system Python, opened read-only:
+The diagnostics live in `/data/telemetry.db` on the VM (`backend/rounds/README.md`, Telemetry). The owner allows read-only queries over SSH without asking each time (2026-11-07). The VM answers as `ubuntu@92.5.21.217` with the owner's `~/.ssh/id_ed25519` (checked 2026-11-07; `oci_deploy` is refused, so add `-o IdentitiesOnly=yes -i ~/.ssh/id_ed25519`); the clone is `~/rounds`. `setup.sh` installs no `sqlite3` CLI, so a query goes through the system Python, opened read-only:
 
 ```sh
 ssh <user>@<host> python3 - <<'EOF'

@@ -130,7 +130,7 @@ async def ingest_job(job_id: str, jobs, state, volume) -> None:
 async def render_job(job_id: str, jobs, state, volume, models) -> None:
     import torch
 
-    from . import cache, locate, render, track, upscale
+    from . import cache, devicetrack, locate, render, track, upscale
 
     began = time.monotonic()
     job = await jobs.get.aio(job_id)
@@ -140,7 +140,7 @@ async def render_job(job_id: str, jobs, state, volume, models) -> None:
         facts['gpu'] = torch.cuda.get_device_name().replace(' ', '_') if torch.cuda.is_available() else 'cpu'
         if upscale.wanted(job['meta'], job['request']['options']):
             await upscale.warm(job)
-        if locate.follows(job['meta'], job['request']):
+        if locate.follows(job['meta'], job['request']) and not devicetrack.usable(job['request'].get('track')):
             await asyncio.to_thread(track.load)
         await models.commit.aio()
     with contextlib.suppress(RuntimeError):  # open files of a prepare
