@@ -61,6 +61,7 @@ export default function WebApp() {
     const turn = ++latest.current
     consent?.resolve(false)
     if (source) [source.proxy_url, source.filmstrip_url].forEach(url => URL.revokeObjectURL(url))
+    last.current = null
     dispatch({source: null, result: null, consent: null, notice: PREPARING})
     try {
       const {probe} = await import('../local/probe.js')

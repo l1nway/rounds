@@ -181,6 +181,7 @@ export const attach = video => {
     cancelAnimationFrame(live.frame)
     live.frame = 0
     Object.entries(handlers).forEach(([type, fn]) => video.removeEventListener(type, fn))
-    live.video = null
+    // [DOC: seek-coalescing]
+    Object.assign(live, {video: null, busy: false})
   }
 }

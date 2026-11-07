@@ -103,36 +103,40 @@ export const encode = async (input, {crop, at, steady, start, end, codec, sound,
 export const renderNote = async (file, meta, request, onProgress) => {
   const {start, end, codec, prompt, options, denoise: noise, look, exposure: ev} = request
   const input = open(file)
-  const sound = meta.has_audio ? await audioCodec() : null
-  const follow = follows(meta, request), shaky = request.stabilize > 0, text = follow ? TRACKING : STEADYING
-  let at = null, steady = null
-  if (follow || shaky) {
-    onProgress(0, text)
-    // [DOC: render-progress]
-    const done = [follow, shaky].filter(Boolean).map(() => 0)
-    const report = i => p => {done[i] = Math.max(done[i], p); onProgress(0.4 * done.reduce((a, b) => a + b, 0) / done.length, text)}
-    const [{trackLocal}, {sampler}, stab] = await Promise.all([import('./track-local.js'), import('./camera.js'), import('./stabilize.js')])
-    const flow = shaky && stab.motionOf(file, input, meta, start, end, report(follow ? 1 : 0))
-    if (flow) flow.catch(() => {})
-    const {found, cuts} = follow ? await trackLocal(file, meta, request, report(0)) : {}
-    // [DOC: local-stabilization]
-    const moving = shaky && await stab.pathOf({flow: await flow, found, cuts, meta, request, crop: prompt.crop && frameOf(meta, prompt, Boolean(options.zoom))})
-    if (moving) steady = () => stab.stabilizer(moving, look, ev, OUT, end - start)
-    else if (follow) at = sampler(await stab.solveOff(found, meta.width, meta.height, cuts, 30, Boolean(options.zoom)), cuts)
-  }
-  const crop = at ? null : frameOf(meta, prompt, Boolean(options.zoom))
-  const clean = sound && noise ? await denoise(input, start, end, noise, file) : null
-  if (clean && options.loudnorm) levelPlanes(clean, SAMPLE_RATE)
-  const gain = sound && !clean && options.loudnorm ? await measure(input, start, end) : null
-  const audio = clean ? {processedSampleRate: SAMPLE_RATE, processedNumberOfChannels: clean.length, process: replace(clean)}
-    : gain ? {sampleFormat: 'f32', process: apply(gain)} : null
-  const tags = options.metadata ? keepTags(meta.tags) : null
-  let share = HEADROOM
-  const encodeBase = follow || shaky ? 0.4 : 0, encodeScale = 1 - encodeBase
-  for (let t = 1; ; t++) {
-    const blob = await encode(input, {crop, at, steady, start, end, codec, sound, audio, look, ev, rate: videoRate(end - start, share, sound), tags, onProgress: p => onProgress(encodeBase + encodeScale * (t - 1 + p) / TRIES)})
-    if (blob.size <= NOTE_BYTES) return {blob, silent: meta.has_audio && !sound}
-    if (t >= TRIES) throw new Error('The round came out too big, try a shorter range')
-    share *= SHRINK * NOTE_BYTES / blob.size
+  try {
+    const sound = meta.has_audio ? await audioCodec() : null
+    const follow = follows(meta, request), shaky = request.stabilize > 0, text = follow ? TRACKING : STEADYING
+    let at = null, steady = null
+    if (follow || shaky) {
+      onProgress(0, text)
+      // [DOC: render-progress]
+      const done = [follow, shaky].filter(Boolean).map(() => 0)
+      const report = i => p => {done[i] = Math.max(done[i], p); onProgress(0.4 * done.reduce((a, b) => a + b, 0) / done.length, text)}
+      const [{trackLocal}, {sampler}, stab] = await Promise.all([import('./track-local.js'), import('./camera.js'), import('./stabilize.js')])
+      const flow = shaky && stab.motionOf(file, input, meta, start, end, report(follow ? 1 : 0))
+      if (flow) flow.catch(() => {})
+      const {found, cuts} = follow ? await trackLocal(file, meta, request, report(0)) : {}
+      // [DOC: local-stabilization]
+      const moving = shaky && await stab.pathOf({flow: await flow, found, cuts, meta, request, crop: prompt.crop && frameOf(meta, prompt, Boolean(options.zoom))})
+      if (moving) steady = () => stab.stabilizer(moving, look, ev, OUT, end - start)
+      else if (follow) at = sampler(await stab.solveOff(found, meta.width, meta.height, cuts, 30, Boolean(options.zoom)), cuts)
+    }
+    const crop = at ? null : frameOf(meta, prompt, Boolean(options.zoom))
+    const clean = sound && noise ? await denoise(input, start, end, noise, file) : null
+    if (clean && options.loudnorm) levelPlanes(clean, SAMPLE_RATE)
+    const gain = sound && !clean && options.loudnorm ? await measure(input, start, end) : null
+    const audio = clean ? {processedSampleRate: SAMPLE_RATE, processedNumberOfChannels: clean.length, process: replace(clean)}
+      : gain ? {sampleFormat: 'f32', process: apply(gain)} : null
+    const tags = options.metadata ? keepTags(meta.tags) : null
+    let share = HEADROOM
+    const encodeBase = follow || shaky ? 0.4 : 0, encodeScale = 1 - encodeBase
+    for (let t = 1; ; t++) {
+      const blob = await encode(input, {crop, at, steady, start, end, codec, sound, audio, look, ev, rate: videoRate(end - start, share, sound), tags, onProgress: p => onProgress(encodeBase + encodeScale * (t - 1 + p) / TRIES)})
+      if (blob.size <= NOTE_BYTES) return {blob, silent: meta.has_audio && !sound}
+      if (t >= TRIES) throw new Error('The round came out too big, try a shorter range')
+      share *= SHRINK * NOTE_BYTES / blob.size
+    }
+  } finally {
+    input.dispose()
   }
 }

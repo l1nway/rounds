@@ -1,5 +1,3 @@
-import os
-
 import numpy as np
 
 from . import media, vittrack
@@ -45,8 +43,7 @@ def rest(src, meta: dict, a: float, b: float, prompt: dict, index: int | None) -
                   'r': found['r'] * max(sx, sy), 'area': found['area'] * sx * sy}  # fmt: skip
         return scaled, media.changes(frames)
     finally:
-        if getattr(frames, 'filename', None):
-            os.remove(frames.filename)
+        media.release(frames)
 
 
 def boxed(box: np.ndarray) -> dict:

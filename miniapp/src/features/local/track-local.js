@@ -51,17 +51,22 @@ const grid = (time, start, end, steps, rates = RATES) => {
 
 // [DOC: track-frames]
 async function* frames(file, times, index, [width, height], light) {
-  const track = await open(file).getPrimaryVideoTrack()
-  const sink = light ? null : new CanvasSink(track, {width, height, fit: 'fill', poolSize: 1})
-  // [DOC: light-frames]
-  const each = light ? lightFrames(track, width, height) : async function* (list) {for await (const frame of sink.canvasesAtTimestamps(list)) yield frame?.canvas.getContext('2d').getImageData(0, 0, width, height).data}
-  const read = rgba => rgba ?? new Uint8ClampedArray(width * height * 4)
-  let k = index
-  for await (const rgba of each(times.slice(index))) yield [k++, read(rgba)]
-  for (let hi = index; hi > 0; hi -= CHUNK) {
-    const lo = Math.max(0, hi - CHUNK), chunk = []
-    for await (const rgba of each(times.slice(lo, hi))) chunk.push(read(rgba))
-    for (let i = chunk.length - 1; i >= 0; i--) yield [lo + i, chunk[i]]
+  const input = open(file)
+  try {
+    const track = await input.getPrimaryVideoTrack()
+    const sink = light ? null : new CanvasSink(track, {width, height, fit: 'fill', poolSize: 1})
+    // [DOC: light-frames]
+    const each = light ? lightFrames(track, width, height) : async function* (list) {for await (const frame of sink.canvasesAtTimestamps(list)) yield frame?.canvas.getContext('2d').getImageData(0, 0, width, height).data}
+    const read = rgba => rgba ?? new Uint8ClampedArray(width * height * 4)
+    let k = index
+    for await (const rgba of each(times.slice(index))) yield [k++, read(rgba)]
+    for (let hi = index; hi > 0; hi -= CHUNK) {
+      const lo = Math.max(0, hi - CHUNK), chunk = []
+      for await (const rgba of each(times.slice(lo, hi))) chunk.push(read(rgba))
+      for (let i = chunk.length - 1; i >= 0; i--) yield [lo + i, chunk[i]]
+    }
+  } finally {
+    input.dispose()
   }
 }
 

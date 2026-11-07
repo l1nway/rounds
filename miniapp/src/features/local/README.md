@@ -467,6 +467,8 @@ The path for what the device cannot do, for signed-in users: `POST /api/uploads`
 
 [DOC: miniapp-local] The Mini App feeds the local modules a URL instead of a `File` (`features/job/README.md`, Miniapp local): `open` reads a string with `UrlSource` (HTTP range reads of the CORS-clean proxy, `backend/rounds/README.md`, Look cors), and `identity` keys it by the URL without its query. A signed URL expires (`files.URL_TTL`); a job read gives a fresh one.
 
+Whoever calls `open` disposes the `Input` in a `finally` (`probe`, `renderNote`, `frames` in `track-local.js`, `frameRgba` in `lift-local.js`); a callee that gets the `Input` as an argument never does. Sinks close their decoders when their iteration ends, so this does not free codecs; it frees the source reads and the demuxer at once instead of at GC time, and it cancels a read still running when the caller fails (a `motionOf` left in flight by a failed track stops instead of decoding on).
+
 ## Gpu bench
 
 [DOC: gpu-bench] The tiled matmul, first written for the check panel (removed 2026-11-07, replaced by telemetry). Its design and the phone numbers: Phone findings. It returns numbers (`{first, matmul, gflops}`), and the panel formats them.

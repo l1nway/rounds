@@ -71,7 +71,7 @@ Owner request 2026-10-29, reworked the same day after the iPhone recording `IMG_
 
 ## Web same render
 
-[DOC: web-same-render] `send` remembers the last finished render (`last`: the file, `JSON.stringify(body)`, and the result: the blob, or `remote`). Make round with the same file and the same body shows that result again (a new blob URL, `again: true`, a line saying nothing was rendered twice; for the server path "Already sent with these settings") instead of rendering again. With the editor's submit lock and the server's dedupe (`editor/README.md`, Submit lock) one round is never made twice by accident. Any change of the body renders again.
+[DOC: web-same-render] `send` remembers the last finished render (`last`: the file, `JSON.stringify(body)`, and the result: the blob, or `remote`). Make round with the same file and the same body shows that result again (a new blob URL, `again: true`, a line saying nothing was rendered twice; for the server path "Already sent with these settings") instead of rendering again. With the editor's submit lock and the server's dedupe (`editor/README.md`, Submit lock) one round is never made twice by accident. Any change of the body renders again. Loading another file clears `last` at once: its key can never match again, and it would keep the old round's blob (up to 10 MB) alive until the next render.
 
 ## No background upload
 

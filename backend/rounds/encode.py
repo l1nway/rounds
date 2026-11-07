@@ -53,15 +53,20 @@ def writer(tmp: str, proc: subprocess.Popen) -> tuple[queue.Queue, threading.Thr
     q = queue.Queue(DEPTH)
 
     def run():
-        with open(f'{tmp}/{RAW}', 'wb') as file:
-            ok = True
-            while (b := q.get()) is not None:
-                file.write(b)
-                if ok:
-                    try:
-                        proc.stdin.write(b)
-                    except OSError:
-                        ok = False
+        b, ok = b'', True
+        try:
+            with open(f'{tmp}/{RAW}', 'wb') as file:
+                while (b := q.get()) is not None:
+                    file.write(b)
+                    if ok:
+                        try:
+                            proc.stdin.write(b)
+                        except OSError:
+                            ok = False
+        except OSError:  # [DOC: writer-drain]
+            proc.kill()
+            while b is not None:
+                b = q.get()
         with contextlib.suppress(OSError):
             proc.stdin.close()
 

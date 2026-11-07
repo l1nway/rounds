@@ -31,9 +31,14 @@ const frameRgba = async (job, time, frame) => {
   if (live) await settled(live)
   if (live?.readyState >= 2) return pixels(live, frame)
   const [{CanvasSink}, {open}] = await Promise.all([import('mediabunny'), import('./render.js')])
-  const sink = new CanvasSink(await open(job.file).getPrimaryVideoTrack(), {width: SIDE, height: SIDE, fit: 'fill'})
-  for await (const found of sink.canvasesAtTimestamps([time])) if (found) return pixels(found.canvas, frame)
-  throw new Error('Video frame is not ready')
+  const input = open(job.file)
+  try {
+    const sink = new CanvasSink(await input.getPrimaryVideoTrack(), {width: SIDE, height: SIDE, fit: 'fill'})
+    for await (const found of sink.canvasesAtTimestamps([time])) if (found) return pixels(found.canvas, frame)
+    throw new Error('Video frame is not ready')
+  } finally {
+    input.dispose()
+  }
 }
 
 export const segmentLocal = async (job, prompt, options) => {

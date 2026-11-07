@@ -55,8 +55,8 @@ async def find(src, meta: dict, start: float, end: float, prompt: dict, step, re
             d = await asyncio.to_thread(media.changes, frames)
         return {'start': start, 'n': len(frames), 'found': to_source(found, frames, meta), 'd': d}
     finally:
-        if getattr(frames, 'filename', None):
-            os.remove(frames.filename)
+        if frames is not None:
+            media.release(frames)
 
 
 def sliced(entry: dict | None, start: float, end: float) -> dict | None:

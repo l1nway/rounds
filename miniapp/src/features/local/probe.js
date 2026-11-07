@@ -85,23 +85,27 @@ const sprite = async (track, duration, width) => {
 // [DOC: local-probe]
 export const probe = async file => {
   const input = open(file)
-  const track = await input.getPrimaryVideoTrack().catch(() => null)
-  if (track) await ensureHevc(track)
-  if (!track || !await track.canDecode()) throw new Error(UNREADABLE)
-  const [width, height, duration, audio, off, hdr, metadata, metrics] = await Promise.all([
-    track.getDisplayWidth(), track.getDisplayHeight(), input.computeDuration(), input.getPrimaryAudioTrack(), encoders(),
-    track.hasHighDynamicRange().catch(() => false),
-    input.getMetadataTags().catch(() => null),
-    track.computeFrameRateMetrics().catch(() => null)
-  ])
-  const meta = {
-    width, height, duration,
-    has_audio: Boolean(audio && await audio.canDecode()),
-    interpolable: isInterpolable(metrics),
-    tags: tagsOf(metadata),
-    off, hdr
+  try {
+    const track = await input.getPrimaryVideoTrack().catch(() => null)
+    if (track) await ensureHevc(track)
+    if (!track || !await track.canDecode()) throw new Error(UNREADABLE)
+    const [width, height, duration, audio, off, hdr, metadata, metrics] = await Promise.all([
+      track.getDisplayWidth(), track.getDisplayHeight(), input.computeDuration(), input.getPrimaryAudioTrack(), encoders(),
+      track.hasHighDynamicRange().catch(() => false),
+      input.getMetadataTags().catch(() => null),
+      track.computeFrameRateMetrics().catch(() => null)
+    ])
+    const meta = {
+      width, height, duration,
+      has_audio: Boolean(audio && await audio.canDecode()),
+      interpolable: isInterpolable(metrics),
+      tags: tagsOf(metadata),
+      off, hdr
+    }
+    const tile = Math.min(Math.round(TILE_H * width / height / 2) * 2, 4 * TILE_H)
+    const filmstrip_url = await sprite(track, duration, tile).catch(() => null)
+    return {meta, filmstrip_url, filmstrip: {tiles: TILES, tile_width: tile, tile_height: TILE_H}}
+  } finally {
+    input.dispose()
   }
-  const tile = Math.min(Math.round(TILE_H * width / height / 2) * 2, 4 * TILE_H)
-  const filmstrip_url = await sprite(track, duration, tile).catch(() => null)
-  return {meta, filmstrip_url, filmstrip: {tiles: TILES, tile_width: tile, tile_height: TILE_H}}
 }

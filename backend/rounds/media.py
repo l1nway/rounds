@@ -1,4 +1,5 @@
 import queue
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -127,16 +128,18 @@ def reader(proc, n: int, size: int, dtype):
 
     def run():
         for _ in range(n):
-            buf = free.get()
-            if not read_full(proc.stdout, buf):
+            if (buf := free.get()) is None or not read_full(proc.stdout, buf):
                 break
             ready.put(buf)
         ready.put(None)
 
     threading.Thread(target=run, daemon=True).start()
-    while (buf := ready.get()) is not None:
-        yield buf
-        free.put(buf)
+    try:
+        while (buf := ready.get()) is not None:
+            yield buf
+            free.put(buf)
+    finally:
+        free.put(None)  # [DOC: reader-close]
 
 
 def stop(proc: subprocess.Popen) -> int:
@@ -157,12 +160,22 @@ def fill(proc: subprocess.Popen, frames, n: int) -> int:
 
 
 def track_frames(src, meta: dict, start: float, end: float, long_side: int = 1024) -> np.ndarray:
-    n, (w, h) = frame_count(start, end), fit(meta, long_side)
-    frames = np.memmap(Path(tempfile.mkdtemp()) / 'frames.u8', np.uint8, 'w+', shape=(n, h, w, 3))
+    n, (w, h), tmp = frame_count(start, end), fit(meta, long_side), Path(tempfile.mkdtemp())
     chain = f'{sdr_chain(meta, w, h)},format=rgb24'
-    if not any(fill(decode(src, meta, start, n, chain, 'rgb24', slow=slow), frames, n) for slow in (False, True)):
-        raise source.Unreadable(NO_RANGE)
+    try:
+        frames = np.memmap(tmp / 'frames.u8', np.uint8, 'w+', shape=(n, h, w, 3))
+        if not any(fill(decode(src, meta, start, n, chain, 'rgb24', slow=slow), frames, n) for slow in (False, True)):
+            raise source.Unreadable(NO_RANGE)
+    except BaseException:
+        frames = None  # unmap before removal
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
     return frames
+
+
+# [DOC: track-frames-release]
+def release(frames: np.memmap) -> None:
+    shutil.rmtree(Path(frames.filename).parent, ignore_errors=True)
 
 
 def histogram(frame: np.ndarray) -> np.ndarray:
