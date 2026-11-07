@@ -34,3 +34,19 @@ Oracle reclaims an Always Free VM whose 95th percentile of CPU, network and memo
 `setup.sh` fetches the Zero-DCE++ checkpoint (`Epoch99.pth`, the AI part of the HDR slider on the free tier, `backend/rounds/README.md`, Free look) to `/opt/repair/zerodce.pth` (`config.DCE_WEIGHTS`) and checks its sha256. URL and hash are a copy of `REPAIR` in `backend/rounds/cloud.py` (bash cannot import it): change both together. Oracle reads the same `.pth` without torch (`backend/rounds/README.md`, Zero-DCE port), so there is no conversion step. The auto-update does not rerun `setup.sh`: on a VM set up before 2026-10-30 run the `sudo curl … && sha256sum -c` line of `setup.sh` once by hand, or a render with the HDR slider above 0.4 fails with a missing file.
 
 It also fetches the VitTrack ONNX graph (715 kB, the server tracker, `backend/rounds/README.md`, Vit track) to `/opt/track/vittrack.onnx` (`config.VIT_WEIGHTS`). URL and hash are a copy of `vit-track` in `miniapp/src/features/local/weights.js` and of `config.VIT_SHA`: change all three together. `vittrack.load` checks the hash again on load, because on a VM set up before 2026-11-06 the file comes from running the `/opt/track` line of `setup.sh` by hand.
+
+## Telemetry queries
+
+The diagnostics live in `/data/telemetry.db` on the VM (`backend/rounds/README.md`, Telemetry). The owner allows read-only queries over SSH without asking each time (2026-11-07). `setup.sh` installs no `sqlite3` CLI, so a query goes through the system Python, opened read-only:
+
+```sh
+ssh <user>@<host> python3 - <<'EOF'
+import sqlite3
+db = sqlite3.connect('file:/data/telemetry.db?mode=ro', uri=True)
+for row in db.execute("select kind, count(*) from events group by kind"): print(row)
+EOF
+```
+
+- One device over time: `where install = ? order by t`.
+- Deaths during work: sessions whose last event is a `beat`, or a `previous` whose last event is a `beat`.
+- The signature fields: `json_extract(data, '$.gpu.limits.maxBufferSize')`, `'$.bench.gflops'`, `'$.screen'`.

@@ -7,7 +7,6 @@ from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field, model_validator
 
 from . import auth, bot, files, transfer
@@ -74,11 +73,9 @@ class LookRequest(BaseModel):
     exposure: float = Field(0, ge=-2, le=2)
 
 
-# [DOC: telegram-login]
-class Login(BaseModel):
-    code: str = Field(max_length=512)
-    verifier: str = Field(min_length=43, max_length=128)
-    redirect: str = Field(max_length=512)
+# [DOC: lift-history]
+class Warm(BaseModel):
+    lift: Literal['server', 'local'] = 'server'
 
 
 # [DOC: tiers]
@@ -120,19 +117,10 @@ def create(jobs, state, volume, spawn, tier: str = 'pro') -> FastAPI:
         if not hmac.compare_digest(token, env('TELEGRAM_WEBHOOK_SECRET')):
             raise HTTPException(403)
         update = await request.json()  # [DOC: webhook-dedupe]
-        await transfer.once(state, update.get('update_id'), partial(bot.feed, update, jobs, spawn, volume))
+        await transfer.once(state, update.get('update_id'), partial(bot.feed, update, jobs, state, spawn, volume))
         return {}
 
-    # [DOC: telegram-login]
-    @api.get('/api/auth/start')
-    async def login_start(redirect: str, challenge: str, state: str):
-        if not redirect.startswith(f'{origin}/'):
-            raise HTTPException(400, 'Unknown page')
-        return RedirectResponse(auth.login_url(redirect, challenge, state))
-
-    @api.post('/api/auth')
-    async def login(body: Login):
-        return await auth.login(body.code, body.verifier, body.redirect)
+    auth.mount(api, origin)  # [DOC: telegram-login]
 
     @api.get('/api/jobs/{job_id}')
     async def get_job(job_id: str, request: Request, authorization: str = Header('')):
@@ -172,9 +160,11 @@ def create(jobs, state, volume, spawn, tier: str = 'pro') -> FastAPI:
         return {'status': 'rendering'}
 
     @api.post('/api/jobs/{job_id}/warm', status_code=202)
-    async def warm(job_id: str, authorization: str = Header('')):
-        await own_job(job_id, authorization)
-        await spawn['warm']()  # [DOC: render-warm]
+    async def warm(job_id: str, body: Warm | None = None, authorization: str = Header('')):
+        job, lift = await own_job(job_id, authorization), (body or Warm()).lift
+        await state.put.aio(bot.LIFT.format(job['user_id']), lift)  # [DOC: lift-history]
+        if lift == 'server':
+            await spawn['warm']()  # [DOC: render-warm]
         return {}
 
     # [DOC: lift]

@@ -1,6 +1,15 @@
 # router
 
-A Cloudflare Worker (`worker.js`, no dependencies, no build) in front of both backends. It is the Telegram webhook target and the Mini App's `VITE_API_URL`. Deployed by hand from the Cloudflare dashboard (paste `worker.js`), so there is no `wrangler.toml`.
+A Cloudflare Worker (`worker.js`, no dependencies, no build) in front of both backends. It is the Telegram webhook target and the Mini App's `VITE_API_URL`. Deployed by `.github/workflows/router.yml` on a push to `main` that touches `router/` (Router deploy).
+
+## Router deploy
+
+The workflow runs `wrangler deploy` (`cloudflare/wrangler-action`, wrangler pinned) with `wrangler.toml`: name `rounds-router` (the `API_URL` repository variable, `https://rounds-router.l1nway.workers.dev`), `main = 'worker.js'`, no build.
+- `keep_vars = true`: without it a deploy deletes the plain-text variables set in the dashboard (`MODAL_URL`, `ORACLE_URL`). Secrets survive a deploy either way (Cloudflare docs, Wrangler configuration, read 2026-11-07). Variables stay in the dashboard (Router secrets), never in `wrangler.toml`.
+- `compatibility_date` is now set by the file, not the dashboard. The Worker uses only Web APIs plus `crypto.subtle.timingSafeEqual`, so a newer date changes nothing it relies on (reasoned, not checked on Cloudflare).
+- GitHub secrets: `CLOUDFLARE_API_TOKEN` (template "Edit Cloudflare Workers"), `CLOUDFLARE_ACCOUNT_ID`. The job fails with a readable line when they are missing.
+- Checked: `wrangler deploy --dry-run` bundles the Worker (7.4 KiB, no bindings). Not checked: a real deploy from Actions.
+- A paste into the dashboard still works, but the next push overwrites it.
 
 ## Router
 
@@ -73,3 +82,7 @@ Checked in Node 24 (2026-10-29, scratch test with a mocked `fetch`, `WAIT` and `
 ## Limits
 
 Free plan (developers.cloudflare.com/workers/platform/limits/, read 2026-10-27): 100 000 requests a day, 10 ms CPU per request (HMACs are well under it; waiting on `fetch` does not count), 100 MB request body. The last one is why browser uploads go in 50 MB parts (`backend/rounds/README.md`, Browser upload). Also (read 2026-10-29): 128 MB memory per isolate (why `BUFFER` is 16 MB), 50 subrequests per request (a fallback uses two), 6 connections waiting for headers at once, and no time limit on a subrequest while the client stays connected (so the 45 s `WAIT` is ours, not Cloudflare's).
+
+## Router telemetry
+
+[DOC: router-telemetry] `/api/telemetry` goes to Oracle for every caller, `pro` included, with no auth check in the Worker: the body carries the credentials and Oracle checks them (`backend/rounds/README.md`, Telemetry). Modal never sees the route, so diagnostics cost no credits.

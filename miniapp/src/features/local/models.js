@@ -1,3 +1,4 @@
+import {busy, report} from '../../services/telemetry.js'
 import {loadModels} from './weights.js'
 
 const TOUCH = '(pointer: coarse)'
@@ -10,6 +11,8 @@ const NO_GPU = 'rounds.no-gpu'
 const FAST_LIFT = 800
 // [DOC: light-memory]
 const ROOMY_GB = 8
+// [DOC: model-telemetry]
+const QUIET = 2000
 
 let device = null
 let pace = Infinity
@@ -53,6 +56,7 @@ let touched = false
 let seq = 0
 const calls = new Map()
 const groups = new Map()
+const stats = {calls: {}, timer: 0}
 
 // [DOC: gpu-teardown]
 const fail = error => {
@@ -73,14 +77,30 @@ const spawn = () => {
     if (error) call?.reject(new Error(error))
     else call?.resolve(result)
   }
-  worker.onerror = event => fail(new Error(event.message || 'Model worker failed'))
+  worker.onerror = event => {
+    report('model.fail', {message: String(event.message).slice(0, 500), touched})
+    fail(new Error(event.message || 'Model worker failed'))
+  }
+}
+
+// [DOC: model-telemetry]
+const summary = () => {report('model.calls', stats.calls); stats.calls = {}}
+const kindOf = ({group, type, rgba}) => `${group}.${type === 'segment' && !rgba ? 'lookup' : type}`
+const timed = (payload, t0, ok, value) => {
+  const key = `${kindOf(payload)}.${backend}${ok ? '' : '.failed'}`, took = performance.now() - t0
+  const s = stats.calls[key] ??= {n: 0, ms: 0, max: 0, first: Math.round(took)}
+  s.n++; s.ms = Math.round(s.ms + took); s.max = Math.max(s.max, Math.round(took))
+  if (!ok) s.error = String(value?.message).slice(0, 300)
+  clearTimeout(stats.timer)
+  stats.timer = setTimeout(summary, QUIET)
 }
 
 export const call = (payload, transfer = [], onShare) => new Promise((resolve, reject) => {
   if (!worker) return reject(new Error('Model worker is not running'))
-  const id = ++seq
+  const id = ++seq, t0 = performance.now(), done = busy(kindOf(payload))
+  const settle = (ok, then) => value => {guard.clear(); done(); timed(payload, t0, ok, value); then(value)}
   guard.arm()
-  calls.set(id, {resolve: value => {guard.clear(); resolve(value)}, reject: error => {guard.clear(); reject(error)}, onShare})
+  calls.set(id, {resolve: settle(true, resolve), reject: settle(false, reject), onShare})
   worker.postMessage({...payload, id}, transfer)
 })
 
@@ -102,6 +122,7 @@ export const ready = (group, names, options = {}) => {
     touched ||= gpu
     const result = await call({type: 'load', group, bufs, gpu, keep: !touch, solo, cache: touch ? options.cache : undefined}, bufs, prepare(READ, 1))
     backend = result.gpu ? 'gpu' : 'wasm'
+    report('model.load', {group, names, asked: gpu, gpu: result.gpu, reason: result.reason ?? null, cache: touch ? options.cache ?? null : null})
     if (result.reason && import.meta.env.DEV) console.warn('WebGPU failed, running on the processor:', result.reason)
     options.onLoaded?.()
     return result

@@ -966,6 +966,8 @@ The browser version keeps `<user id>.<expiry>.<hex HMAC-SHA256>` from `POST /api
 
 ## Telegram login
 
+The two routes live in `auth.mount`, moved from `api.py` on 2026-11-07 to keep that file under 200 lines.
+
 OpenID Connect, authorization code with PKCE (core.telegram.org/bots/telegram-login, read 2026-10-27), ported from w2w (`what-to-watch/functions/src/telegram.ts`, its README `telegram-auth`), where the same traps were found:
 
 1. The page makes the PKCE verifier and `state` itself (kept in its `sessionStorage`) and navigates to `GET /api/auth/start?redirect&challenge&state`, which answers 302 to `oauth.telegram.org/auth` with `client_id` = the bot id (the part of the bot token before `:`; the docs: the client id is the bot id) and `scope=openid profile telegram:bot_access`. The endpoint only exists so the page needs no build-time bot id; it refuses a `redirect` outside the Mini App origin (`MINIAPP_URL`), so it is no open redirector.
@@ -1133,3 +1135,37 @@ The Stabilize slider on the Oracle free tier (owner 2026-10-30), the same stages
 - Then, as on Modal: the Zero-DCE++ α (main, `freelook.Alpha` on the subsampled pixels of the filled frame) and a second worker round for the curve and the 4:2:0 encode (`freestab.finish`).
 - Parity (2026-10-30, CPU, torch 2.14, against the torch code): `weights` 0.0 and identical bounds on 5 cases (edges, crop, 1:1); window + turned at angles 0, 0.07, −0.31: max 3.0e-7; `Edges.bad` identical masks; `alpha` 1.2e-7; `spread` 3.6e-7; the whole `fill.frames` stage over 40 random 64² frames with a synthetic shaky world (11 % of the circle painted): max 1.2e-7. End to end, IMG_7045 6–8.5 s, stabilize 0.75, the same plan: the Modal frame chain (`render.cfr` + `render.crop` + `fill.frames`, CPU) against `freestab.frames` before the encode: 75 frames, PSNR 41.7 dB in gamma (min 41.71, mean 41.78). The gap is the colour path, not the warp: FFmpeg converts 8-bit 4:2:0 to RGB on Oracle, Modal upsamples chroma with Lanczos in float.
 - Checked 2026-10-30 on the owner's busy PC (BelowNormal): `crop.render`, 3 s, AV1, 90 of 90 frames each: no selection, stabilize 0.75: 95 s; a box, look 0.9, stabilize 0.75: 136 s. Frames look right (box kept in the circle, colours right). Not run on the A1 (`BUGS.md`, Unmeasured).
+
+## Telemetry
+
+[DOC: telemetry] Anonymous diagnostics from the Mini App and the browser version (owner decision 2026-11-07), stored on the Oracle VM only. They tune the device routing (which device gets WebGPU, which stage runs where, the device / Oracle / Modal time model) and find crashes on devices nobody here owns. `telemetry.py`, mounted by `free.py` only: Modal has no such route, and the router sends `/api/telemetry` to Oracle for every caller (`router/README.md`, Router telemetry), so diagnostics never cost credits. Client side: `miniapp/src/services/README.md`, Telemetry.
+
+- `POST /api/telemetry`, body `text/plain` JSON: `{auth, install, session, build, events: [{t, kind, data}]}`. `auth` holds what the `Authorization` header holds elsewhere (`tma <initData>` or `web <session>`), checked by `auth.user_of`. It is in the body because a header makes the request non-simple: a CORS preflight, which a `keepalive` request sent from `pagehide` may never get through.
+- Answers: 204; 401 on bad auth; 413 over 48 KB (`BODY`, under the 64 KB that `keepalive` allows in flight); 422 on a bad shape (ids 16–32 hex chars, `kind` matching `^[a-z][a-z0-9.-]*$` up to 32 chars, up to 60 events); 429 over 60 batches a minute per user.
+- Storage: `/data/telemetry.db`, one table `events(at, install, session, build, t, kind, data)`: `at` is server time in seconds, `t` the device clock in ms, `data` JSON (read it with `json_extract`). It is a separate file from `rounds.db`: queries and the sweep never lock job state. `free.sweep` deletes rows older than 90 days (`KEEP`) every hour.
+- Event kinds, the client being the source of truth: `open`, `previous` (the previous page's black box), `device`, `conditions`, `device.fail`, `model.load`, `model.calls`, `model.fail`, `beat`, `error`, `rejection`, `hidden`, `visible`, `pagehide`.
+- How to read it: `deploy/README.md`, Telemetry queries.
+- Checked 2026-11-07 with FastAPI's test client and a temporary DB: 204 for a good batch; 401, 422 (bad id, bad kind), 413 and 429 (the 61st batch in a minute); the sweep empties old rows.
+
+## Telemetry privacy
+
+[DOC: telemetry-privacy] Never stored: the Telegram user id, the IP, the job id, file names, frames, selections.
+
+- `install` is a random id kept in the device's `localStorage`; `session` is new on every page load.
+- The user id read from `auth` lives only in the rate limiter's in-memory dict (`Telemetry.counts`: this minute's counts, lost on restart) and never reaches the DB.
+- Do not add the job id to an event: the jobs table holds `user_id`, so a job id would link a device to a person.
+- Caddy keeps no access log (no `log` directive in `deploy/Caddyfile`). Uvicorn's access log in journald shows the address Caddy forwards. Reasoned, not checked on the VM: Caddy does not trust an incoming `X-Forwarded-For` by default, so that address is the Worker's egress, not the user's.
+- Telegram's rules (read 2026-11-07):
+  - Every bot needs a privacy policy. The Standard Bot Privacy Policy applies to every bot and Mini App until its developer publishes their own (telegram.org/privacy-tpa, 2.1).
+  - Its 4.4 allows "anonymous data that is not linked to you in any way, such as anonymized diagnostics or usage statistics", which is what this is. So no policy of our own is required.
+  - The Developer Terms (telegram.org/tos/bot-developers, section 4) ask to delete data once it is no longer needed: hence the 90 days.
+
+## Lift history
+
+[DOC: lift-history] `bot.video` warms `Lift` early (Warm start) only when this user's last editor did not lift on the device (owner decision 2026-11-07, to save Modal credits).
+
+- `POST /api/jobs/{id}/warm` takes an optional body `{lift: 'server' | 'local'}`. The default is `server`, so an older Mini App behaves as before.
+- It stores the value in `state` under `lift:{user_id}` (`bot.LIFT`) and spawns `Lift.warm` only for `server`.
+- `bot.video` reads the key: `local` skips the early warm-up, and no record warms as before.
+- The Mini App posts `local` when its lift runs on the device (`miniapp/src/features/viewer/README.md`, Lift history). Today the Mini App always lifts on the server, so nothing changes until the local lift lands there.
+- The aiogram handler kwarg is `history`, not `state`: aiogram injects its FSM context under the name `state`.

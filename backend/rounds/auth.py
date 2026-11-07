@@ -8,7 +8,9 @@ from urllib.error import URLError
 from urllib.parse import parse_qsl, urlencode
 from urllib.request import Request, urlopen
 
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import RedirectResponse
+from pydantic import BaseModel, Field
 
 from . import config
 from .config import env
@@ -18,6 +20,13 @@ SCOPE = 'openid profile telegram:bot_access'
 INIT_DATA_TTL, SESSION_TTL = 24 * 3600, 30 * 24 * 3600
 TOKEN_TIMEOUT = 15
 FAILED = 'Telegram did not confirm the sign-in, try again'
+
+
+# [DOC: telegram-login]
+class Login(BaseModel):
+    code: str = Field(max_length=512)
+    verifier: str = Field(min_length=43, max_length=128)
+    redirect: str = Field(max_length=512)
 
 
 def secret(label: bytes) -> bytes:
@@ -112,3 +121,16 @@ async def login(code: str, verifier: str, redirect: str) -> dict:
     tier = 'pro' if user_id in config.allowed_users() else 'free'  # [DOC: tiers]
     profile = {'id': user_id, 'name': name, 'photo': user.get('picture'), 'tier': tier}
     return {'token': session(user_id), 'user': profile}
+
+
+# [DOC: telegram-login]
+def mount(api: FastAPI, origin: str) -> None:
+    @api.get('/api/auth/start')
+    async def login_start(redirect: str, challenge: str, state: str):
+        if not redirect.startswith(f'{origin}/'):
+            raise HTTPException(400, 'Unknown page')
+        return RedirectResponse(login_url(redirect, challenge, state))
+
+    @api.post('/api/auth')
+    async def sign_in(body: Login):
+        return await login(body.code, body.verifier, body.redirect)

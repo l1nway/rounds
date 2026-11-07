@@ -7,6 +7,8 @@ const dev = existsSync(DEV) && (await import(DEV.href)).default()
 
 // [DOC: build-target]
 const TARGET = ['safari18', 'chrome130', 'firefox131']
+// [DOC: telemetry-build]
+const BUILD = process.env.GITHUB_SHA?.slice(0, 7) ?? 'dev'
 
 // [DOC: launch-router]
 const WEB = 'src/web.jsx'
@@ -46,6 +48,7 @@ const inlineCss = {
 export default defineConfig({
   base: './',
   plugins: [launch, inlineCss, dev],
+  define: {__BUILD__: JSON.stringify(BUILD)},
   // [DOC: preact]
   resolve: {alias: {'react-dom/client': 'preact/compat/client', 'react-dom': 'preact/compat', react: 'preact/compat'}},
   oxc: {jsx: {runtime: 'automatic', importSource: 'preact'}},

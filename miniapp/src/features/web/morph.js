@@ -12,6 +12,7 @@ const REVEAL = 0.32
 const CIRCLE = 0.6
 const TRAVEL = 0.4
 const ROUND = 0.38
+const PILL = '.web .editor-bar:not([data-inline])'
 const LIFT = [{opacity: 0, transform: 'translateY(12px) scale(0.97)', filter: 'blur(6px)'}, {opacity: 1, transform: 'none', filter: 'none'}]
 
 export const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -84,13 +85,26 @@ export function useMorph(card, origin, open) {
 
 export function useScrim(open, mounted) {
   const scrim = useRef(null)
+  // [DOC: web-toolbar]
+  useLayoutEffect(() => {
+    const el = scrim.current, root = document.documentElement
+    if (!el) return
+    el.style.setProperty('--web-y', `${scrollY}px`)
+    root.toggleAttribute('data-modal', true)
+    return () => root.removeAttribute('data-modal')
+  }, [mounted])
   useLayoutEffect(() => {
     const el = scrim.current
     if (!el) return
-    const from = getComputedStyle(el, '::before').opacity
+    const from = Number(getComputedStyle(el, '::before').opacity)
     el.getAnimations({subtree: true}).forEach(animation => animation.effect?.pseudoElement === '::before' && animation.cancel())
-    const duration = reduced() ? 0 : open ? GROW : SHRINK
-    el.animate({opacity: [from, open ? 1 : 0]}, {pseudoElement: '::before', duration, easing: open ? SETTLE : EXIT, fill: 'forwards'})
+    const timing = {duration: reduced() ? 0 : open ? GROW : SHRINK, easing: open ? SETTLE : EXIT, fill: 'forwards'}
+    el.animate({opacity: [from, open ? 1 : 0]}, {pseudoElement: '::before', ...timing})
+    // [DOC: web-pill-fade]
+    document.querySelectorAll(PILL).forEach(pill => {
+      pill.getAnimations().forEach(animation => animation.id === 'scrim' && animation.cancel())
+      pill.animate({opacity: [1 - from, open ? 0 : 1]}, {...timing, id: 'scrim'})
+    })
   }, [open, mounted])
   return scrim
 }

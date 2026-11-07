@@ -15,6 +15,7 @@ from .config import JOBS_DIR, OUT_SIZE, env
 
 MAX_FILE = 2000 * 1024 * 1024
 WARM_FILE = 100 * 1024 * 1024
+LIFT = 'lift:{}'  # [DOC: lift-history]
 TEXTS = {
     'start': 'Send me a video, ideally as a file (attach → File) so Telegram does not compress it. '
     'An old round or a forwarded video works too. '
@@ -71,8 +72,8 @@ async def session(_=None):
         await get_bot().session.close()
 
 
-async def feed(update: dict, jobs, spawn, volume) -> None:
-    await dp.feed_webhook_update(get_bot(), update, jobs=jobs, spawn=spawn, volume=volume)
+async def feed(update: dict, jobs, state, spawn, volume) -> None:
+    await dp.feed_webhook_update(get_bot(), update, jobs=jobs, history=state, spawn=spawn, volume=volume)
 
 
 # [DOC: launch-aspect]
@@ -161,7 +162,7 @@ async def start(message: Message) -> None:
 
 
 @dp.message(VIDEO)
-async def video(message: Message, jobs, spawn) -> None:
+async def video(message: Message, jobs, history, spawn) -> None:
     media = message.video or message.video_note or message.document
     if media.file_size and media.file_size > MAX_FILE:
         await message.reply(TEXTS['too_big'])
@@ -178,7 +179,8 @@ async def video(message: Message, jobs, spawn) -> None:
     await jobs.put.aio(job_id, job)
     await spawn['ingest'](job_id)
     # [DOC: warm-start]
-    if (media.file_size or MAX_FILE) <= WARM_FILE:
+    local = await history.get.aio(LIFT.format(message.from_user.id)) == 'local'  # [DOC: lift-history]
+    if (media.file_size or MAX_FILE) <= WARM_FILE and not local:
         await spawn['warm']()
 
 

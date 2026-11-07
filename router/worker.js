@@ -1,5 +1,6 @@
 // [DOC: router]
 const INIT_DATA_TTL = 24 * 3600
+const TELEMETRY = '/api/telemetry'  // [DOC: router-telemetry]
 const FILE = /^\/api\/jobs\/[\w-]+\/[\w.-]+$/
 const TIERS = [['pro', true], ['free', false]]
 // [DOC: modal-fallback]
@@ -134,6 +135,7 @@ export default {
     const url = new URL(request.url)
     if (url.pathname === '/telegram/webhook' && request.method === 'POST') return webhook(request, env)
     if (!url.pathname.startsWith('/api/')) return new Response(null, {status: 404})
+    if (url.pathname === TELEMETRY) return forward(request, env, false)
     if (request.method === 'GET' && FILE.test(url.pathname)) {
       const pro = await fileTier(env, url.pathname, url.searchParams)
       return pro === null ? new Response(null, {status: 403}) : pro ? toPro(request, env) : forward(request, env, false)

@@ -6,7 +6,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from . import bot, cache, config, crop, freelook, pipeline, ticker, transfer
+from . import bot, cache, config, crop, freelook, pipeline, telemetry, ticker, transfer
 from .api import create
 from .config import DATA_DIR, JOBS_DIR
 from .pipeline import MB
@@ -24,6 +24,7 @@ os.makedirs(JOBS_DIR, exist_ok=True)
 jobs, state, disk = Store(f'{DATA_DIR}/rounds.db', 'jobs'), Store(f'{DATA_DIR}/rounds.db', 'state'), Disk()
 lanes = {k: asyncio.Semaphore(v) for k, v in (('ingest', INGESTS), ('render', RENDERS), ('look', PREVIEWS))}
 running = set()
+reports = telemetry.Telemetry()  # [DOC: telemetry]
 
 
 # [DOC: free-render]
@@ -83,6 +84,7 @@ async def sweep() -> None:
         async for key, at in state.items.aio():
             if key.startswith(transfer.SEEN) and at < old:  # [DOC: webhook-dedupe]
                 await state.pop.aio(key, None)
+        reports.sweep()
         await asyncio.sleep(SWEEP)
 
 
@@ -105,6 +107,7 @@ async def look(job_id: str, at: float, name: str, meta: dict, value: float, ev: 
 
 app = create(jobs, state, disk, {'ingest': queued('ingest', ingest), 'render': queued('render', render_job),
                                   'warm': idle, 'look': look}, tier='free')  # fmt: skip
+telemetry.mount(app, reports)
 inner = app.router.lifespan_context
 
 

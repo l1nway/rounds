@@ -286,3 +286,6 @@ On a `free` job (`editor/README.md`, Tiers) `useLift` and `useFollow` get no ser
 
 Owner request 2026-10-29: a button in the picture's top-right corner (shown while `look > 0 || exposure !== 0`) shows the original: `Viewer` passes `look` / `exposure` as 0 to `Look` while held (the preview effects are the only ones the viewer shows). With hover: held while the pointer is down (pointer capture), or Space/Enter. Without hover (`(hover: none)`): focus turns it on (the tap focuses it explicitly, since Safari does not focus buttons); a second tap, a tap elsewhere or a scroll blurs it and turns it off. Positioned with container units from `--aspect` so it sits on the picture, not the letterbox.
 
+## Lift history
+
+[DOC: lift-history] `useLift` posts `warm` with `lift: 'local'` when `job.lift` is a function (the lift runs on the device) inside Telegram. The bot then skips the next early GPU warm-up for this user (`backend/rounds/README.md`, Lift history). A server lift posts the plain warm-up, which records `server`. The browser version posts nothing: its uploads do not go through `bot.video`.

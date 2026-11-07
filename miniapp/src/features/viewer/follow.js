@@ -2,6 +2,7 @@ import {useEffect, useRef, useState} from 'react'
 import {frameOf, watchPlayer} from '../../hooks/player.js'
 import {createStore} from '../../hooks/state.js'
 import {segment, track, warmLift} from '../../services/api.js'
+import {inTelegram} from '../../services/telegram.js'
 
 const DELAY = 600
 const SLACK = 0.2
@@ -119,8 +120,12 @@ export function useLift(job, dispatch, readOnly) {
   const id = job?.lift ?? (job?.tier === 'free' ? null : job?.id)  // [DOC: tiers]
   if (job !== seen) {setSeen(job); setLift(prefilled(job))}
 
+  const jobKey = job?.id
   useEffect(() => {
-    if (typeof id !== 'string' || readOnly) return
+    if (readOnly) return
+    // [DOC: lift-history]
+    if (typeof id === 'function' && inTelegram() && jobKey) warmLift(jobKey, 'local').catch(() => {})
+    if (typeof id !== 'string') return
     let last = 0
     const wake = () => {
       if (document.visibilityState !== 'visible' || Date.now() - last < WARM_GAP) return
@@ -130,7 +135,7 @@ export function useLift(job, dispatch, readOnly) {
     wake()
     document.addEventListener('visibilitychange', wake)
     return () => document.removeEventListener('visibilitychange', wake)
-  }, [id, readOnly])
+  }, [id, jobKey, readOnly])
 
   // [DOC: single-flight]
   const send = () => {

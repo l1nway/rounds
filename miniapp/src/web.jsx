@@ -5,8 +5,12 @@ import web from './features/web/web.css?inline'
 import WebApp from './features/web/web-app.jsx'
 import {reloadOnStaleChunk} from './services/stale.js'
 import {enter} from './services/telegram.js'
+import {startTelemetry} from './services/telemetry.js'
 
 reloadOnStaleChunk()
+
+// [DOC: telemetry]
+const sampleDevice = () => import('./features/local/device.js').then(device => device.sampleDevice())
 
 // [DOC: no-seo]
 const TITLE = 'Round maker: turn any video into a Telegram round'
@@ -22,5 +26,6 @@ else {
   document.head.append(Object.assign(document.createElement('meta'), {name: 'description', content: DESCRIPTION}))
   document.head.append(Object.assign(document.createElement('style'), {textContent: account + web}))
   enter()
+  startTelemetry(sampleDevice)
   createRoot(document.getElementById('root')).render(<WebApp/>)
 }

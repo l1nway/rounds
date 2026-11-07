@@ -89,3 +89,7 @@ Owner request 2026-10-26 (recording `IMG_0407.MP4`, iPhone SE2): after Telegram'
 - Reduced motion: no hiding and no animation (both rules sit inside `prefers-reduced-motion: no-preference`).
 - Cost: `filter` and `scale` only (no layout); four blocks for under a second, once per open. Checked in the mock (Edge headless, 375 × 667, dark, CPU ×4, slow 4G, CDP screencast): the four steps and the filmstrip wave play in order; perf harness unchanged (CLS 0.000, M LCP 2568 ms against 2572 before, Entry 16.4 KB). The feel on the iPhone is for the owner to judge.
 - The grey sheet with the Telegram icon before the page (about 2 s in the recording) and its jump to black are Telegram's own loading screen, not the page: its colours and icon are set in @BotFather (Bot Settings → Configure Mini App, loading screen; Bot API 8.0). Matching its dark background to the dark `bg_color` removes the jump.
+
+## Telemetry
+
+[DOC: telemetry] Both entries start the diagnostics before the first render and hand them the lazy device sampler (`services/README.md`, Telemetry).

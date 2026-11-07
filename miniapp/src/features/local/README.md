@@ -419,3 +419,49 @@ The path for what the device cannot do, for signed-in users: `POST /api/uploads`
 - Stream handling: parses MP4 `hvcC` (`HEVCDecoderConfigurationRecord`, byte 21 length size + byte 22 arrays) and feeds VPS, SPS, and PPS parameter sets to `decoder.pushNal()`; packet payloads are sliced by NAL length prefix and decoded frame by frame (`decoder.pushEndOfFrame()`). Unconfigured streams (e.g. Matroska Annex B) fall back to continuous `decoder.pushData()`.
 - Output: decoded Y, U, V planes (`image.getImagePlane(0..2)`) are packed into an I420 planar buffer and emitted as Mediabunny `VideoSample` instances backed by `new VideoFrame(buf, {format: 'I420', ...})` (or planar `VideoSample` buffer fallback), maintaining presentation order and timestamps.
 - Measured in Node and Edge (2026-10-29): 10 frames of 320 × 240 HEVC MP4 decoded in under 20 ms with 0 dropped frames; native `isConfigSupported` on Edge Windows returns `true` (native decoder used), while in headless/non-HEVC environments `track.canDecode()` succeeds via `HevcWasmDecoder`.
+
+## Device sample
+
+[DOC: device-sample] `device.js`, `sampleDevice()`: once per page load, 3 s after start, called from the entry (`services/README.md`, Telemetry).
+- **What `device` holds:**
+  - the platform and Telegram version, the UA, the cores;
+  - `deviceMemory` (Chromium only);
+  - the screen and DPR, touch, cross-origin isolation;
+  - the WebGPU adapter: vendor and architecture, the fallback flag, whether a device can be created, every `adapter.limits` value and the feature list;
+  - the GPU bench (Gpu bench).
+- **Caching.** The signature is cached in `rounds.device` per build and Telegram version (`stamp`), so the bench runs once per new build, not on every open.
+- **Memory.** The bench creates and destroys its own device on the page, before any ORT session. On the SE2, "Run all" ran the bench before the lift and the lift still ran, so it left no lasting memory there. On other devices this is reasoned.
+- **Use.** The data feeds the routing decisions. No routing code reads it yet.
+
+## Device conditions
+
+[DOC: device-conditions] `conditions`, reported once per page:
+- the `requestAnimationFrame` rate over 1 s (30 in Low Power Mode, `web-platforms.md`);
+- a `Math.sqrt` spin of 5·10⁶ steps: 8 ms on the owner's PC. The removed check panel spun 2·10⁷, so its `pace.spin` numbers in Phone findings are 4× these;
+- `best`, the fastest spin this install ever had, and `ratio = spin / best`. A ratio well above 1 means the device is slow right now (heat, cold, low charge). No threshold is set yet;
+- `hidden`: the sample was taken in the background, where timers are throttled. Ignore such a sample.
+
+## Gpu bench
+
+[DOC: gpu-bench] The tiled matmul, first written for the check panel (removed 2026-11-07, replaced by telemetry). Its design and the phone numbers: Phone findings. It returns numbers (`{first, matmul, gflops}`), and the panel formats them.
+
+## Model telemetry
+
+[DOC: model-telemetry] `models.js` reports:
+- `model.load` per group: whether WebGPU was asked for and obtained, the fallback reason, the cache mode;
+- `model.fail` on a worker `error`. Not on a deliberate release, which goes through the same `fail`;
+- `model.calls` 2 s after the last call (`QUIET`). Per `group.type.backend` key: the count, total and max ms, the first call's ms, and the last error for `.failed` keys.
+- `segment` calls without pixels (the embedding-cache lookup of `lift-local.js`) count as `lift.lookup`, so they do not dilute the lift times.
+- Every call also opens a beat span (`services/README.md`, Telemetry beat).
+
+## Phone findings
+
+What the device check panel measured in Telegram's own web view (Telegram 9.6, 2026-11-06/07). The panel (`features/check/`, pro jobs only) was removed on 2026-11-07, once telemetry took over as the source (owner); `git show 950e6ac` has its code and full README. Its spin was 2·10⁷ steps (4× Device conditions).
+
+- **Gpu bench**, 1024² f32 matmul, 16² tiles, on a page device destroyed after (`first` with the compile, best per dispatch, GFLOPS): GTX 1660 Ti (headless Edge) 427 ms, 4.0 ms, 534; iPhone 17 Pro 31 ms, 15.0 ms, 143, `maxBufferSize` 1 GiB; SE2 (iOS 27.3 beta) 402 ms, 43.4 ms, 50, `maxBufferSize` 512 MiB; XR no WebGPU. The SE2 / 17 Pro ratio (2.9×) is smaller than the lift's in Safari (5–10×): it orders phones, it does not predict the lift time.
+- **WebGPU headroom** (32 MB storage buffers, each cleared on the GPU, until the page died): SE2 1472 MB in two runs, the same as Safari's start screen, so the Mini App does not get less WebGPU memory than Safari there; 17 Pro 1888 MB; 17 Pro after three lifts and `release()` 1024 MB, so about 860 MB of the lift stay in the tab. Reasoned, not traced: a worker that used WebGPU is never terminated (Gpu teardown) and a `WebAssembly.Memory` cannot shrink, so ORT's heap stays at its high-water mark. Touching WebGPU costs memory for the rest of the open: choose WebGPU before the first ORT session, not after a slow lift.
+- **SE2 WebGPU lift deaths** (EdgeSAM, `lazyRelease`): single runs finished (load 2.4–3.5 s, runs 1.4–4.7 s); 5 of 6 three-run tries died, at run 2 or 3 or within a second after the finish; `bucket` died too, and deaths came before `release()`, so neither buffer churn nor the release is the cause: something grows per run. JetsamEvents: WebContent `highwater` at 1536 MB, the GPU process at 25–58 MB. The same phone in Safari survived single taps with pauses. WASM on the SE2: lift 5.8 s, then 2.4–2.6 s, page lived on; VitTrack 38–64 ms a step, 1.0–1.7× real time. The WebGPU lift gains little there (1.4–1.6 s warm).
+- **iPhone 17 Pro** WebGPU lift: load 6.8 s with the download, runs 1891 (shader compile), 215, 195 ms; the next open loaded in 0.7 s (models survive a Mini App reopen), runs 361, 241, 212 ms. Spin 28 ms.
+- **iPhone 14, iOS 18** (no WebGPU): WASM lift load 8.8 s, runs 2.1, 1.6, 1.5 s; VitTrack 28 ms a step, 2.3× real time; spin 50–52 ms.
+- **iPhone XR, iOS 18.5** (no `navigator.gpu` in the Mini App, as expected for a WKWebView on iOS 18): VitTrack 50 ms a step, 1.28× charged; 70 ms, 0.90× cold in Low Power Mode. WASM lift 9.1 s first, then 2.6–2.9 s.
+- **Run record.** The panel's record in `localStorage` (saved every step and on a 1 s beat for 120 s after the finish) survived every WebContent kill, which is what the telemetry black box relies on (`services/README.md`, Telemetry black box). Going to the background stops iOS timers, so a swipe away must not be read as a death.

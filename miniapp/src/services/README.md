@@ -51,3 +51,51 @@ The upload calls (`/api/uploads`, the parts, `/uploaded`) and the client note li
 ## Modal fallback
 
 [DOC: modal-fallback] `respond` is `request` that also returns the router's `X-Rounds-Via` header, and every failed request throws an `Error` with `status` and the body's `code` (`pro_unavailable` when Modal is down). Used by `features/local/server.js` (`features/local/README.md`, Modal fallback); `request` is `respond` minus the header.
+
+## Telemetry
+
+[DOC: telemetry] `telemetry.js` sends anonymous diagnostics to Oracle (`backend/rounds/README.md`, Telemetry, Telemetry privacy).
+
+- **Start.** `startTelemetry(sample)` runs once per page in both entries (`main.jsx`, `web.jsx`), before the first render. It does nothing without `VITE_API_URL` (the mock dev build). It:
+  - makes the install id (`rounds.install`) and a session id;
+  - reports `open` and the previous black box;
+  - listens to `error`, `unhandledrejection`, `visibilitychange` and `pagehide`;
+  - calls `sample()` 3 s later. The entry passes the lazy device sampler (`features/local/README.md`, Device sample), because a service never imports a feature.
+- **Queue.** `report(kind, data)` queues an event.
+  - The queue flushes 4 s after its first event, at most 50 events a batch; it keeps up to 200.
+  - `credentials()` (`api.js`) returns the current `Authorization` value, or `null` before the browser version signs in. Meanwhile the events wait in the queue.
+- **Helpers.** `recall` and `keep` are the try-wrapped `localStorage` JSON helpers.
+- **Rules.**
+  - Never put a job id, a file name, a selection or user data into an event (Telemetry privacy).
+  - `BUILD` is the commit (`miniapp/README.md`, Telemetry build).
+- **Checked 2026-11-07** in headless Edge, on a build with a Telegram launch hash and a local capture server. These arrived:
+  - `open`;
+  - `device` (36 limits, bench 535 GFLOPS on the GTX 1660 Ti);
+  - `conditions`;
+  - `error` and `rejection` with stacks;
+  - `pagehide`, `hidden`;
+  - after a reload, `previous` with the first page's 6 events.
+  - Trap: scripts injected over CDP (`page.evaluate`) give "Script error." and no `unhandledrejection` (muted errors). Test with a same-origin script tag.
+  - Beats and model events have not run with a real model yet.
+
+## Telemetry transport
+
+[DOC: telemetry-transport] `fetch` with `keepalive: true`, `Content-Type: text/plain` and the credentials in the body.
+- This is a CORS simple request with no preflight, so it also leaves during `pagehide`, and a dying page's last beat gets out.
+- `keepalive` caps the bodies in flight at 64 KB (Fetch spec), and the server caps a batch at 48 KB.
+- A failed send is dropped: these are diagnostics, with no retry loop.
+
+## Telemetry black box
+
+[DOC: telemetry-black-box] Every event except `previous` is also written to `rounds.blackbox` in `localStorage`: the last 40, with the session and the build. The next page load sends it as `previous`.
+- A crash leaves no event of its own. A session whose last event is a `beat`, with no `hidden` or `pagehide` after it, died during work. The server also sees its beats stop.
+- It is the mechanism of the removed check panel's run record (`features/local/README.md`, Phone findings), which showed that `localStorage` survives a WebContent kill in Telegram on iOS.
+- Unknown: whether Telegram fires `pagehide` when the Mini App is closed. Until the black box arrives, a closed app may look like a death.
+
+## Telemetry beat
+
+[DOC: telemetry-beat] `busy(label)` opens a work span and returns its `done`.
+- While a span is open, and for 4 s after the last one closes, a `beat` with the open labels is reported and flushed every 3 s.
+- The 4 s (`LINGER`) keep the gaps between track steps from stopping and restarting the beat.
+- `models.js` opens a span per worker call (`features/local/README.md`, Model telemetry).
+- The last beat dates a death to within 3 s.

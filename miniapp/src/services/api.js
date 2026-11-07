@@ -4,10 +4,13 @@ import {tg} from './telegram.js'
 export const API = (import.meta.env.VITE_API_URL ?? '').replace(/\/+$/, '')
 const NETWORK = 'No connection to the server. Check the network and try again.'
 
-let authorization = () => `tma ${tg()?.initData}`
+const telegram = () => `tma ${tg()?.initData}`
+let authorization = telegram
 
 // [DOC: auth-header]
 export const authorize = get => {authorization = get}
+// [DOC: telemetry]
+export const credentials = () => authorization !== telegram || tg()?.initData ? authorization() : null
 
 const messageOf = (status, detail) =>
   typeof detail === 'string' ? detail : detail?.[0]?.msg || `Request failed (${status})`
@@ -35,7 +38,7 @@ export const getJob = id => request(jobPath(id))
 export const postRender = (id, body) => post(`${jobPath(id)}/render`, body)
 
 // [DOC: lift]
-export const warmLift = id => post(`${jobPath(id)}/warm`)
+export const warmLift = (id, lift = 'server') => post(`${jobPath(id)}/warm`, {lift})
 
 export const segment = (id, prompt) => post(`${jobPath(id)}/segment`, prompt)
 

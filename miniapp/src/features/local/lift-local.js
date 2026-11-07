@@ -5,7 +5,7 @@ const FPS = 30
 const SEEK_WAIT = 250
 // [DOC: lift-model]
 const LIGHT = matchMedia('(pointer: coarse)').matches
-export const NAMES = LIGHT ? ['edge-sam-encoder', 'edge-sam-decoder'] : ['sam2.1-tiny-encoder', 'sam2.1-tiny-decoder']
+const NAMES = LIGHT ? ['edge-sam-encoder', 'edge-sam-decoder'] : ['sam2.1-tiny-encoder', 'sam2.1-tiny-decoder']
 const PAD = 'rgb(124, 116, 104)'
 // [DOC: gpu-buffer-cache]
 const CACHE = 'lazyRelease'

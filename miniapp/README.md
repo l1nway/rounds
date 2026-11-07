@@ -103,3 +103,7 @@ The engine needs a git repo (`git rev-parse` for the journal row) and fails at t
 - M LCP 2.9–4.1 s: the LCP element is the `<video>` first frame of a 3.6 MB proxy over slow 4G. The video is the content.
 - D FCP 204–352 ms: the render-blocking Telegram script (above).
 - Idle 78–201 ms (mobile only, 0 style / layout): the browser's media loading while the proxy keeps downloading (`preload='auto'`); script time in that window is 1–2 ms, and blocking the proxy drops it to about 30 ms. `preload='metadata'` would cut it but make every scrub wait for range requests.
+
+## Telemetry build
+
+[DOC: telemetry-build] `vite.config.js` defines `__BUILD__` as the first 7 characters of `GITHUB_SHA` (set in the Pages workflow), and `dev` elsewhere. Telemetry stamps every batch with it, and the device signature cache is keyed by it (`src/features/local/README.md`, Device sample).
