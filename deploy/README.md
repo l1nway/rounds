@@ -35,6 +35,7 @@ Oracle reclaims an Always Free VM whose 95th percentile of CPU, network and memo
 
 - The Zero-DCE++ checkpoint (`Epoch99.pth`, the AI part of the HDR slider on the free tier, `backend/rounds/README.md`, Free look) to `/opt/repair/zerodce.pth` (`config.DCE_WEIGHTS`). URL and hash are a copy of `REPAIR` in `backend/rounds/cloud.py` (bash cannot import it): change both together. Oracle reads the same `.pth` without torch (`backend/rounds/README.md`, Zero-DCE port), so there is no conversion step.
 - The VitTrack ONNX graph (715 kB, the server tracker, `backend/rounds/README.md`, Vit track) to `/opt/track/vittrack.onnx` (`config.VIT_WEIGHTS`). URL and hash are a copy of `vit-track` in `miniapp/src/features/local/weights.js`, of `cloud.TRACK` and of `config.VIT_SHA`: change them together. `vittrack.load` checks the hash again on load.
+- Trap: `curl --create-dirs` makes its folders 0750 root:root, so `rounds-free` (User `ubuntu`) and the hash check could not read the file (`Permission denied`, observed on the first run 2026-11-07). The script creates the folder with `install -d -m 755` and sets the file to 644; never go back to `--create-dirs`.
 - Trap: the push that changes `update.sh` itself runs the old copy (bash already read the small file before the merge replaced it), so a weight added in the same push is fetched only by the next backend change, or by `bash deploy/weights.sh` once on the VM.
 
 ## Telemetry queries

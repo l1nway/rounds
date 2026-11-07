@@ -9,7 +9,9 @@ VIT_SHA=2990f0b7cd44d92afa48cd97db6de7be113fc1d9594fddb74e2725c10478e91d
 
 fetch() {
   echo "$2  $3" | sha256sum -c --status 2>/dev/null && return 0
-  sudo curl -fsSL --create-dirs -o "$3" "$1"
+  sudo install -d -m 755 "$(dirname "$3")"
+  sudo curl -fsSL -o "$3" "$1"
+  sudo chmod 644 "$3"
   echo "$2  $3" | sha256sum -c
 }
 
